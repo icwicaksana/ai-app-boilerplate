@@ -8,14 +8,13 @@ UpstreamAIError eksplisit, bukan fallback diam-diam.
 - Client: ChatLiteLLM — preserves reasoning_content/reasoning_items yang
   dibuang ChatOpenAI (isu langchain-ai#34706/#35059).
 - Header per-request: x-opencode-session (wajib upstream OpenCode Go, diisi
-  thread_id; upstream lain abaikan) + x-litellm-spend-logs-metadata
-  (atribusi spend: project + thread). Proxy teruskan karena
+  thread_id; upstream lain abaikan). Proxy teruskan karena
   forward_client_headers_to_llm_api: true.
+- Atribusi spend: extra_body.metadata.spend_logs_metadata (project + thread).
+  (Jalur header x-litellm-spend-logs-metadata terbukti tak mendarat di v1.105.1.)
 - Retry/timeout/fallback = milik proxy (num_retries di YAML). Client TIDAK
   retry (max_retries=0) untuk cegah badai multiplikatif.
 """
-
-import json
 
 from langchain_litellm import ChatLiteLLM
 
@@ -42,7 +41,9 @@ def get_llm(settings: Settings, session_id: str | None = None):
         spend_meta["thread_id"] = session_id
         # Wajib OpenCode Go (docs: go/#where-can-i-use-it); upstream lain abaikan.
         headers["x-opencode-session"] = session_id
-    headers["x-litellm-spend-logs-metadata"] = json.dumps(spend_meta)
+    # Atribusi spend via BODY (extra_body.metadata) — jalur header
+    # x-litellm-spend-logs-metadata terbukti tidak mendarat di proxy v1.105.1.
+    # Lihat: docs proxy/cost_tracking (body method).
     # custom_llm_provider="openai": paksa transport OpenAI-compatible ke base_url
     # proxy TANPA inferensi provider (model tanpa prefix seperti "deepseek-v4.1-flash"
     # otherwise ditolak SDK dengan "LLM Provider NOT provided"). Nama model dikirim
@@ -56,4 +57,5 @@ def get_llm(settings: Settings, session_id: str | None = None):
         request_timeout=settings.LLM_TIMEOUT_SECONDS,
         max_retries=0,  # retry = milik proxy (num_retries di YAML)
         extra_headers=headers,
+        model_kwargs={"extra_body": {"metadata": {"spend_logs_metadata": spend_meta}}},
     )
