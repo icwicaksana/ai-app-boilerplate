@@ -90,9 +90,15 @@ class BasePipelineAgent(ABC):
         if not reply or not reply.strip():
             log.warning("pipeline %s hasil kosong (graph=%s)", type(self).__name__, type(self.graph).__name__)
             reply = ""
+        output: dict[str, Any] = {"reply": reply}
+        raw = result.get("raw")
+        if isinstance(raw, dict) and isinstance(raw.get("structured"), dict):
+            # Aditif (v0.2): pipeline ber-structured output sertakan data tervalidasi.
+            # Pipeline tanpa itu (Template) output-nya tetap {"reply"} seperti v0.
+            output["data"] = raw["structured"]
         return {
             "status": result.get("status", "completed"),
-            "output": {"reply": reply},
+            "output": output,
             "interrupt": result.get("interrupt"),
             "messages": messages if isinstance(messages, list) else [],
         }

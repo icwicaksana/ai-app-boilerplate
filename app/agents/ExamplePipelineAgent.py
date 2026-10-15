@@ -11,11 +11,15 @@ import json
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
 
 from app.agents.BasePipelineAgent import BasePipelineAgent
 from app.agents.state import BaseState
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
 
 NARRATE_PROMPT = (
     "Tulis ringkasan Bahasa Indonesia maksimal 5 baris dari JSON yang diberikan: "
@@ -26,8 +30,21 @@ NARRATE_PROMPT = (
     "Jangan karang angka di luar JSON."
 )
 
+INSIGHT_PROMPT = (
+    "Dari JSON totals berikut, tulis (Bahasa Indonesia): "
+    "1 kalimat anomali terbesar + 1 saran hemat konkret. "
+    "JANGAN tulis angka — angka diisi sistem, bukan kamu."
+)
+
 INCOME = "income"
 EXPENSE = "expense"
+
+
+class NarrativeInsight(BaseModel):
+    """Wawasan kualitatif dari LLM. ANGKA TIDAK BOLEH dari sini (dari Python)."""
+
+    anomaly: str = Field(default="", description="1 kalimat anomali terbesar")
+    suggestion: str = Field(default="", description="1 saran hemat konkret")
 
 
 MAX_AMOUNT_ABS = Decimal("1000000000000000")  # 1e15: di atas ini tolak (cegah inf/presisi hilang)
@@ -91,6 +108,7 @@ class ExampleState(BaseState, total=False):
     validated: dict
     totals: dict
     final: str
+    structured: dict  # totals (Python) + insight (LLM tervalidasi) → output.data
 
 
 class ExamplePipelineAgent(BasePipelineAgent):
@@ -160,6 +178,16 @@ class ExamplePipelineAgent(BasePipelineAgent):
 
     def _node_narrate(self, state: ExampleState) -> dict:
         totals = state.get("totals", {}) or {}
+        insight = self._extract_insight(totals)
+        if insight is not None:
+            # Jalur utama (v0.2): angka dari Python + wawasan tervalidasi.
+            # reply dirakit deterministik — LLM tak bisa karang angka.
+            text = self._render_summary(totals, insight)
+            data = {**totals, "anomaly": insight.anomaly, "suggestion": insight.suggestion}
+            wrapped: Any = AIMessage(content=text)
+            return {"final": text, "structured": data,
+                    "messages": [HumanMessage(content=json.dumps(totals, ensure_ascii=False)), wrapped]}
+        # Fallback legacy: narasi bebas 1 panggilan (data=None di output).
         resp = self.llm.invoke(
             f"{NARRATE_PROMPT}\n\nData (JANGAN karang angka di luar ini): "
             f"{json.dumps(totals, ensure_ascii=False)}"
@@ -168,6 +196,42 @@ class ExamplePipelineAgent(BasePipelineAgent):
         wrapped = self._wrap_narrate_response(resp)
         return {"final": text,
                 "messages": [HumanMessage(content=json.dumps(totals, ensure_ascii=False)), wrapped]}
+
+    def _extract_insight(self, totals: dict) -> NarrativeInsight | None:
+        """Ekstraksi terstruktur + self-correction tepat 1x. Gagal = None (lembut)."""
+        prompt = f"{INSIGHT_PROMPT}\n\nData: {json.dumps(totals, ensure_ascii=False)}"
+        try:
+            extractor = self.llm.with_structured_output(NarrativeInsight)
+        except Exception:
+            log.exception("structured extractor tak tersedia, fallback narasi bebas")
+            return None
+        try:
+            result = extractor.invoke(prompt)
+            return result if isinstance(result, NarrativeInsight) else None
+        except Exception as first_err:
+            log.warning("structured gagal (%s), self-correction 1x", type(first_err).__name__)
+        try:
+            retry = extractor.invoke(
+                f"{prompt}\n\nPERBAIKAN: respons sebelumnya tidak valid. "
+                "Kembalikan HANYA JSON valid sesuai skema (anomaly, suggestion).")
+            return retry if isinstance(retry, NarrativeInsight) else None
+        except Exception:
+            log.exception("structured gagal 2x, fallback narasi bebas")
+            return None
+
+    @staticmethod
+    def _render_summary(totals: dict, insight: NarrativeInsight) -> str:
+        income = totals.get("total_income", 0)
+        expense = totals.get("total_expense", 0)
+        balance = totals.get("balance", 0)
+        lines = [f"Total pemasukan: {income}; pengeluaran: {expense}; saldo: {balance}."]
+        if (insight.anomaly or "").strip():
+            lines.append(f"Anomali: {insight.anomaly.strip()}")
+        if (insight.suggestion or "").strip():
+            lines.append(f"Saran: {insight.suggestion.strip()}")
+        if len(lines) == 1:
+            lines.append("Data belum tersedia.")
+        return "\n".join(lines)
 
     @staticmethod
     def _coerce_narrate_text(resp: Any) -> str:

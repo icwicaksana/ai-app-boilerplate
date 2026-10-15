@@ -1,24 +1,83 @@
-"""Susun onion middleware agent. v0: HITL OFF -> []. v1: tambah HITL jika enabled."""
+"""Susun onion middleware agent (v0.2).
+
+Urutan (luar → dalam): [ToolCallLimit, ContextEditing, ToolError].
+- ToolCallLimit: rem jumlah tool-call (total + per tool).
+- ContextEditing: bersihkan tool-call lama saat konteks melewati ambang.
+- ToolError: ubah exception tool jadi ToolMessage ramah agar agen lanjut.
+
+SENGAJA TIDAK ADA: ModelRetry/ModelFallback (milik proxy LiteLLM — hindari
+badai retry ganda), Summarization (v0.3), PII (v0.4), HITL aktif (v0.6),
+trim_messages manual (digantikan ContextEditing — jangan dobel!).
+"""
 
 from __future__ import annotations
+
+from typing import Any
 
 from app.core.config import Settings
 from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
+# Default starter UMKM — naikkan per klien bila perlu (nanti: env-override).
+TOOL_CALL_THREAD_LIMIT = 15
+TOOL_CALL_PER_TOOL_LIMIT = 5
+CONTEXT_TRIGGER_TOKENS = 8000
+CONTEXT_KEEP_LAST_TOOL_USES = 3
 
-def build_middleware(settings: Settings) -> list:
-    if not getattr(settings, "HITL_ENABLED", False):
-        return []
+
+def _tool_error_message(exc: Exception, request: Any) -> str:
+    name = getattr(request, "tool_name", None) or getattr(request, "name", "tool")
+    log.warning("tool %s gagal (%s): %s", name, type(exc).__name__, exc)
+    return (
+        f"Tool '{name}' gagal ({type(exc).__name__}: {exc}). "
+        "Coba cara lain, atau jawab sebisanya tanpa tool itu. "
+        "Jangan mengarang data yang seharusnya dari tool."
+    )
+
+
+def build_middleware(settings: Settings, tools: list | None = None) -> list:
+    """Bangun daftar middleware sesuai config. Tak pernah raise (fallback [])."""
+    stack: list = []
     try:
-        from langchain.agents.middleware import HumanInTheLoopMiddleware  # type: ignore
-
-        from app.agents.middleware.HumanInTheLoopMiddleware import INTERRUPT_ON
-
-        if INTERRUPT_ON:
-            return [HumanInTheLoopMiddleware(interrupt_on=dict.fromkeys(INTERRUPT_ON, True))]
-        log.warning("HITL_ENABLED=true tapi INTERRUPT_ON kosong — middleware nonaktif")
+        from langchain.agents.middleware import (
+            ClearToolUsesEdit,
+            ContextEditingMiddleware,
+            ToolCallLimitMiddleware,
+            ToolErrorMiddleware,
+        )
     except ImportError as exc:
-        log.warning("HITL diminta tapi paket middleware belum tersedia: %s", exc)
-    return []
+        log.warning("middleware langchain tak tersedia: %s", exc)
+        return []
+
+    # 1. Rem: total per thread + per tool (butuh daftar tools aktual).
+    stack.append(ToolCallLimitMiddleware(thread_limit=TOOL_CALL_THREAD_LIMIT))
+    for tool in tools or []:
+        name = getattr(tool, "name", None) or str(tool)
+        stack.append(ToolCallLimitMiddleware(
+            tool_name=name, thread_limit=TOOL_CALL_PER_TOOL_LIMIT))
+
+    # 2. Kebersihan konteks: buang tool-call lama saat > ambang, sisakan N terakhir.
+    stack.append(ContextEditingMiddleware(edits=[
+        ClearToolUsesEdit(trigger=CONTEXT_TRIGGER_TOKENS,
+                          keep=CONTEXT_KEEP_LAST_TOOL_USES),
+    ]))
+
+    # 3. Jaring pengaman tool error → ToolMessage (agen lanjut, bukan crash).
+    stack.append(ToolErrorMiddleware(on_error=_tool_error_message))
+
+    # 4. HITL (v0.6): tetap stub — hanya pasang bila enabled + terkonfigurasi.
+    if getattr(settings, "HITL_ENABLED", False):
+        try:
+            from langchain.agents.middleware import HumanInTheLoopMiddleware  # type: ignore
+
+            from app.agents.middleware.HumanInTheLoopMiddleware import INTERRUPT_ON
+
+            if INTERRUPT_ON:
+                stack.append(HumanInTheLoopMiddleware(
+                    interrupt_on=dict.fromkeys(INTERRUPT_ON, True)))
+            else:
+                log.warning("HITL_ENABLED=true tapi INTERRUPT_ON kosong — dilewati")
+        except ImportError as exc:
+            log.warning("HITL diminta tapi paket middleware belum tersedia: %s", exc)
+    return stack

@@ -17,7 +17,8 @@ from app.core.errors import AgentNotFoundError
 
 
 def _settings():
-    return Settings(_env_file=None, MODEL_PROVIDER="openai", OPENAI_API_KEY="x")
+    return Settings(_env_file=None, LITELLM_BASE_URL="http://localhost:4000",
+                    LITELLM_API_KEY="x", LITELLM_MODEL="test-model")
 
 
 def _ctx():

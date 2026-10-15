@@ -26,8 +26,11 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/ai_boilerplate
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+      # LLM via gateway LiteLLM (compose Infra, port 4000). Dari container ini,
+      # host.docker.internal = laptop host (Windows/Mac Docker Desktop).
+      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://host.docker.internal:4000}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-}
+      LITELLM_MODEL: ${LITELLM_MODEL:-}
       HITL_ENABLED: "false"
       LOG_LEVEL: INFO
       PHOENIX_ENABLED: ${PHOENIX_ENABLED:-false}

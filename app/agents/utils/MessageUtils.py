@@ -57,8 +57,7 @@ def extract_last_ai_text(messages: list) -> str:
 def extract_reasoning_text(msg: Any) -> str:
     """Ambil reasoning/thinking dari 1 pesan (block content + additional_kwargs).
 
-    v0.1: envelope-nya dibekukan, tapi ChatOpenAI membuang reasoning sehingga
-    praktis selalu "" — aliran beneran di v0.2 via ChatLiteLLM.
+    Diisi model reasoning via ChatLiteLLM (v0.2). Model non-reasoning → "".
     """
     parts: list[str] = []
     content = getattr(msg, "content", None)

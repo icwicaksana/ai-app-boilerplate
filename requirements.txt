@@ -1,4 +1,4 @@
-# v0 — tanpa pin versi (selalu latest). Risiko: major release bisa merusak template.
+# v0.2 — tanpa pin versi (selalu latest). Risiko: major release bisa merusak template.
 # Wajib saat mulai project baru: pip freeze > requirements.lock, commit hasilnya.
 fastapi
 uvicorn[standard]
@@ -10,6 +10,7 @@ httpx
 langchain
 langchain-core
 langchain-openai
+langchain-litellm>=0.11.0  # ChatLiteLLM: preservasi reasoning (butuh >=0.11.0)
 langgraph
 # Checkpointer Postgres (dipakai hanya jika DATABASE_URL diisi)
 langgraph-checkpoint-postgres

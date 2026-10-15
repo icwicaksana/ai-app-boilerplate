@@ -44,10 +44,11 @@ class BaseChatAgent:
     # --- build: prompt + tools + middleware (jalan 1x saat init) ---
     def build(self, session_id: str | None = None):
         llm = get_llm(self.settings, session_id)
-        middleware = build_middleware(self.settings)
+        tools = list(self.TOOLS)
+        middleware = build_middleware(self.settings, tools)
         kwargs: dict = {
             "model": llm,
-            "tools": list(self.TOOLS),
+            "tools": tools,
             "system_prompt": self.SYSTEM_PROMPT,
             "checkpointer": self.checkpointer,
         }

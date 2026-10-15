@@ -28,8 +28,8 @@ class StreamToken(BaseModel):
 class StreamThinking(BaseModel):
     """Delta reasoning/thinking. FE: tampilkan collapsible terpisah, JANGAN gabung ke jawaban.
 
-    v0.1: envelope dibekukan, event belum pernah dipancarkan (ChatOpenAI membuang
-    reasoning — diisi beneran di v0.2 via ChatLiteLLM).
+    Diisi dari reasoning model via ChatLiteLLM (v0.2). Model non-reasoning
+    tidak memancarkan event ini (normal, bukan error).
     """
 
     type: Literal["thinking"] = "thinking"

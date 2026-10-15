@@ -2,6 +2,26 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.2 (2026-10-15) — LiteLLM gateway + ketahanan chat + spend tracking
+- BREAKING (env): hapus `MODEL_PROVIDER`/`OPENAI_*`/`OPENCODE_*`; LLM 100% via
+  gateway LiteLLM (`LITELLM_BASE_URL/API_KEY/MODEL`). Lihat migration note di README.
+- `infra/llm.py`: `ChatLiteLLM` + header `x-opencode-session` (thread_id) +
+  `x-litellm-spend-logs-metadata` (project+thread); `max_retries=0` (retry milik proxy).
+- Baru: `langchain-litellm==0.11.1` (preservasi reasoning); lock regen (140 paket).
+- `health`: cek proxy `/health/liveliness` (timeout 2s) → field `checks.gateway`.
+- Middleware aktif: `ToolCallLimit` (15 total/5 per tool) + `ContextEditing`
+  (ClearToolUses 8k/keep-3) + `ToolError` ramah-ID. Tanpa retry/fallback agen
+  (milik proxy), tanpa trim ganda, tanpa PII (v0.4), HITL tetap stub (v0.6).
+- CORS env-based (`CORS_ORIGINS`, default localhost:3000).
+- Pipeline: `output.data` aditif (angka Python + insight LLM tervalidasi;
+  self-correction 1x; gagal-lembut `data` absen + `reply` tetap ada).
+- Baru: `agents/examples/OrderExtractorDemo.py` (pola `response_format`,
+  di luar registry) + `extract_reasoning_text`/`split_chunk_text` adversarial-safe.
+- Infra (lokal, luar repo): proxy pin `v1.105.1` + `litellm-db` + hardening
+  (restart, healthcheck, mem_limit, log rotation) + `forward_client_headers_to_llm_api`.
+- Kontrak beku TAK berubah (SSE envelope, `reply`, registry, route).
+- Tests: 57 passed.
+
 ## v0.1 (2026-10-15) — SSE token-level + envelope thinking (BEKU)
 - `Runner.stream()`: single-chunk → token-level via `astream_events` v2
   (`on_chat_model_stream`/`on_tool_start`/`on_tool_end`); final dibaca dari

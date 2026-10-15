@@ -8,22 +8,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    PROJECT_NAME: str = "ai-boilerplate-v0"
+    PROJECT_NAME: str = "ai-app-boilerplate"
     API_V1_PREFIX: str = "/api/v1"
     LOG_LEVEL: str = "INFO"
+
+    # CORS: koma-dipisah. Kosong = tolak semua origin browser (paling aman).
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # Postgres — kosong = memory checkpointer (dev cepat tanpa docker)
     DATABASE_URL: str = ""
 
-    # LLM
-    OPENAI_API_KEY: str = ""
-    MODEL_PROVIDER: str = "openai"
-    MODEL_NAME: str = "gpt-4o-mini"
-    # OpenCode Go — base_url tanpa /chat/completions (ditambah otomatis oleh client)
-    OPENCODE_API_KEY: str = ""
-    OPENCODE_MODEL: str = "kimi-k2.7-code"
-    OPENCODE_BASE_URL: str = "https://opencode.ai/zen/go/v1"
-    LLM_TEMPERATURE: float = 0.0
+    # LLM — single gateway LiteLLM proxy (v0.2, ADR-01). Tanpa cabang direct.
+    # Model/provider diatur di proxy (UI :4000/ui); app hanya tahu nama model + key.
+    LITELLM_BASE_URL: str = "http://localhost:4000"
+    LITELLM_API_KEY: str = ""  # virtual key per project (BUKAN master key!)
+    LITELLM_MODEL: str = ""  # nama model di proxy, mis. "kimi-primary"
+    LITELLM_PROJECT_TAG: str = ""  # kosong = pakai PROJECT_NAME (atribusi spend)
+    LLM_TEMPERATURE: float = 1.0
     LLM_TIMEOUT_SECONDS: int = 60
 
     # HITL — v0 selalu false, slot untuk v1

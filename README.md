@@ -43,9 +43,10 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
   hidup, `TemplateChatAgent.py` pedoman) + pipeline (`ExamplePipelineAgent.py` hidup,
   `TemplatePipelineAgent.py` pedoman, abstract), plus `utils/`, `state/`, `tools/`,
   `middleware/`. Prompt inline `SYSTEM_PROMPT`.
-* `app/infra/` — teknis: Postgres checkpointer, `ChatOpenAI` factory, Phoenix tracing.
+* `app/infra/` — teknis: Postgres checkpointer, `ChatLiteLLM` factory (via gateway), Phoenix tracing.
 * `app/core/` — config, logging, error, dependencies. `app/schemas/` — kontrak Pydantic.
 * `app/helpers/response.py` — satu-satunya cara merakit respons (lihat bawah).
+* `app/agents/examples/` — demo pola (tidak terdaftar di registry, bukan endpoint hidup).
 
 ## Tambah AI App baru — 2 rel
 
@@ -61,10 +62,12 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 | Key | Default | Keterangan |
 |---|---|---|
 | `DATABASE_URL` | kosong (memory) | Jika diisi `postgresql...`, checkpointer pakai Postgres. Jika kosong, pakai `InMemorySaver` agar bisa jalan tanpa docker. |
-| `OPENAI_API_KEY` | wajib | Untuk `ChatOpenAI` (cabang `openai`). |
-| `MODEL_PROVIDER` | `openai` | `openai` \| `opencode_go`. |
-| `MODEL_NAME` / `OPENCODE_*` | lihat `.env.example` | Model + kredensial per provider. |
-| `HITL_ENABLED` | `false` | v0 selalu `false`. Slot untuk v1 (`HumanInTheLoopMiddleware`). |
+| `LITELLM_BASE_URL` | `http://localhost:4000` | Gateway LiteLLM (wajib jalan; tanpa fallback direct). |
+| `LITELLM_API_KEY` | wajib | Virtual key per project (buat di UI proxy, BUKAN master key). |
+| `LITELLM_MODEL` | wajib | Nama model di proxy (lihat UI → Models). |
+| `LITELLM_PROJECT_TAG` | kosong (=PROJECT_NAME) | Atribusi spend per project. |
+| `CORS_ORIGINS` | localhost:3000 | Koma-dipisah; kosong = tolak semua origin browser. |
+| `HITL_ENABLED` | `false` | Selalu `false` sampai v0.6. |
 | `LOG_LEVEL` | `INFO` | `DEBUG/INFO/WARNING/ERROR` |
 | `PHOENIX_ENABLED` | `false` | `true` = kirim trace ke Phoenix (butuh service phoenix jalan) |
 | `PHOENIX_ENDPOINT` | `http://localhost:6006/v1/traces` | OTLP collector |
@@ -156,3 +159,19 @@ uvicorn app.main:app --reload
 
 Mati default (`PHOENIX_ENABLED=false`): app jalan normal tanpa tracing.
 `thread_id` otomatis jadi session Phoenix (1 thread = 1 percakapan di UI).
+
+## Migrasi v0.1 → v0.2 (wajib baca)
+
+**Breaking (env):** `MODEL_PROVIDER`/`OPENAI_*`/`OPENCODE_*` DIHAPUS. Semua akses LLM
+wajib lewat gateway LiteLLM (`LITELLM_BASE_URL/API_KEY/MODEL`). Tulis ulang `.env`
+dari `.env.example` baru. Tanpa proxy jalan → chat/jobs 502 eksplisit (sengaja,
+tanpa fallback — ADR-03).
+
+**Tidak berubah:** kontrak HTTP/SSE (envelope beku v0.1 utuh), `output.reply`
+pipeline, registry, route. Aditif saja: `output.data` di pipeline
+(abaikan bila tak perlu), event `thinking` kini terisi untuk model reasoning.
+
+**Middleware aktif otomatis:** limit tool (15 total/5 per tool), context-edit
+(8k/keep-3), tool-error ramah. Tidak perlu config tambahan.
+Spend tracking: buat virtual key per project di UI proxy, isi sebagai
+`LITELLM_API_KEY`; lihat usage di UI → Usage atau `GET /spend/logs`.

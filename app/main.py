@@ -1,4 +1,4 @@
-"""FastAPI factory v0: create_app() + lifespan (setup checkpointer sekali)."""
+"""FastAPI factory: create_app() + lifespan (setup checkpointer sekali)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -63,7 +64,16 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.PROJECT_NAME, version="v0", lifespan=lifespan)
+    app = FastAPI(title=settings.PROJECT_NAME, version="v0.2", lifespan=lifespan)
+    origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+        )
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
