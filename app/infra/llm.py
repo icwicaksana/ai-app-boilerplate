@@ -43,8 +43,13 @@ def get_llm(settings: Settings, session_id: str | None = None):
         # Wajib OpenCode Go (docs: go/#where-can-i-use-it); upstream lain abaikan.
         headers["x-opencode-session"] = session_id
     headers["x-litellm-spend-logs-metadata"] = json.dumps(spend_meta)
+    # custom_llm_provider="openai": paksa transport OpenAI-compatible ke base_url
+    # proxy TANPA inferensi provider (model tanpa prefix seperti "deepseek-v4.1-flash"
+    # otherwise ditolak SDK dengan "LLM Provider NOT provided"). Nama model dikirim
+    # verbatim agar cocok dengan model_name di proxy (jangan tambah prefix sendiri).
     return ChatLiteLLM(
-        model=settings.LITELLM_MODEL,
+        model=settings.LITELLM_MODEL.strip(),
+        custom_llm_provider="openai",
         api_key=settings.LITELLM_API_KEY,
         base_url=settings.LITELLM_BASE_URL.rstrip("/"),
         temperature=settings.LLM_TEMPERATURE,
