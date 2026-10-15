@@ -75,11 +75,24 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 | Method & Path | Fungsi |
 |---|---|
 | `GET /api/v1/health` (+ `/ready`) | Liveness + cek DB/LLM (degraded, bukan 500). |
-| `POST /api/v1/chat/stream` | Chat SSE. `{"agent","thread_id?","input"}` -> event `data: {...}` |
-| `POST /api/v1/jobs/{agent_name}` | Pipeline sync. `{"payload","thread_id?"}` -> `{"thread_id","status","output"}` |
-| `POST /api/v1/jobs/{thread_id}/resume` | STUB v0. Selalu `501`. Slot untuk HITL (`Command(resume=...)`). |
+| `POST /api/v1/chat/stream` | Chat SSE token-level (v0.1). `{"agent","thread_id?","input"}` -> event `data: {...}` |
 
-Streaming token-level direncanakan v0.1 — `runner.stream()` v0 masih single-chunk.
+## Event SSE (v0.1, beku)
+
+Alur: `started` -> `token`* / `thinking`* / `tool_start` / `tool_end` -> `result`
+| `error` (terminal). Terminator = stream close.
+
+| Event | Bentuk | FE |
+|---|---|---|
+| `started` | `{"type":"started"}` | reset bubble |
+| `token` | `{"type":"token","delta":"..."}` | append ke jawaban (jangan trim!) |
+| `thinking` | `{"type":"thinking","delta":"..."}` | collapsible terpisah; v0.1 belum dipancarkan (diisi v0.2) |
+| `tool_start` | `{"type":"tool_start","tool":"...","input":{...}}` | indikator (mis. ⏳) |
+| `tool_end` | `{"type":"tool_end","tool":"..."}` | tutup indikator |
+| `result` | `{"type":"result","status","output","interrupt"}` | jawaban final (1x, kompatibel consumer v0) |
+| `error` | `{"type":"error",...RFC7807}` | tampilkan + tawarkan retry thread sama |
+| `POST /api/v1/jobs/{agent_name}` | Pipeline sync. `{"payload","thread_id?"}` -> `{"thread_id","status","output"}` |
+| `POST /api/v1/jobs/{thread_id}/resume` | STUB. Selalu `501`. Slot untuk HITL (`Command(resume=...)`). |
 
 ## Kontrak respons (standar)
 
@@ -113,7 +126,7 @@ ai-app-boilerplate/
                         # Example/Template chat + pipeline,
                         # utils/, state/, tools/, middleware/
     infra/              # postgres (checkpointer), llm (factory), phoenix (tracing)
-  tests/                # health, kontrak, pipeline, message utils, OOP
+  tests/                # health, kontrak, pipeline, message utils, OOP, SSE
   requirements.txt (+ .lock saat rilis)
   docker-compose.yml    # api + postgres
   Dockerfile
@@ -122,12 +135,12 @@ ai-app-boilerplate/
   CHANGELOG.md
 ```
 
-## Catatan v0 (yang sengaja belum ada)
+## Catatan (yang sengaja belum ada)
 
 * Tanpa auth / multi-tenant (disiapkan di schema `metadata`).
-* Tanpa MongoDB (Postgres saja sesuai keputusan v0).
+* Tanpa MongoDB (Postgres saja).
 * Tanpa vectorstore / RAG (slot di `tools/`).
-* Streaming token-level di v0.1 (`stream_agent` sudah pisah dari `run_agent`).
+* Event `thinking` belum dipancarkan (diisi reasoning di v0.2).
 * HITL OFF: middleware + `resume.py` hanya stub.
 * Single-gateway LiteLLM di v0.2 (cabang direct dihapus di sana).
 

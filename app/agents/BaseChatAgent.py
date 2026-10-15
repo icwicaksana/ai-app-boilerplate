@@ -92,6 +92,7 @@ class BaseChatAgent:
         clean = self.preprocess(data)
         state = self._to_state(clean)
         final: dict[str, Any] | None = None
+        failed = False
         try:
             stream_iter = self.runner.stream(self.graph, state, config)
             async for event in stream_iter:
@@ -105,12 +106,14 @@ class BaseChatAgent:
                         interrupt=event.get("interrupt"),
                     )
                 else:
+                    if event.get("type") == "error":
+                        failed = True  # terminal: JANGAN fallback (cegah eksekusi tool 2x)
                     yield event
         except Exception as exc:  # gagal mid-stream: tutup dengan event error terminal
             log.exception("stream_agent %s gagal", type(self).__name__)
             yield stream_error(detail=f"{type(exc).__name__}: {exc}")
             return
-        if final is None:  # pengaman: runner tak yield result → invoke langsung
+        if final is None and not failed:  # pengaman: runner tak yield result → invoke langsung
             try:
                 result = await self.runner.run(self.graph, state, config)
             except Exception as exc:

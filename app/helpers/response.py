@@ -1,7 +1,8 @@
 """Pembangun respons HTTP — 1 cara merakit untuk semua jalur (Set A: rel + hasil).
 
 - Rel sync (`POST /jobs/...`): job_success() / job_error().
-- Rel SSE (`POST /chat/stream`): stream_started() / stream_success() / stream_error().
+- Rel SSE (`POST /chat/stream`): stream_started() / stream_token() / stream_thinking() /
+  stream_tool_start() / stream_tool_end() / stream_success() / stream_error().
 - job_error() dan stream_error() berdua delegasi ke _problem() — bentuk RFC 7807
   tetap 1 sumber, tidak pernah ditulis 2x.
 
@@ -21,7 +22,15 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from app.schemas.common import ResponseMeta
-from app.schemas.stream import StreamError, StreamResult, StreamStarted
+from app.schemas.stream import (
+    StreamError,
+    StreamResult,
+    StreamStarted,
+    StreamThinking,
+    StreamToken,
+    StreamToolEnd,
+    StreamToolStart,
+)
 
 TModel = TypeVar("TModel", bound=BaseModel)
 
@@ -86,6 +95,22 @@ def job_error(
 
 def stream_started() -> dict[str, Any]:
     return StreamStarted().model_dump(mode="json")
+
+
+def stream_token(delta: str) -> dict[str, Any]:
+    return StreamToken(delta=delta or "").model_dump(mode="json")
+
+
+def stream_thinking(delta: str) -> dict[str, Any]:
+    return StreamThinking(delta=delta or "").model_dump(mode="json")
+
+
+def stream_tool_start(tool: str, input: dict[str, Any] | None = None) -> dict[str, Any]:
+    return StreamToolStart(tool=tool, input=dict(input or {})).model_dump(mode="json")
+
+
+def stream_tool_end(tool: str) -> dict[str, Any]:
+    return StreamToolEnd(tool=tool).model_dump(mode="json")
 
 
 def stream_success(

@@ -1,6 +1,22 @@
 # Changelog Boilerplate
 
-Semua perubahan template dicatat di sini. `v0` frozen — bug fatal saja yang boleh patch v0.
+Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
+
+## v0.1 (2026-10-15) — SSE token-level + envelope thinking (BEKU)
+- `Runner.stream()`: single-chunk → token-level via `astream_events` v2
+  (`on_chat_model_stream`/`on_tool_start`/`on_tool_end`); final dibaca dari
+  checkpoint (`aget_state`, tanpa eksekusi ulang); graph legacy tanpa
+  `astream_events` fallback single-chunk.
+- Event baru (beku permanen): `token {delta}`, `thinking {delta}`, `tool_start
+  {tool,input}`, `tool_end {tool}`. Terminator = stream close (tanpa `[DONE]`).
+- `thinking` masih placeholder (ChatOpenAI membuang reasoning; diisi v0.2).
+- `MessageUtils`: baru `extract_reasoning_text()` + `split_chunk_text()`
+  (delta tak di-strip); konstanta `THINKING_BLOCK_TYPES`.
+- `BaseChatAgent`: lewatkan event granular apa adanya; skip fallback `run()`
+  bila stream sudah tutup dengan error (cegah eksekusi tool 2x).
+- Kontrak lama kompatibel: consumer `result`-only tetap dapat tepat 1 result.
+- Tests: 44 passed (`test_sse_streaming` baru: urutan, error terminal,
+  backward-compat, fallback legacy, no-fallback-pasca-error).
 
 ## v0 patch 2026-10-14 — Code-review fix (DRY + correctness + kontrak)
 - Baru: `agents/BaseChatAgent.py` (build/stream_agent/_safe_postprocess/_to_state) — hapus ~80% duplikasi Example vs Template chat.

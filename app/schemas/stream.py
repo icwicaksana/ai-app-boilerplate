@@ -1,7 +1,8 @@
 """Kontrak event SSE. MODELS ONLY — perakitan di app/helpers/response.py.
 
-Alur chat: started -> [token... (v0.1)] -> result | error(terminal).
-`type` di sini = jenis EVENT (started/result/error), bukan RFC `type`.
+Alur chat (v0.1, BEKU): started -> token*/thinking*/tool_start/tool_end -> result | error(terminal).
+Terminator = stream close (tidak ada baris `[DONE]` agar parser JSON-per-baris lama tak pecah).
+`type` di sini = jenis EVENT, bukan RFC `type`.
 """
 
 from __future__ import annotations
@@ -15,6 +16,39 @@ from app.schemas.common import JobStatus
 
 class StreamStarted(BaseModel):
     type: Literal["started"] = "started"
+
+
+class StreamToken(BaseModel):
+    """Delta teks jawaban. FE: append ke bubble jawaban."""
+
+    type: Literal["token"] = "token"
+    delta: str = ""
+
+
+class StreamThinking(BaseModel):
+    """Delta reasoning/thinking. FE: tampilkan collapsible terpisah, JANGAN gabung ke jawaban.
+
+    v0.1: envelope dibekukan, event belum pernah dipancarkan (ChatOpenAI membuang
+    reasoning — diisi beneran di v0.2 via ChatLiteLLM).
+    """
+
+    type: Literal["thinking"] = "thinking"
+    delta: str = ""
+
+
+class StreamToolStart(BaseModel):
+    """LLM mulai panggil tool. FE: tampilkan indikator (mis. '⏳ cek stok...')."""
+
+    type: Literal["tool_start"] = "tool_start"
+    tool: str = Field(examples=["check_stock"])
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
+class StreamToolEnd(BaseModel):
+    """Tool selesai. Output tool SENGAJA tidak dibawa (hemat payload; hasil akhir ada di result)."""
+
+    type: Literal["tool_end"] = "tool_end"
+    tool: str = Field(examples=["check_stock"])
 
 
 class StreamResult(BaseModel):
