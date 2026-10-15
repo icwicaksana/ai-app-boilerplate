@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-boilerplate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ai_boilerplate
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    container_name: ai-boilerplate-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/ai_boilerplate
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gpt-4o-mini}
+      HITL_ENABLED: "false"
+      LOG_LEVEL: INFO
+      PHOENIX_ENABLED: ${PHOENIX_ENABLED:-false}
+      # Phoenix jalan di compose terpisah (../../Infra). Dari container ini,
+      # host.docker.internal = laptop host (Windows/Mac Docker Desktop).
+      PHOENIX_ENDPOINT: ${PHOENIX_ENDPOINT:-http://host.docker.internal:6006/v1/traces}
+      PHOENIX_PROJECT: ${PHOENIX_PROJECT:-boilerplate-v0}
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:

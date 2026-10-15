@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtualenv (dibuat via setup.ps1, 1 shared .venv di root repo)
+.venv/
+venv/
+ENV/
+
+# Env & secrets — JANGAN PERNAH commit!
+.env
+.env.local
+*.pem
+*.key
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Logs & lokal
+*.log

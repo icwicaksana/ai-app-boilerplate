@@ -1,0 +1,28 @@
+# v0 — tanpa pin versi (selalu latest). Risiko: major release bisa merusak template.
+# Wajib saat mulai project baru: pip freeze > requirements.lock, commit hasilnya.
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+httpx
+
+# LangChain / LangGraph (sesuai Docs/ 01-core-runtime)
+langchain
+langchain-core
+langchain-openai
+langgraph
+# Checkpointer Postgres (dipakai hanya jika DATABASE_URL diisi)
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
+
+# Test
+pytest
+pytest-asyncio
+
+# Observability Phoenix (opsional — app jalan tanpanya jika PHOENIX_ENABLED=false)
+# arize-phoenix-otel = paket ringan khusus kirim trace (pola resmi docs).
+# Instrumentor di bawah ini yang di-auto-detect oleh register(auto_instrument=True).
+arize-phoenix-otel
+openinference-instrumentation-langchain
+openinference-instrumentation-openai
+opentelemetry-exporter-otlp
