@@ -54,6 +54,56 @@ class ResumeNotAvailableError(AppError):
         )
 
 
+class StorageUnavailableError(AppError):
+    def __init__(self, message: str = "Penyimpanan (Postgres) belum siap."):
+        super().__init__(message, status_code=503, code="STORAGE_UNAVAILABLE",
+                         title="Storage Unavailable")
+
+
+class InvalidThreadIdError(AppError):
+    def __init__(self, thread_id: str = ""):
+        super().__init__(
+            f"thread_id '{thread_id}' tidak valid — wajib format "
+            "'tenant:user:session' (huruf kecil/angka/dash, contoh "
+            "'toko-a:budi:sess-7f3a2c1e'). Kosongkan untuk dibuatkan otomatis.",
+            status_code=400,
+            code="INVALID_THREAD_ID",
+            title="Invalid Thread ID",
+        )
+
+
+class ThreadNotFoundError(AppError):
+    def __init__(self, thread_id: str = ""):
+        super().__init__(
+            f"Thread '{thread_id}' tidak ditemukan (sudah dihapus atau belum pernah ada).",
+            status_code=404,
+            code="THREAD_NOT_FOUND",
+            title="Thread Not Found",
+        )
+
+
+class CrossTenantError(AppError):
+    def __init__(self):
+        super().__init__(
+            "Thread milik tenant lain — akses ditolak.",
+            status_code=403,
+            code="CROSS_TENANT_DENIED",
+            title="Forbidden",
+        )
+
+
+class InvalidIdentityError(AppError):
+    def __init__(self, detail: str):
+        super().__init__(
+            f"Identitas request tak valid ({detail}). Kirim header "
+            "X-Tenant-ID (3–32 char: huruf kecil/angka/dash) + X-User-ID "
+            "(1–64 char: huruf kecil/angka/dash/underscore).",
+            status_code=400,
+            code="INVALID_IDENTITY",
+            title="Invalid Identity",
+        )
+
+
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,

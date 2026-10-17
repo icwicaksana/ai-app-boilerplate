@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.routes import chat, health, jobs, resume
+from app.api.v1.routes import chat, health, jobs, resume, threads
 
 router = APIRouter()
 router.include_router(health.router)
 router.include_router(chat.router)
 router.include_router(jobs.router)
 router.include_router(resume.router)
+router.include_router(threads.router)

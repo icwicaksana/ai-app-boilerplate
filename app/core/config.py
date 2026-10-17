@@ -15,8 +15,13 @@ class Settings(BaseSettings):
     # CORS: koma-dipisah. Kosong = tolak semua origin browser (paling aman).
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
-    # Postgres — kosong = memory checkpointer (dev cepat tanpa docker)
+    # Postgres app-db (v0.3+): WAJIB. Tanpa fallback memory — app tolak start
+    # bila kosong/tak terjangkau (fail-fast, lihat lifespan di app/main.py).
     DATABASE_URL: str = ""
+
+    # Pool koneksi (satu pool dipakai checkpointer + store bersama).
+    DB_POOL_MIN: int = 2
+    DB_POOL_MAX: int = 10
 
     # LLM — single gateway LiteLLM proxy (v0.2, ADR-01). Tanpa cabang direct.
     # Model/provider diatur di proxy (UI :4000/ui); app hanya tahu nama model + key.

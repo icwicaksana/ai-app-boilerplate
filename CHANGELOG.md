@@ -2,6 +2,41 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.3 (2026-10-17) — Persistence+ (pool, memori, thread final, API state)
+- BREAKING: `DATABASE_URL` wajib (app-db Postgres); kosong/tak terjangkau = tolak
+  start (fail-fast). Fallback memory + `get_checkpointer(url)`/`is_postgres_configured`
+  DIHAPUS. Lihat migration note di README.
+- BREAKING: `thread_id` kanonis `tenant:user:session` (regex beku); format lama
+  (`thr-*/run-*`) ditolak 400; header `X-Tenant-ID`/`X-User-ID` wajib; silang
+  pemilik = 403. `resolve_thread_config(identity, thread)` ganti signature.
+- Pool: 1 `AsyncConnectionPool` (min=2/max=10 via env) dipakai checkpointer+store;
+  kwargs koneksi meniru `from_conn_string` resmi (autocommit/dict_row); buka di
+  lifespan, tutup saat shutdown. Windows: selector event-loop policy (D-10) +
+  server WAJIB `--loop asyncio:SelectorEventLoop` (uvicorn memaksa Proactor bila
+  tanpa flag; lifespan gagal cepat dengan pesan aksi bila lupa).
+- ADR-11: graph TETAP dibangun per request (bukan 1/worker) — instance LLM
+  mengikat header spend per thread; pool yang menyelesaikan konkurensi.
+- Memori: `MemoryStore` (namespace `tenants/{t}/users/{u}`) — profil merge +
+  fakta; injeksi profil sebagai SystemMessage (fail-soft); tulis gabungan:
+  heuristik (`ingat...`/`nama saya...`) + tool `save_memory` factory-bound
+  (tolak rahasia). Pipeline sengaja tanpa store.
+- API thread: `GET state/history` (paginasi, terbaru dulu), `POST fork`
+  (`{checkpoint_id, agent}`), `DELETE` → 204 (checkpoints saja; store utuh).
+  404 via cek eksplisit (spike: alist/state/delete tak raise untuk asing).
+- Error baru: `STORAGE_UNAVAILABLE` 503, `INVALID_THREAD_ID` 400,
+  `THREAD_NOT_FOUND` 404, `CROSS_TENANT_DENIED` 403. Health: `checks.store` +
+  status pool, version `v0.3`. CORS: tambah `X-Tenant-ID/X-User-ID`.
+- Infra (lokal): service `app-db` (postgres:16-alpine, :5433, volume `app-pgdata`)
+  TERPISAH dari `litellm-db`; kredensial `APP_DB_*` di `Infra/.env`.
+- Tanpa dep baru (`AsyncPostgresStore` sudah di `langgraph-checkpoint-postgres`
+  3.2.0); lock verified identik (140 paket, tanpa bump). Kontrak beku lama TAK berubah.
+- Tests: 133 unit (tanpa docker) + 5 integrasi (app-db live, tanpa LLM).
+- Temuan code-review (diperbaiki sebelum tag): resolve thread di route (400 JSON,
+  bukan SSE 200 kosong); ID stabil pesan profil (anti-duplikat); put_profile baca
+  keras; filter rahasia bersama tool+heuristik; CORS DELETE; fork tolak cid kosong;
+  health probe SELECT 1; fork tahan LITELLM kosong + deepcopy; fakta dikabel ke
+  prompt; namespace lowercase; lifespan tutup pool saat setup gagal.
+
 ## v0.2 (2026-10-15) — LiteLLM gateway + ketahanan chat + spend tracking
 - BREAKING (env): hapus `MODEL_PROVIDER`/`OPENAI_*`/`OPENCODE_*`; LLM 100% via
   gateway LiteLLM (`LITELLM_BASE_URL/API_KEY/MODEL`). Lihat migration note di README.

@@ -1,47 +1,88 @@
-"""Checkpointer factory: Postgres jika DATABASE_URL diisi, memory jika kosong.
+"""Persistence Postgres app-db (v0.3+): 1 pool dipakai checkpointer + store bersama.
 
-- Postgres (AsyncPostgresSaver): wajib untuk produksi — snapshot state per node,
-  mendukung time-travel + HITL resume lintas restart.
-- InMemorySaver: untuk dev cepat tanpa docker. Data hilang saat restart.
+- Pool: `psycopg_pool.AsyncConnectionPool` (min/max dari settings). Dibuka sekali
+  di lifespan startup, ditutup saat shutdown. 1 pool per worker uvicorn.
+- Checkpointer: `AsyncPostgresSaver(pool)` — snapshot state per thread.
+- Store: `AsyncPostgresStore(pool)` — mentah; dibungkus `MemoryStore` per-request
+  (lihat `app/infra/memory.py`) agar namespace tenant/user terkunci.
+- kwargs koneksi MENIRU `from_conn_string` resmi (`autocommit`,
+  `prepare_threshold=0`, `dict_row`) — tanpanya `setup()` gagal dengan
+  `CREATE INDEX CONCURRENTLY cannot run inside a transaction block`.
+- v0.3+: TANPA fallback memory. `DATABASE_URL` kosong/tak terjangkau = app tolak
+  start (fail-fast di lifespan). Test yang butuh DB di-skip bila DB mati.
 
-Controller/agent tidak boleh tahu backend apa yang dipakai — mereka hanya terima
-objek checkpointer dari sini via dependencies.
+Controller/agent tidak boleh tahu detail ini — mereka terima objek jadi via
+`app.core.dependencies` (yang membaca `app.state`).
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
+from typing import TYPE_CHECKING
 
-from langgraph.checkpoint.memory import InMemorySaver
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
+from app.core.config import Settings
 
-def is_postgres_configured(database_url: str) -> bool:
-    return bool(database_url) and "postgres" in database_url.lower()
-
-
-@lru_cache
-def get_checkpointer(database_url: str = ""):
-    """Buat (dan cache) checkpointer. Panggil sekali saat startup."""
-    if is_postgres_configured(database_url):
-        try:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        except ImportError as exc:  # pragma: no cover
-            raise ValueError(
-                "DATABASE_URL Postgres terisi tapi paket "
-                "langgraph-checkpoint-postgres belum terinstall."
-            ) from exc
-        conn_string = database_url.replace("postgresql+psycopg://", "postgresql://")
-        return AsyncPostgresSaver.from_conn_string(conn_string)
-
-    return InMemorySaver()
+if TYPE_CHECKING:  # impor berat hanya untuk type-hint; runtime diimpor lazy
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from langgraph.store.postgres.aio import AsyncPostgresStore
 
 
-def clear_checkpointer_cache() -> None:  # untuk test
-    get_checkpointer.cache_clear()
+def normalize_conninfo(database_url: str) -> str:
+    """Bersihkan URL: strip + skema SQLAlchemy → skema psycopg murni."""
+    url = (database_url or "").strip()
+    return url.replace("postgresql+psycopg://", "postgresql://")
 
 
-async def setup_checkpointer(checkpointer) -> None:
-    """Panggil sekali di lifespan startup. InMemorySaver tidak butuh setup."""
-    setup = getattr(checkpointer, "setup", None)
-    if setup is not None:
-        await setup()
+def create_pool(settings: Settings) -> AsyncConnectionPool:
+    """Buat pool TERTUTUP. Lifespan yang `open()` + `close()` (bukan pemanggil)."""
+    url = normalize_conninfo(settings.DATABASE_URL)
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL kosong. v0.3+ wajib Postgres (tanpa fallback memory). "
+            "Jalankan `docker compose up -d app-db` di folder Infra/, lalu isi "
+            "DATABASE_URL di .env — contoh di .env.example."
+        )
+    pool_min = max(1, int(settings.DB_POOL_MIN))
+    pool_max = max(pool_min, int(settings.DB_POOL_MAX))
+    return AsyncConnectionPool(
+        url,
+        min_size=pool_min,
+        max_size=pool_max,
+        open=False,
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+    )
+
+
+async def open_pool(pool: AsyncConnectionPool) -> None:
+    """Buka pool (buat koneksi awal). Gagal = biarkan raise (fail-fast)."""
+    await pool.open()
+
+
+def get_checkpointer(pool: AsyncConnectionPool) -> AsyncPostgresSaver:
+    """Saver di atas pool bersama. Murah (tanpa I/O) — boleh dipanggil per request."""
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    return AsyncPostgresSaver(pool)
+
+
+def get_store(pool: AsyncConnectionPool) -> AsyncPostgresStore:
+    """Store mentah di atas pool bersama. Namespace dikunci di MemoryStore."""
+    from langgraph.store.postgres.aio import AsyncPostgresStore
+
+    return AsyncPostgresStore(pool)
+
+
+async def setup_persistence(checkpointer, store) -> None:
+    """Buat skema tabel bila belum ada. Idempotent — aman tiap startup."""
+    await checkpointer.setup()
+    await store.setup()
+
+
+async def close_pool(pool: AsyncConnectionPool) -> None:
+    """Tutup pool saat shutdown. Tak pernah raise (shutdown harus bersih)."""
+    try:
+        await pool.close()
+    except Exception:
+        pass

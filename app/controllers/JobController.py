@@ -15,6 +15,7 @@ from app.controllers.registry import JOB_AGENTS
 from app.controllers.runner import Runner
 from app.core.config import Settings
 from app.core.errors import AgentNotFoundError, UpstreamAIError
+from app.core.threads import ThreadIdentity
 from app.helpers.response import job_success
 from app.schemas.job import JobRequest, JobResponse
 
@@ -40,6 +41,7 @@ class JobController(BaseController):
     async def run(
         self,
         req: JobRequest,
+        identity: ThreadIdentity,
         *,
         agent_name: str | None = None,
         request_id: str = "-",
@@ -47,7 +49,7 @@ class JobController(BaseController):
         name = agent_name or self.AGENT_NAME
         started = time.perf_counter()
         self._ensure_agent(name)
-        thread_id, config = self.resolve_thread_config(req.thread_id, "run")
+        thread_id, config = self.resolve_thread_config(identity, req.thread_id)
         try:
             agent = self._agent_for(thread_id, name)
             out = await agent.run_agent(req.payload, config)

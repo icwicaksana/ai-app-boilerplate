@@ -1,15 +1,17 @@
 """Health: liveness + kesiapan DB/LLM/gateway. Tidak pernah 500 — laporkan degraded."""
 
+import asyncio
+
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.core.config import Settings, get_settings
-from app.infra.postgres import is_postgres_configured
 
 router = APIRouter(tags=["health"])
 
-APP_VERSION = "v0.2"
+APP_VERSION = "v0.3"
 _GATEWAY_TIMEOUT_SECONDS = 2.0  # health tak boleh lambat karena gateway
+_DB_PROBE_TIMEOUT_SECONDS = 2.0  # idem karena database
 
 
 async def _gateway_status(settings: Settings) -> str:
@@ -25,23 +27,51 @@ async def _gateway_status(settings: Settings) -> str:
         return f"down ({type(exc).__name__})"
 
 
+async def _persistence_status(request: Request, settings: Settings) -> tuple[str, str]:
+    """Pool + store dari lifespan + probe live `SELECT 1`. Tak pernah raise.
+
+    Keberadaan objek pool TIDAK cukup (DB bisa mati setelah startup) —
+    sehingga health selalu uji 1 query cepat bertimeout.
+    """
+    state = request.app.state
+    pool = getattr(state, "pool", None)
+    store = getattr(state, "store", None)
+    if pool is None:
+        if not (settings.DATABASE_URL or "").strip():
+            problem = "missing DATABASE_URL (wajib sejak v0.3)"
+        else:
+            problem = "not initialized (lifespan belum jalan/gagal?)"
+        return problem, problem
+    try:
+        async with pool.connection() as conn:
+            await asyncio.wait_for(conn.execute("SELECT 1"),
+                                   timeout=_DB_PROBE_TIMEOUT_SECONDS)
+    except Exception as exc:
+        down = f"down ({type(exc).__name__})"
+        return down, down
+    pool_info = f"postgres pool (min={settings.DB_POOL_MIN} max={settings.DB_POOL_MAX})"
+    return pool_info, ("postgres" if store is not None else "not initialized")
+
+
 @router.get("/health")
-async def health(settings: Settings = Depends(get_settings)) -> dict:
+async def health(request: Request, settings: Settings = Depends(get_settings)) -> dict:
     gateway = await _gateway_status(settings)
-    llm_configured = gateway == "ok"
+    checkpointer, store = await _persistence_status(request, settings)
+    ready = gateway == "ok" and checkpointer.startswith("postgres")
     return {
-        "status": "ok" if llm_configured else "degraded",
+        "status": "ok" if ready else "degraded",
         "service": settings.PROJECT_NAME,
         "version": APP_VERSION,
         "checks": {
             "llm": f"litellm:{settings.LITELLM_MODEL or '-'}" if settings.LITELLM_MODEL else "missing LITELLM_MODEL",
             "gateway": gateway,
-            "checkpointer": "postgres" if is_postgres_configured(settings.DATABASE_URL) else "memory",
+            "checkpointer": checkpointer,
+            "store": store,
             "hitl": "enabled" if settings.HITL_ENABLED else "disabled",
         },
     }
 
 
 @router.get("/ready")
-async def ready(settings: Settings = Depends(get_settings)) -> dict:
-    return await health(settings)
+async def ready(request: Request, settings: Settings = Depends(get_settings)) -> dict:
+    return await health(request, settings)

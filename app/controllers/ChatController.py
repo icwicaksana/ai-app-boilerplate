@@ -16,7 +16,9 @@ from app.controllers.runner import Runner
 from app.core.config import Settings
 from app.core.errors import AgentNotFoundError
 from app.core.logging import get_logger
+from app.core.threads import ThreadIdentity, parse_thread_id
 from app.helpers.response import stream_error
+from app.infra.memory import MemoryStore
 from app.schemas.chat import ChatRequest
 
 
@@ -26,8 +28,9 @@ log = get_logger(__name__)
 class ChatController(BaseController):
     AGENT_NAME = "example_chat"  # default; registry = sumber kebenaran
 
-    def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None):
-        super().__init__(settings, checkpointer, runner or Runner())
+    def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None,
+                 store=None):
+        super().__init__(settings, checkpointer, runner or Runner(), store=store)
 
     def _ensure_agent(self, name: str) -> None:
         if name not in CHAT_AGENTS:
@@ -37,16 +40,24 @@ class ChatController(BaseController):
         # Agent dirakit per eksekusi (bukan di __init__) agar session header
         # x-opencode-session = thread_id. Objek controller sendiri sudah per-request,
         # jadi tidak ada biaya tambahan dibanding sebelumnya.
+        # MemoryStore dibungkus per-request (namespace terkunci ke user thread ini).
+        memory = None
+        if self.store is not None:
+            tenant, user, _ = parse_thread_id(thread_id)  # sudah valid (resolve dulu)
+            memory = MemoryStore(self.store, tenant, user)
         ctx = AgentContext(
             settings=self.settings, checkpointer=self.checkpointer,
-            runner=self.runner, session_id=thread_id,
+            runner=self.runner, session_id=thread_id, store=memory,
         )
         return CHAT_AGENTS[agent_name](ctx)
 
-    async def stream(self, req: ChatRequest, *, request_id: str = "-"):
+    async def stream(self, req: ChatRequest, identity: ThreadIdentity, *,
+                     request_id: str = "-"):
         started = time.perf_counter()
         self._ensure_agent(req.agent)
-        thread_id, config = self.resolve_thread_config(req.thread_id, "thr")
+        # Resolve di sini TETAP wajib (controller tak percaya route): idempotent —
+        # route sudah pre-resolve untuk JSON 400/403 (lihat routes/chat.py).
+        thread_id, config = self.resolve_thread_config(identity, req.thread_id)
         try:
             agent = self._agent_for(thread_id, req.agent)
         except Exception as exc:

@@ -11,8 +11,12 @@ class ChatRequest(BaseModel):
     agent: str = Field(default="example_chat", examples=["example_chat"])
     thread_id: str | None = Field(
         default=None,
-        description="Kosong = buatkan baru (uuid). Isi = lanjutkan percakapan.",
-        examples=["thread-abc-123"],
+        description=(
+            "Format beku v0.3: 'tenant:user:session' (contoh 'toko-a:budi:sess-7f3a2c1e'). "
+            "Kosong = server susun dari header X-Tenant-ID/X-User-ID. "
+            "Wajib milik pemanggil; format lama (thr-xxx) ditolak 400."
+        ),
+        examples=["toko-a:budi:sess-7f3a2c1e"],
     )
     input: str = Field(min_length=1, max_length=8000, examples=["stok ITEM-99 berapa?"])
     metadata: RunMetadata = Field(default_factory=RunMetadata)

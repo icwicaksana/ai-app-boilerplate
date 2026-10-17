@@ -40,8 +40,8 @@ if (-not (Test-Path ".env")) {
 }
 
 if (-not $SkipTests) {
-    Write-Host ">> pytest ..."
-    & $venvPy -m pytest tests/ -q -p no:cacheprovider
+    Write-Host ">> pytest (unit; integrasi butuh docker: pytest tests/ -m integration) ..."
+    & $venvPy -m pytest tests/ -q -p no:cacheprovider -m "not integration"
 }
 
-Write-Host ">> OK. Jalan: .venv/Scripts/python.exe -m uvicorn app.main:app --reload"
+Write-Host ">> OK. Jalan: .venv/Scripts/python.exe -m uvicorn app.main:app --reload --loop asyncio:SelectorEventLoop"

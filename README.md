@@ -9,12 +9,20 @@ Pola: `Route -> Controller -> Agent`. Lihat `CHANGELOG.md` untuk riwayat versi.
 ## Mulai cepat (dari clone fresh)
 
 ```powershell
-git clone https://github.com/icwicaksana/ai-app-boilerplate.git
-cd ai-app-boilerplate
-.\setup.ps1            # buat .venv + install + pytest (copy .env.example → .env)
-# ISI API KEY di .env dulu, lalu:
-.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+# 1) Nyalakan DB aplikasi (WAJIB sejak v0.3 — di repo Infra terpisah)
+cd ..\Infra
+docker compose up -d app-db        # localhost:5433 (isi APP_DB_* di Infra/.env dulu)
+
+# 2) Setup BE
+cd ..\ai-app-boilerplate
+.\setup.ps1            # buat .venv + install + pytest unit (copy .env.example → .env)
+# ISI .env dulu (DATABASE_URL + LITELLM_API_KEY + LITELLM_MODEL), lalu:
+.venv\Scripts\python.exe -m uvicorn app.main:app --reload --loop asyncio:SelectorEventLoop
 ```
+
+> Flag `--loop asyncio:SelectorEventLoop` WAJIB di Windows (uvicorn default =
+> Proactor yang ditolak psycopg; server gagal cepat dengan pesan aksi bila lupa).
+> Di Linux/Mac flag ini no-op (sudah selector) — aman dipakai di mana saja.
 
 Cek:
 
@@ -22,10 +30,19 @@ Cek:
 curl http://localhost:8000/api/v1/health
 curl -N -X POST http://localhost:8000/api/v1/chat/stream \
   -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: toko-a" -H "X-User-ID: budi" \
   -d '{"agent":"example_chat","input":"stok ITEM-99 berapa?"}'
 curl -X POST http://localhost:8000/api/v1/jobs/example_pipeline \
   -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: toko-a" -H "X-User-ID: budi" \
   -d '{"payload": {"items": []}}'
+```
+
+Test integrasi (butuh app-db jalan):
+
+```powershell
+$env:TEST_DATABASE_URL='postgresql+psycopg://app:<pass>@localhost:5433/appdb'
+.venv\Scripts\python.exe -m pytest tests/ -q -m integration
 ```
 
 ## Konsep (ringkas)
@@ -61,7 +78,8 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 
 | Key | Default | Keterangan |
 |---|---|---|
-| `DATABASE_URL` | kosong (memory) | Jika diisi `postgresql...`, checkpointer pakai Postgres. Jika kosong, pakai `InMemorySaver` agar bisa jalan tanpa docker. |
+| `DATABASE_URL` | wajib | Postgres app-db, mis. `postgresql+psycopg://app:...@localhost:5433/appdb`. Kosong = app TOLAK start (fail-fast, tanpa fallback memory). |
+| `DB_POOL_MIN` / `DB_POOL_MAX` | `2` / `10` | Pool koneksi (1 pool per worker, dipakai checkpointer+store bersama). |
 | `LITELLM_BASE_URL` | `http://localhost:4000` | Gateway LiteLLM (wajib jalan; tanpa fallback direct). |
 | `LITELLM_API_KEY` | wajib | Virtual key per project (buat di UI proxy, BUKAN master key). |
 | `LITELLM_MODEL` | wajib | Nama model di proxy (lihat UI → Models). |
@@ -79,6 +97,10 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 |---|---|
 | `GET /api/v1/health` (+ `/ready`) | Liveness + cek DB/LLM (degraded, bukan 500). |
 | `POST /api/v1/chat/stream` | Chat SSE token-level (v0.1). `{"agent","thread_id?","input"}` -> event `data: {...}` |
+| `GET /api/v1/threads/{thread_id}/state` | Snapshot terakhir thread (v0.3). `thread_id` di path wajib URL-encode (`:` → `%3A`). |
+| `GET /api/v1/threads/{thread_id}/history?limit=&offset=` | Daftar checkpoint, terbaru dulu (v0.3). |
+| `POST /api/v1/threads/{thread_id}/fork` | Cabang baru dari 1 checkpoint: `{"checkpoint_id","agent"}` (v0.3). |
+| `DELETE /api/v1/threads/{thread_id}` | Hapus riwayat thread → `204` (profil memori TIDAK ikut terhapus) (v0.3). |
 
 ## Event SSE (v0.1, beku)
 
@@ -119,33 +141,53 @@ DILARANG membungkus envelope baru atau success-berisi-error (lihat docstring fil
 ```text
 ai-app-boilerplate/
   app/
-    main.py
-    core/               # config, logging, errors, dependencies
-    api/v1/routes/      # health, chat (SSE), jobs, resume (tipis)
-    schemas/            # kontrak request/response (Pydantic)
-    controllers/        # base, registry, runner, ChatController, JobController
-    helpers/            # response.py: job_success/error + stream_* builders
-    agents/             # BaseChatAgent/BasePipelineAgent + AgentContext,
+    main.py               # lifespan: buka pool + setup persistence (fail-fast)
+    core/                 # config, logging, errors, dependencies, threads (ID kanonis)
+    api/v1/routes/        # health, chat (SSE), jobs, resume (stub), threads (state)
+    schemas/              # kontrak request/response (Pydantic, termasuk threads.py)
+    controllers/          # base, registry, runner, Chat/Job/ThreadController
+    helpers/              # response.py: job_success/error + stream_* builders
+    agents/               # BaseChatAgent (+memori)/BasePipelineAgent + AgentContext,
                         # Example/Template chat + pipeline,
                         # utils/, state/, tools/, middleware/
-    infra/              # postgres (checkpointer), llm (factory), phoenix (tracing)
-  tests/                # health, kontrak, pipeline, message utils, OOP, SSE
+    infra/                # postgres (pool), memory (MemoryStore), llm (factory), phoenix
+  tests/                  # unit (+ integration/ yg butuh app-db live)
   requirements.txt (+ .lock saat rilis)
-  docker-compose.yml    # api + postgres
   Dockerfile
   .env.example
   setup.ps1 / export.ps1
   CHANGELOG.md
 ```
 
+## Thread-ID + identitas (v0.3, beku)
+
+Format kanonis: **`tenant:user:session`** (huruf kecil, contoh `toko-a:budi:sess-7f3a2c1e`).
+`thread_id` kosong → server susun dari header. Format lama (`thr-xxx`) ditolak `400`.
+
+| Header | Wajib | Keterangan |
+|---|---|---|
+| `X-Tenant-ID` | ya | mis. `toko-a` (3–32 char). v0.3: tepercaya; v0.4: dari JWT. |
+| `X-User-ID` | ya | mis. `budi` (1–64 char). |
+| `X-Request-ID` | tidak | Idempotency/tracing key (TERPISAH dari thread_id). |
+
+Akses silang tenant/user → `403`. Thread asing → `404`.
+
+## Memori user (v0.3)
+
+Chat otomatis membaca profil user (`MemoryStore`, namespace `tenants/{t}/users/{u}`)
+dan menyisipkannya ke prompt. Tulis terjadi dua jalur: heuristik
+(`"ingat ya: ..."`, `"nama saya ..."`) + tool `save_memory` saat user meminta
+eksplisit. Rahasia (password/OTP/kartu) ditolak disimpan. Store mati → chat
+tetap jalan tanpa profil (fail-soft); Postgres mati → app tolak start (fail-fast).
+
 ## Catatan (yang sengaja belum ada)
 
-* Tanpa auth / multi-tenant (disiapkan di schema `metadata`).
-* Tanpa MongoDB (Postgres saja).
-* Tanpa vectorstore / RAG (slot di `tools/`).
-* Event `thinking` belum dipancarkan (diisi reasoning di v0.2).
+* Tanpa auth penuh — identitas dari header tepercaya (JWT di v0.4).
+* Tanpa Redis/cache/rate-limit (v0.4), WebSocket (v0.5), HITL aktif (v0.6).
+* Tanpa vectorstore / RAG (v0.7) — `MemoryStore` hanya fakta kecil, bukan dokumen.
+* Ekstraksi memori masih heuristik (LLM-based ditunda).
 * HITL OFF: middleware + `resume.py` hanya stub.
-* Single-gateway LiteLLM di v0.2 (cabang direct dihapus di sana).
+* Single-gateway LiteLLM (cabang direct dihapus sejak v0.2).
 
 ## Observability Phoenix (opsional)
 
@@ -153,14 +195,32 @@ ai-app-boilerplate/
 # jalankan Phoenix di mana saja (UI http://localhost:6006)
 pip install -r requirements.txt   # termasuk paket Phoenix/OTel
 # .env: PHOENIX_ENABLED=true
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --loop asyncio:SelectorEventLoop
 # Hit endpoint seperti biasa → buka UI → cari session = thread_id
 ```
 
 Mati default (`PHOENIX_ENABLED=false`): app jalan normal tanpa tracing.
 `thread_id` otomatis jadi session Phoenix (1 thread = 1 percakapan di UI).
 
-## Migrasi v0.1 → v0.2 (wajib baca)
+## Migrasi v0.2 → v0.3 (wajib baca)
+
+**Breaking:**
+
+1. `DATABASE_URL` WAJIB (Postgres `app-db`). Kosong/tak terjangkau → app tolak
+   start. Aksi: `cd ..\Infra; docker compose up -d app-db` (isi `APP_DB_*` di
+   `Infra/.env` dulu), lalu isi `DATABASE_URL` di `.env` BE.
+2. `thread_id` lama (`thr-xxx`/`run-xxx`) DITOLAK `400`. Aksi: kosongkan (server
+   susun `tenant:user:sess-*`) atau kirim format kanonis; sertakan header
+   `X-Tenant-ID` + `X-User-ID` di semua request chat/jobs/threads.
+3. Internal (bila memanggil langsung): `resolve_thread_config(identity, thread)`,
+   controller dari `request.app.state` (bukan dibangun manual),
+   `get_checkpointer(url)`/helper cache DIHAPUS.
+
+**Tidak berubah:** envelope SSE, `JobResponse`, RFC7807, registry, middleware onion,
+atribusi spend proxy. Aditif: 4 endpoint `/threads/*`, tool `save_memory`
+(otomatis, bukan di registry), kolom `store` di health.
+
+## Migrasi v0.1 → v0.2 (arsip)
 
 **Breaking (env):** `MODEL_PROVIDER`/`OPENAI_*`/`OPENCODE_*` DIHAPUS. Semua akses LLM
 wajib lewat gateway LiteLLM (`LITELLM_BASE_URL/API_KEY/MODEL`). Tulis ulang `.env`

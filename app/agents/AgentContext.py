@@ -23,3 +23,4 @@ class AgentContext:
     checkpointer: Any
     runner: Any
     session_id: str | None = None
+    store: Any = None  # MemoryStore per-user (chat) atau None (pipeline/test)

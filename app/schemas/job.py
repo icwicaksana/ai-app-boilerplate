@@ -10,7 +10,13 @@ from app.schemas.common import JobStatus, ResponseMeta, RunMetadata
 
 
 class JobRequest(BaseModel):
-    thread_id: str | None = Field(default=None, description="Kosong = buatkan run_id baru.")
+    thread_id: str | None = Field(
+        default=None,
+        description=(
+            "Format beku v0.3: 'tenant:user:session'. Kosong = server susun dari "
+            "header X-Tenant-ID/X-User-ID. Wajib milik pemanggil (403 bila asing)."
+        ),
+    )
     payload: dict[str, Any] = Field(
         default_factory=dict,
         examples=[{"file_url": "https://example.com/invoice.pdf"}],

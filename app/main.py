@@ -1,8 +1,19 @@
-"""FastAPI factory: create_app() + lifespan (setup checkpointer sekali)."""
+"""FastAPI factory: create_app() + lifespan (buka pool + setup persistence sekali)."""
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from contextlib import asynccontextmanager
+
+# Windows: psycopg async MENOLAK ProactorEventLoop (default Windows).
+# Policy ini mencakup jalur asyncio.run/TestClient/pytest. NAMUN uvicorn CLI
+# memaksa Proactor via loop_factory eksplisit (uvicorn/loops/asyncio.py) —
+# sehingga server WAJIB dijalankan dengan flag berikut (lihat README):
+#   uvicorn app.main:app --loop asyncio:SelectorEventLoop
+# Lifespan juga berjaga: Proactor terdeteksi → gagal cepat dengan pesan aksi.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -16,7 +27,14 @@ from app.core.errors import AppError, app_error_handler, validation_error_handle
 from app.core.logging import get_logger, setup_logging
 from app.helpers.response import job_error
 from app.infra.phoenix import setup_phoenix_tracing
-from app.infra.postgres import get_checkpointer, setup_checkpointer
+from app.infra.postgres import (
+    close_pool,
+    create_pool,
+    get_checkpointer,
+    get_store,
+    open_pool,
+    setup_persistence,
+)
 
 log = get_logger(__name__)
 
@@ -51,28 +69,61 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings.LOG_LEVEL)
+    # Jaga Proactor (Windows): pool psycopg pasti PoolTimeout di atasnya.
+    # Terjadi bila server dijalankan TANPA --loop asyncio:SelectorEventLoop.
+    _proactor = getattr(asyncio, "ProactorEventLoop", None)
+    if _proactor is not None and isinstance(asyncio.get_running_loop(), _proactor):
+        raise RuntimeError(
+            "Event loop Proactor terdeteksi — psycopg async menolaknya. "
+            "Restart server dengan flag: "
+            "uvicorn app.main:app --loop asyncio:SelectorEventLoop"
+        )
+    # v0.3+: FAIL-FAST. DB adalah kebutuhan wajib — jangan start setengah jadi
+    # (data hilang diam-diam lebih buruk dari error jelas di depan).
+    pool = create_pool(settings)  # raise RuntimeError actionable bila URL kosong
     try:
-        checkpointer = get_checkpointer(settings.DATABASE_URL)
-        await setup_checkpointer(checkpointer)
-        app.state.checkpointer = checkpointer
-        log.info("checkpointer ready")
-    except Exception as exc:  # jangan gagalkan startup — health laporkan degraded
-        log.warning("checkpointer setup gagal (lanjut mode degraded): %s", exc)
+        await open_pool(pool)
+    except Exception as exc:
+        raise RuntimeError(
+            "Postgres app-db tak terjangkau. Jalankan "
+            "`docker compose up -d app-db` di folder Infra/ dan pastikan "
+            f"DATABASE_URL benar. Detail: {type(exc).__name__}: {exc}"
+        ) from exc
+    checkpointer = get_checkpointer(pool)
+    store = get_store(pool)
+    try:
+        await setup_persistence(checkpointer, store)  # idempotent
+    except Exception as exc:
+        await close_pool(pool)  # jangan bocorkan pool saat startup gagal
+        raise RuntimeError(
+            "Setup skema Postgres gagal. Pastikan user DB punya hak CREATE "
+            f"dan app-db sehat (`docker compose ps app-db` di Infra/). "
+            f"Detail: {type(exc).__name__}: {exc}"
+        ) from exc
+    app.state.pool = pool
+    app.state.checkpointer = checkpointer
+    app.state.store = store
+    log.info("persistence ready (pool min=%d max=%d)",
+             settings.DB_POOL_MIN, settings.DB_POOL_MAX)
     setup_phoenix_tracing(settings)  # no-op jika disabled/belum install (log di dalam)
     yield
+    await close_pool(pool)
+    log.info("pool closed")
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.PROJECT_NAME, version="v0.2", lifespan=lifespan)
+    app = FastAPI(title=settings.PROJECT_NAME, version="v0.3", lifespan=lifespan)
     origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
     if origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
             allow_credentials=True,
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization", "X-Request-ID",
+                           "X-Tenant-ID", "X-User-ID"],
+            expose_headers=["X-Request-ID"],
         )
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)

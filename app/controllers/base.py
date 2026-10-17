@@ -3,25 +3,21 @@
 from __future__ import annotations
 
 import time
-import uuid
 
 from app.core.errors import AgentNotFoundError
 from app.core.logging import get_logger
+from app.core.threads import ThreadIdentity, compose_thread_id, ensure_owner
 
 
 class BaseController:
     AGENT_NAME = ""
 
-    def __init__(self, settings, checkpointer=None, runner=None):
+    def __init__(self, settings, checkpointer=None, runner=None, store=None):
         self.settings = settings
         self.checkpointer = checkpointer
         self.runner = runner
+        self.store = store  # mentah (AsyncPostgresStore); dibungkus MemoryStore per-request
         self.log = get_logger(self.__class__.__name__)
-
-    @staticmethod
-    def new_thread_id(prefix: str = "thr") -> str:
-        """Retry dengan id sama = lanjutkan, bukan duplikat."""
-        return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
     @staticmethod
     def new_config(thread_id: str) -> dict:
@@ -33,8 +29,18 @@ class BaseController:
         if name != self.AGENT_NAME:
             raise AgentNotFoundError(name)
 
-    def resolve_thread_config(self, req_thread_id: str | None, prefix: str) -> tuple[str, dict]:
-        thread_id = req_thread_id or self.new_thread_id(prefix)
+    def resolve_thread_config(
+        self, identity: ThreadIdentity, req_thread_id: str | None
+    ) -> tuple[str, dict]:
+        """Kosong → compose `tenant:user:sess-*`; isi → parse + cocok pemilik (403).
+
+        Retry dengan id sama = lanjutkan thread, bukan eksekusi ganda.
+        """
+        if not (req_thread_id or "").strip():
+            thread_id = compose_thread_id(identity.tenant, identity.user)
+        else:
+            ensure_owner(identity, req_thread_id)  # raise 400/403 bila tak valid/asing
+            thread_id = req_thread_id.strip().lower()
         return thread_id, self.new_config(thread_id)
 
     def log_done(self, action: str, *, request_id: str, thread_id: str, agent: str, status: str, started: float) -> None:
