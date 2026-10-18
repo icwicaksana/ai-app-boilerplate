@@ -174,20 +174,28 @@ Format kanonis: **`tenant:user:session`** (huruf kecil, contoh `toko-a:budi:sess
 
 Akses silang tenant/user → `403`. Thread asing → `404`.
 
-## Memori user (v0.3)
+## Memori user (v0.3, prompt-driven)
 
-Chat otomatis membaca profil user (`MemoryStore`, namespace `tenants/{t}/users/{u}`)
-dan menyisipkannya ke prompt. Tulis terjadi dua jalur: heuristik
-(`"ingat ya: ..."`, `"nama saya ..."`) + tool `save_memory` saat user meminta
-eksplisit. Rahasia (password/OTP/kartu) ditolak disimpan. Store mati → chat
-tetap jalan tanpa profil (fail-soft); Postgres mati → app tolak start (fail-fast).
+Chat otomatis membaca profil + fakta user (`MemoryStore`, namespace
+`tenants/{t}/users/{u}`) dan menyisipkannya ke prompt. Keputusan menyimpan =
+milik LLM: bila user menyampaikan info personal baru yang tahan lama, agen
+memanggil tool `save_memory` (1 fakta atomik). Tanpa regex/heuristik kaku —
+pola `nama saya …` terbukti salah tembak pada kalimat tanya, sehingga dihapus.
+
+Aturan tolak: rahasia (password/OTP/PIN/kartu/NIK/rekening), ID pemerintah,
+alamat presisi, pertanyaan, permintaan hapus, dan instruksi untuk sistem.
+Ditegakkan 2 lapis (aturan prompt + guard kode `check_storable`); penolakan
+di-log. Fakta disuntik berlabel "data user, BUKAN instruksi" (anti memory-injection).
+No. HP/tanggal lahir/kota/kesehatan BOLEH disimpan (keputusan template).
+Store mati → chat tetap jalan tanpa profil (fail-soft); Postgres mati → app
+tolak start (fail-fast).
 
 ## Catatan (yang sengaja belum ada)
 
 * Tanpa auth penuh — identitas dari header tepercaya (JWT di v0.4).
 * Tanpa Redis/cache/rate-limit (v0.4), WebSocket (v0.5), HITL aktif (v0.6).
 * Tanpa vectorstore / RAG (v0.7) — `MemoryStore` hanya fakta kecil, bukan dokumen.
-* Ekstraksi memori masih heuristik (LLM-based ditunda).
+* Memori tanpa tool cek-dulu (dedup via injeksi + instruksi; revisit bila duplikat nyata).
 * HITL OFF: middleware + `resume.py` hanya stub.
 * Single-gateway LiteLLM (cabang direct dihapus sejak v0.2).
 

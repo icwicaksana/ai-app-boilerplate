@@ -17,10 +17,14 @@ Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
   gagal cepat dengan pesan aksi bila loop salah).
 - ADR-11: graph TETAP dibangun per request (bukan 1/worker) — instance LLM
   mengikat header spend per thread; pool yang menyelesaikan konkurensi.
-- Memori: `MemoryStore` (namespace `tenants/{t}/users/{u}`) — profil merge +
-  fakta; injeksi profil sebagai SystemMessage (fail-soft); tulis gabungan:
-  heuristik (`ingat...`/`nama saya...`) + tool `save_memory` factory-bound
-  (tolak rahasia). Pipeline sengaja tanpa store.
+- Memori prompt-driven: `MemoryStore` (namespace `tenants/{t}/users/{u}`) —
+  profil merge + fakta; injeksi profil+fakta sebagai SystemMessage (fail-soft,
+  berlabel anti-injeksi); keputusan simpan = LLM via tool `save_memory`
+  factory-bound (aturan di deskripsi tool + blok `MEMORY_RULES`). Heuristik
+  regex DIHAPUS (salah tembak pada kalimat tanya — terbukti live).
+  Guard kode `check_storable()`: tolak rahasia/finansial/NIK, injeksi prompt,
+  pertanyaan, permintaan hapus; HP/DOB/kota/kesehatan BOLEH (keputusan).
+  Pipeline sengaja tanpa store.
 - API thread: `GET state/history` (paginasi, terbaru dulu), `POST fork`
   (`{checkpoint_id, agent}`), `DELETE` → 204 (checkpoints saja; store utuh).
   404 via cek eksplisit (spike: alist/state/delete tak raise untuk asing).
@@ -31,12 +35,16 @@ Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
   TERPISAH dari `litellm-db`; kredensial `APP_DB_*` di `Infra/.env`.
 - Tanpa dep baru (`AsyncPostgresStore` sudah di `langgraph-checkpoint-postgres`
   3.2.0); lock verified identik (140 paket, tanpa bump). Kontrak beku lama TAK berubah.
-- Tests: 133 unit (tanpa docker) + 5 integrasi (app-db live, tanpa LLM).
+- Tests: 158 unit (tanpa docker, termasuk tabel natural 28 kasus guard) +
+  5 integrasi (app-db live, tanpa LLM).
 - Temuan code-review (diperbaiki sebelum tag): resolve thread di route (400 JSON,
   bukan SSE 200 kosong); ID stabil pesan profil (anti-duplikat); put_profile baca
-  keras; filter rahasia bersama tool+heuristik; CORS DELETE; fork tolak cid kosong;
+  keras; filter rahasia di tool; CORS DELETE; fork tolak cid kosong;
   health probe SELECT 1; fork tahan LITELLM kosong + deepcopy; fakta dikabel ke
   prompt; namespace lowercase; lifespan tutup pool saat setup gagal.
+- Temuan live-test user (diperbaiki sebelum push): heuristik tulis salah tembak
+  ("siapa nama saya...?" → nama sampah) → heuristik DIHAPUS, tulis full
+  prompt-driven via `save_memory` + guard `check_storable()` + aturan tolak.
 
 ## v0.2 (2026-10-15) — LiteLLM gateway + ketahanan chat + spend tracking
 - BREAKING (env): hapus `MODEL_PROVIDER`/`OPENAI_*`/`OPENCODE_*`; LLM 100% via

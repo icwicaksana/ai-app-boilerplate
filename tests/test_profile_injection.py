@@ -1,7 +1,8 @@
-"""Injeksi profil + tulis heuristik di stream_agent (tanpa DB/LLM).
+"""Injeksi profil + fakta di stream_agent (tanpa DB/LLM).
 
 FakeGraph meniru subset Runner: astream_events v2 + aget_state.
-FakeMemory meniru MemoryStore: get_profile/put_profile/put_fact.
+FakeMemory meniru MemoryStore: get_profile/search_facts (jalur BACA saja —
+tulis = milik LLM via tool save_memory, prompt-driven).
 """
 
 import asyncio
@@ -44,8 +45,6 @@ class FakeMemory:
         self.profile = dict(profile or {})
         self.boom = boom
         self.fact_hits = list(fact_hits or [])
-        self.facts: list = []
-        self.profile_writes: list = []
 
     async def get_profile(self):
         if self.boom:
@@ -56,19 +55,6 @@ class FakeMemory:
         if self.boom:
             raise ConnectionError("db mati")
         return list(self.fact_hits)[:limit]
-
-    async def put_profile(self, patch):
-        if self.boom:
-            raise ConnectionError("db mati")
-        self.profile.update(patch)
-        self.profile_writes.append(dict(patch))
-        return dict(self.profile)
-
-    async def put_fact(self, text):
-        if self.boom:
-            raise ConnectionError("db mati")
-        self.facts.append(text)
-        return "fact:test"
 
 
 def _chunk(text):
@@ -127,28 +113,15 @@ def test_memory_boom_stream_keeps_working():
     assert kinds == ["started", "token", "result"]
 
 
-def test_heuristic_fact_persisted_on_success():
-    graph = FakeGraph([_chunk("siap")], [AIMessage(content="siap")])
-    mem = FakeMemory()
-    events = _run(_collect(_agent(graph, mem), "ingat ya: saya vegetarian"))
-    assert events[-1]["type"] == "result"
-    assert mem.facts == ["saya vegetarian"]
+def test_memory_rules_cover_deny_list():
+    """Blok MEMORY_RULES menyebut semua larangan (cengkeraman redaksional)."""
+    from app.agents.BaseChatAgent import MEMORY_RULES
 
-
-def test_heuristic_name_goes_to_profile():
-    graph = FakeGraph([_chunk("hai")], [AIMessage(content="hai")])
-    mem = FakeMemory()
-    _run(_collect(_agent(graph, mem), "nama saya Budi"))
-    assert mem.profile_writes == [{"nama": "Budi"}]
-    assert mem.facts == []
-
-
-def test_heuristic_skipped_on_failed_turn():
-    graph = FakeGraph([_chunk("a"), RuntimeError("boom")], [])
-    mem = FakeMemory()
-    events = _run(_collect(_agent(graph, mem), "ingat ya: saya vegetarian"))
-    assert events[-1]["type"] == "error"
-    assert mem.facts == [] and mem.profile_writes == []
+    lowered = MEMORY_RULES.lower()
+    for keyword in ("save_memory", "password", "otp", "kartu", "nik",
+                    "alamat", "pertanyaan", "hapus", "instruksi",
+                    "duplikat", "bukan instruksi"):
+        assert keyword in lowered, f"MEMORY_RULES kehilangan kata: {keyword}"
 
 
 def test_facts_wired_into_prompt():
