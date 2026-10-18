@@ -12,8 +12,9 @@ Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 - Pool: 1 `AsyncConnectionPool` (min=2/max=10 via env) dipakai checkpointer+store;
   kwargs koneksi meniru `from_conn_string` resmi (autocommit/dict_row); buka di
   lifespan, tutup saat shutdown. Windows: selector event-loop policy (D-10) +
-  server WAJIB `--loop asyncio:SelectorEventLoop` (uvicorn memaksa Proactor bila
-  tanpa flag; lifespan gagal cepat dengan pesan aksi bila lupa).
+  entrypoint kanonis `python -m app.main` (loop selector otomatis; uvicorn CLI
+  memaksa Proactor bila tanpa flag `--loop asyncio:SelectorEventLoop`; lifespan
+  gagal cepat dengan pesan aksi bila loop salah).
 - ADR-11: graph TETAP dibangun per request (bukan 1/worker) — instance LLM
   mengikat header spend per thread; pool yang menyelesaikan konkurensi.
 - Memori: `MemoryStore` (namespace `tenants/{t}/users/{u}`) — profil merge +

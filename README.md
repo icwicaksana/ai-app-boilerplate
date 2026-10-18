@@ -17,12 +17,14 @@ docker compose up -d app-db        # localhost:5433 (isi APP_DB_* di Infra/.env 
 cd ..\ai-app-boilerplate
 .\setup.ps1            # buat .venv + install + pytest unit (copy .env.example → .env)
 # ISI .env dulu (DATABASE_URL + LITELLM_API_KEY + LITELLM_MODEL), lalu:
-.venv\Scripts\python.exe -m uvicorn app.main:app --reload --loop asyncio:SelectorEventLoop
+.venv\Scripts\python.exe -m app.main   # reload ON, port 8000 (ubah via $env:PORT)
 ```
 
-> Flag `--loop asyncio:SelectorEventLoop` WAJIB di Windows (uvicorn default =
-> Proactor yang ditolak psycopg; server gagal cepat dengan pesan aksi bila lupa).
-> Di Linux/Mac flag ini no-op (sudah selector) — aman dipakai di mana saja.
+> `python -m app.main` adalah cara jalan kanonis: loop selector dipilih otomatis
+> di Windows (wajib psycopg; uvicorn default = Proactor yang ditolak), `auto`
+> di Linux/Mac. Alternatif mentah: `uvicorn app.main:app --reload
+> --loop asyncio:SelectorEventLoop`. Server gagal cepat dengan pesan aksi bila
+> loop salah (tanpa tebak-tebakan PoolTimeout).
 
 Cek:
 
@@ -195,7 +197,7 @@ tetap jalan tanpa profil (fail-soft); Postgres mati → app tolak start (fail-fa
 # jalankan Phoenix di mana saja (UI http://localhost:6006)
 pip install -r requirements.txt   # termasuk paket Phoenix/OTel
 # .env: PHOENIX_ENABLED=true
-uvicorn app.main:app --reload --loop asyncio:SelectorEventLoop
+.venv\Scripts\python.exe -m app.main
 # Hit endpoint seperti biasa → buka UI → cari session = thread_id
 ```
 

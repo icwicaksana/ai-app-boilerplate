@@ -44,4 +44,4 @@ if (-not $SkipTests) {
     & $venvPy -m pytest tests/ -q -p no:cacheprovider -m "not integration"
 }
 
-Write-Host ">> OK. Jalan: .venv/Scripts/python.exe -m uvicorn app.main:app --reload --loop asyncio:SelectorEventLoop"
+Write-Host ">> OK. Jalan: .venv/Scripts/python.exe -m app.main"

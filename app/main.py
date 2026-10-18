@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from contextlib import asynccontextmanager
 
 # Windows: psycopg async MENOLAK ProactorEventLoop (default Windows).
 # Policy ini mencakup jalur asyncio.run/TestClient/pytest. NAMUN uvicorn CLI
 # memaksa Proactor via loop_factory eksplisit (uvicorn/loops/asyncio.py) —
-# sehingga server WAJIB dijalankan dengan flag berikut (lihat README):
-#   uvicorn app.main:app --loop asyncio:SelectorEventLoop
-# Lifespan juga berjaga: Proactor terdeteksi → gagal cepat dengan pesan aksi.
+# sehingga cara jalan KANONIS adalah `python -m app.main` (lihat __main__ di
+# bawah: loop selector dipilih otomatis). Lifespan juga berjaga: Proactor
+# terdeteksi → gagal cepat dengan pesan aksi.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -75,8 +76,8 @@ async def lifespan(app: FastAPI):
     if _proactor is not None and isinstance(asyncio.get_running_loop(), _proactor):
         raise RuntimeError(
             "Event loop Proactor terdeteksi — psycopg async menolaknya. "
-            "Restart server dengan flag: "
-            "uvicorn app.main:app --loop asyncio:SelectorEventLoop"
+            "Jalankan server via `python -m app.main` (loop otomatis benar), "
+            "atau uvicorn CLI dengan flag `--loop asyncio:SelectorEventLoop`."
         )
     # v0.3+: FAIL-FAST. DB adalah kebutuhan wajib — jangan start setengah jadi
     # (data hilang diam-diam lebih buruk dari error jelas di depan).
@@ -134,3 +135,15 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":  # python -m app.main (cara jalan KANONIS, lintas OS)
+    import uvicorn
+
+    # Windows: loop selector eksplisit (uvicorn default = Proactor = PoolTimeout).
+    # Linux/Mac: "auto" (boleh uvloop bila terinstall — tercepat di sana).
+    _loop = "asyncio:SelectorEventLoop" if sys.platform == "win32" else "auto"
+    _port = int(os.environ.get("PORT", "8000"))
+    _reload = os.environ.get("RELOAD", "true").lower() in ("1", "true", "yes")
+    uvicorn.run("app.main:app", host="127.0.0.1", port=_port,
+                reload=_reload, loop=_loop)
