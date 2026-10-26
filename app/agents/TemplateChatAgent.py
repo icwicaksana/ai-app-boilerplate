@@ -38,12 +38,16 @@ class TemplateChatAgent(BaseChatAgent):
     # TOOLS = [check_stock]
     TOOLS = list(SHARED_TOOLS)
 
-    # --- preprocess / postprocess: murni, tanpa LLM/DB (mudah di-test) ---
-    def preprocess(self, data: str | dict | None) -> str | dict:
-        if isinstance(data, str):
-            return data.strip()  # SESUAIKAN: mis. lowercase, batasi 2000 char
-        return super().preprocess(data)
+    def __init__(self, ctx):
+        # Template = pedoman copy-paste, BUKAN agen hidup (sejajar dengan
+        # TemplatePipelineAgent yang abstract): cegah serve prompt [ISI].
+        if "[ISI]" in (self.SYSTEM_PROMPT or "") or \
+                self.AGENT_NAME == "template_chat":
+            raise TypeError(
+                "TemplateChatAgent jangan dipakai langsung — copy file ini "
+                "jadi CsAgent dsb. dahulu (lihat docstring modul).")
+        super().__init__(ctx)
 
-    def postprocess(self, reply: str) -> dict:
-        # SESUAIKAN: mis. {"reply": reply, "citations": [...]}
-        return {"reply": reply}
+    # SENGAJA tanpa override preprocess/postprocess: inherit Base apa adanya.
+    # Tambahkan override hanya bila ada kustomisasi NYATA (contoh:
+    # ExampleChatAgent.preprocess cap 2000 char).

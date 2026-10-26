@@ -31,12 +31,16 @@ def coerce_llm_text(content: Any) -> str:
             for b in content
             if isinstance(b, dict) and b.get("type") in ("text", "output_text")
         ]
-        # fallback: block tanpa type tapi ada text (provider lama)
+        # fallback: block tanpa type tapi ada text (provider lama). WAJIB
+        # kecualikan thinking/redacted_tool (temuan: fallback lama membocorkan
+        # reasoning ke reply bila provider taruh reasoning di field text).
         if not texts:
             texts = [
                 str(b.get("text", ""))
                 for b in content
-                if isinstance(b, dict) and "text" in b and b.get("type") != "tool_use"
+                if isinstance(b, dict) and "text" in b
+                and b.get("type") not in ("tool_use", *THINKING_BLOCK_TYPES,
+                                          "redacted_thinking")
             ]
         return "".join(texts).strip()
     return str(content).strip()

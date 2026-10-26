@@ -35,10 +35,20 @@ class ThreadIdentity:
         return f"{self.tenant}:{self.user}"
 
 
-def _canon_seg(value: str, seg_re: re.Pattern, name: str) -> str:
+def canon_segment(value: str | None, name: str) -> str:
+    """Kanonisasi 1 segmen identitas (strip + lowercase + validasi charset).
+
+    Satu-satunya tempat normalisasi case/whitespace — pemanggil (termasuk
+    `namespace_for` di infra/memory) dilarang `.strip().lower()` sendiri.
+    """
+    seg_re = {"tenant": TENANT_RE, "user": USER_RE, "session": SESSION_RE}.get(name)
+    if seg_re is None:
+        raise ValueError(f"segmen identitas tak dikenal: {name!r}")
     seg = (value or "").strip().lower()
     if not seg_re.match(seg):
-        raise InvalidThreadIdError(f"<{name} '{value}' tak memenuhi pola>")
+        # Bungkus sebagai thread_id agar constructor memberi 1 pesan final
+        # yang jelas (tanpa double-wrap): "thread_id 'session:xxx' tidak valid".
+        raise InvalidThreadIdError(f"{name}:{value}")
     return seg
 
 
@@ -53,11 +63,9 @@ def parse_thread_id(raw: str) -> tuple[str, str, str]:
 
 def compose_thread_id(tenant: str, user: str, session: str | None = None) -> str:
     """Susun ID kanonis. session kosong → `sess-<12hex>` dari server."""
-    t = _canon_seg(tenant, TENANT_RE, "tenant")
-    u = _canon_seg(user, USER_RE, "user")
-    s = session.strip().lower() if session else f"sess-{uuid.uuid4().hex[:12]}"
-    if not SESSION_RE.match(s):
-        raise InvalidThreadIdError(f"{t}:{u}:{session}")
+    t = canon_segment(tenant, "tenant")
+    u = canon_segment(user, "user")
+    s = canon_segment(session, "session") if session else f"sess-{uuid.uuid4().hex[:12]}"
     return f"{t}:{u}:{s}"
 
 

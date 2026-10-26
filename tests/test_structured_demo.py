@@ -123,11 +123,17 @@ def test_narrate_self_correct_once_then_ok():
     assert out["structured"]["anomaly"] == "A."
 
 
-def test_narrate_fallback_free_text_when_structured_dead():
+def test_narrate_fallback_deterministic_when_structured_dead():
+    """v0.3.1: structured gagal 2x → render deterministik dari Python.
+
+    Jaminan "LLM tak bisa karang angka" dipertahankan bahkan saat fallback:
+    angka 100% dari totals, insight kosong, tanpa `structured`.
+    """
     ag = _agent_with(_FakeLLM([ValueError("x"), ValueError("y")],
                               fallback_text="ringkasan bebas"))
     out = ag._node_narrate({"totals": {"total_income": 1.0}})
-    assert out["final"] == "ringkasan bebas"
+    assert "1.0" in out["final"]  # angka dari Python, bukan LLM
+    assert "ringkasan bebas" not in out["final"]  # LLM tak dipakai samasekali
     assert "structured" not in out  # → output.data absen (kontrak aditif)
 
 

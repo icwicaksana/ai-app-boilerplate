@@ -19,7 +19,8 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
-# Default starter UMKM — naikkan per klien bila perlu (nanti: env-override).
+# Default starter UMKM bila settings tak menyebut (mis. settings palsu di test
+# lama) — sumber kebenaran adalah Settings (env-override per klien).
 TOOL_CALL_THREAD_LIMIT = 15
 TOOL_CALL_PER_TOOL_LIMIT = 5
 CONTEXT_TRIGGER_TOKENS = 8000
@@ -50,17 +51,29 @@ def build_middleware(settings: Settings, tools: list | None = None) -> list:
         log.warning("middleware langchain tak tersedia: %s", exc)
         return []
 
+    thread_limit = getattr(settings, "TOOLCALL_THREAD_LIMIT",
+                           TOOL_CALL_THREAD_LIMIT)
+    per_tool_limit = getattr(settings, "TOOLCALL_PER_TOOL_LIMIT",
+                             TOOL_CALL_PER_TOOL_LIMIT)
+    trigger = getattr(settings, "CONTEXT_TRIGGER_TOKENS",
+                      CONTEXT_TRIGGER_TOKENS)
+    keep = getattr(settings, "CONTEXT_KEEP_LAST_USES",
+                   CONTEXT_KEEP_LAST_TOOL_USES)
+
     # 1. Rem: total per thread + per tool (butuh daftar tools aktual).
-    stack.append(ToolCallLimitMiddleware(thread_limit=TOOL_CALL_THREAD_LIMIT))
+    stack.append(ToolCallLimitMiddleware(thread_limit=thread_limit))
     for tool in tools or []:
-        name = getattr(tool, "name", None) or str(tool)
+        # Satu instance per tool-name (semantik langchain: limit per nama);
+        # tool tanpa nama dilewati (bukan str(tool) sampah sebagai nama).
+        name = getattr(tool, "name", None)
+        if not name:
+            continue
         stack.append(ToolCallLimitMiddleware(
-            tool_name=name, thread_limit=TOOL_CALL_PER_TOOL_LIMIT))
+            tool_name=str(name), thread_limit=per_tool_limit))
 
     # 2. Kebersihan konteks: buang tool-call lama saat > ambang, sisakan N terakhir.
     stack.append(ContextEditingMiddleware(edits=[
-        ClearToolUsesEdit(trigger=CONTEXT_TRIGGER_TOKENS,
-                          keep=CONTEXT_KEEP_LAST_TOOL_USES),
+        ClearToolUsesEdit(trigger=trigger, keep=keep),
     ]))
 
     # 3. Jaring pengaman tool error → ToolMessage (agen lanjut, bukan crash).

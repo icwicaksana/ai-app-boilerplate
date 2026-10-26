@@ -14,7 +14,7 @@ from app.controllers.base import BaseController
 from app.controllers.registry import CHAT_AGENTS
 from app.controllers.runner import Runner
 from app.core.config import Settings
-from app.core.errors import AgentNotFoundError
+from app.core.errors import AgentNotFoundError, AppError, UpstreamAIError
 from app.core.logging import get_logger
 from app.core.threads import ThreadIdentity, parse_thread_id
 from app.helpers.response import stream_error
@@ -54,24 +54,61 @@ class ChatController(BaseController):
     async def stream(self, req: ChatRequest, identity: ThreadIdentity, *,
                      request_id: str = "-"):
         started = time.perf_counter()
-        self._ensure_agent(req.agent)
-        # Resolve di sini TETAP wajib (controller tak percaya route): idempotent —
-        # route sudah pre-resolve untuk JSON 400/403 (lihat routes/chat.py).
-        thread_id, config = self.resolve_thread_config(identity, req.thread_id)
+        terminal = "completed"  # status AKHIR untuk log (jangan selalu completed)
+        try:
+            # Resolve + agent-lookup DI SINI (controller tak percaya route):
+            # idempotent dengan pre-validate route. Raise AppError (400/403/
+            # 404) DITANGKAP → event error terminal (jangan pernah raise dari
+            # generator: respons sudah terlanjur 200 — temuan B3).
+            thread_id, config = self.resolve_thread_config(identity, req.thread_id)
+            self._ensure_agent(req.agent)
+        except AppError as exc:
+            terminal = "error"
+            log.warning("chat stream ditolak pre-run: %s", exc.code)
+            yield {"thread_id": req.thread_id or "-", "request_id": request_id,
+                   **stream_error(detail=exc.message, title=exc.title,
+                                  status=exc.status_code, code=exc.code,
+                                  request_id=request_id)}
+            return
         try:
             agent = self._agent_for(thread_id, req.agent)
+        except UpstreamAIError as exc:
+            terminal = "error"
+            log.exception("chat init gagal (upstream)")
+            yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
+                detail=exc.message, title=exc.title, status=exc.status_code,
+                code=exc.code, request_id=request_id)}
+            return
         except Exception as exc:
+            terminal = "error"
             log.exception("chat init gagal")
-            yield {"thread_id": thread_id, **stream_error(
+            yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
                 detail=f"{type(exc).__name__}: {exc}", request_id=request_id)}
             return
         try:
             async for event in agent.stream_agent(req.input, config):
+                if event.get("type") == "error":
+                    terminal = "error"
+                elif event.get("type") == "result" and \
+                        event.get("status") == "pending_approval":
+                    terminal = "pending_approval"
                 yield {"thread_id": thread_id, "request_id": request_id, **event}
         except Exception as exc:  # gagal mid-stream: tutup dengan event error terminal (RFC)
+            terminal = "error"
             log.exception("chat stream gagal")
-            yield {"thread_id": thread_id, **stream_error(
+            yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
                 detail=f"{type(exc).__name__}: {exc}", request_id=request_id)}
         finally:
             self.log_done("chat stream", request_id=request_id, thread_id=thread_id,
-                          agent=req.agent, status="completed", started=started)
+                          agent=req.agent, status=terminal, started=started)
+
+    def validate_before_stream(self, req: ChatRequest,
+                               identity: ThreadIdentity) -> str:
+        """Validasi SEBELUM StreamingResponse dibuat (route WAJIB panggil).
+
+        Raise 400/403/404 sebagai JSON biasa — bukan stream 200 terpotong.
+        Idempotent dengan cek di stream() (controller tetap validasi ulang).
+        """
+        thread_id, _ = self.resolve_thread_config(identity, req.thread_id)
+        self._ensure_agent(req.agent)
+        return thread_id

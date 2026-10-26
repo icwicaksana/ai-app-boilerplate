@@ -1,6 +1,7 @@
-"""Slot HITL policy untuk v1. v0: HITL_ENABLED=false, file ini tidak dipakai.
+"""Slot HITL policy untuk v0.6. v0.3.1: HITL_ENABLED=false, file ini tidak dipakai.
 
-Rencana v1 (lihat Docs/05-advanced-patterns/01-human-in-the-loop-hitl.md):
+Rencana v0.6 (lihat ../../Docs/05-advanced-patterns/01-human-in-the-loop-hitl.md
+di workspace — path relatif dari folder repo ini):
     HITL_POLICY = {
         "process_refund": {"enabled": True, "threshold": 500_000},
     }

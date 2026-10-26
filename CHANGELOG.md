@@ -2,6 +2,107 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.3.1 (2026-10-26) — Remediasi review v0–v0.3 (memory, SSE, request-id, config)
+
+Hasil review 5-reviewer + verifikasi silang (laporan final: nol bug correctness
+fatal di logika inti; temuan di keamanan memori, observability, validasi
+boundary, dan lubang test). Tanpa bongkar arsitektur, tanpa ubah kontrak beku.
+
+**Keamanan memori (CRITICAL B1 + 10 MAJOR):**
+- Fakta TAK LAGI digabung ke SystemMessage — disuntik sebagai HumanMessage
+  kedua (id stabil `user-facts-v1`) ter-quoting + label anti-injeksi; nilai
+  dinetralkan dari spoof label/newline; kap per-bagian di batas kata.
+- Jaring kedua sisi-baca: fakta bernuansa otorisasi (diskon/refund/transfer/
+  gratis) difilter dari prompt (di-log, tak diinjeksi).
+- Guard `check_storable()` diperluas selektif: `\bsandi\b`, rekening/norek/IBU,
+  KTP/SIM/paspor/NPWP/NIK (kata), pola kartu `no. kartu`, digit 10+ (NIK
+  berformat, HP mentah), alamat presisi → alasan baru `pii_address`,
+  injeksi (+`disregard`, `override/forget … instructions`, `you must now`,
+  `system:/sistem:`, `kamu adalah … mulai sekarang`, leetspeak),
+  interogatif tanpa `?` (ID/EN), perintah hapus varian (sufiks `-ku`, EN).
+  Nominal uang (`Rp …`) dikecualikan dari aturan digit.
+- Kebijakan PII diubah: HP MENTAH kini `secret` (simpan tersamar
+  `08xx-xxxx-7890`); matriks di `MEMORY_POLICY` (single source; prose prompt
+  di-generate + test parity anti-drift).
+- `put_fact`: tolak >500 char (bukan potong), tolak key sembarang (anti
+  timpa `profile`), dedup ≥0.9 (`DuplicateFactError`), kuota 200 + eviksi
+  terlama best-effort, value bawa `ts` (provenance), lock per-namespace
+  untuk `put_profile` (anti lost-update 1 worker).
+- Tool baru `save_profile_patch` (slot allowlist: nama/kota/preferensi/
+  keluarga/catatan — nilai baru menimpa, bisa dikoreksi); `MEMORY_RULES`
+  dipersempit (DO/DON'T konkret); `_REFUSALS.get` + koersi input (fail-soft).
+- `DELETE threads` = hapus riwayat, BUKAN ingatan (didokumentasikan README).
+
+**SSE/API correctness (B3/B5 + MAJOR):**
+- Agent tak dikenal (404) di dalam stream → event error terminal (bukan
+  stream 200 terpotong); `validate_before_stream()` dipakai route sebelum
+  `StreamingResponse`; `is_disconnected()` + redam CancelledError.
+- Interrupt checkpoint diteruskan ke event result (`pending_approval`);
+  gagal baca final → `stream_error` (bukan result kosong); guard anti
+  eksekusi-ganda di agent (insight: graph jalan + hasil hilang = error,
+  bukan run ulang); `started` dijamin pertama bahkan di jalur fallback.
+- `coerce_llm_text` fallback tak lagi bocorkan block reasoning ke reply.
+- `_to_state` dict tahan non-serializable (`default=str`, di dalam try).
+- `run()` petakan Timeout/Connection → `UpstreamAIError`; `resume()` try/except.
+- Controller teruskan status/code AppError asal ke `stream_error`; shape error
+  seragam (`thread_id` + `request_id` top-level, didokumentasikan di stream.py).
+- Job: resolve (400/403) SEBELUM lookup agent (404); bug program → 500
+  INTERNAL (bukan 502, tanpa bocor nama exception); kontrak rusak → 500.
+- Health: acquire koneksi ikut timeout; `/ready` → 503 bila belum ready;
+  gateway "ok" hanya 2xx; `version` dari `Settings.APP_VERSION`.
+- Resume route butuh identitas (tetap 501); fork cid kosong → 400.
+
+**Observability (core #2/#3):** `RequestIDMiddleware` (echo/generate →
+state + ContextVar + header respons); semua handler pakai resolve (tak pernah
+`"-"`); logging idempoten (tanpa `force=True`) + filter request_id; judul
+error HTTP dipetakan (404/405/401/429/...).
+
+**Config boundary (core #4/#5/#16):** `extra="forbid"`, validator
+`DATABASE_URL`/pool/URL/temperatur/timeout/CORS, `LOG_LEVEL` Literal
+(case-insensitive), `APP_VERSION` tunggal, ambang middleware via Settings,
+pola `cache_clear` terdokumentasi.
+
+**Pipeline:** Decimal dipertahankan sampai presentasi (string di state);
+fallback structured-gagal → render deterministik (tanpa angka LLM);
+kebijakan amount (`<=0` drop, refund = expense terpisah) didokumentasikan.
+
+**OOP/cleanup:** `TemplateChatAgent` menolak dipakai langsung; override
+identik dihapus (Example beri kustomisasi nyata: cap 2000 char);
+`BaseController._ensure_agent` mati dihapus; duplikat return dihapus;
+link HITL + wording diperbaiki; `AgentContext` typing diketatkan.
+
+**Infra/higiene:** `Infra/.gitignore` (`.env`); Dockerfile pakai lock +
+HEALTHCHECK + CMD `python -m app.main` (flag CLI `--loop` INVALID — hanya
+programmatic yang sah); `normalize_conninfo` prefix-only; clamp pool +
+warning; `close_pool` log; `setup_persistence` asumsi serial terdokumentasi;
+docstring `llm.py` vs ADR-11; `.env.example` lengkap (HOST/PORT/RELOAD,
+CORS_*, TOOLCALL_*, CONTEXT_*); `pytest.ini` `asyncio_mode=strict`;
+`tests/conftest.py` selector-policy; HOST/PORT/RELOAD jadi field Settings;
+`JobResponse.data` didokumentasikan opsional; cabang ValueError→502 dihapus.
+
+**Gelombang 2 (final review):** profil difilter otorisasi + di-quote (C1);
+NIK-format 13+ digit non-ribuan ditolak walau berkedok nominal (C2);
+tombstone pesan basi (C3); lock `put_fact` (M4); kuota evidence-based +
+log jujur (M5); gather independen (M6); slot profil min-2-char +
+PIN-butuh-digit + FORGET presisi (M7); sanitasi delimiter/quote (M8);
+`/livez` liveness murah; ctx request-id di generator SSE; judul error
+asli di stream; log status terminal; init-502 spesifik; run-branch SSE
+tak pernah raise; `_graph_for_fork` tangkap ValueError.
+
+**Tests:** 343 unit hijau (dari 158) + 5 integrasi: guard adversarial ID/EN +
+FP + parity, 20 payload injeksi end-to-end (+residual terdokumentasi),
+dedup/kuota/konkurensi/namespace (+degradasi semantik), SSE envelope
+(404-dalam-stream, interrupt, no-empty-result, no-double-run, judul asli),
+request-id rantai penuh (+ctx generator, /livez), validasi config,
+infra unit (kwargs pool, kontrak LLM factory, phoenix no-op), pin kontrak
+beku, threads HTTP-level (403/404/state/history/fork/delete), determinisme
+fallback pipeline, presisi desimal (+underscore), template-guard,
+tool-binding, tombstone stale, profil-otorisasi, NIK-berkedok-nominal.
+
+**ADENDUM v0.2 (ralat F-09):** spend tracking via `extra_body.metadata`
+(`spend_logs_metadata`), BUKAN header `x-litellm-spend-logs-metadata` —
+jalur header terbukti tak mendarat di proxy v1.105.1. Jangan debug via header.
+
 ## v0.3 (2026-10-17) — Persistence+ (pool, memori, thread final, API state)
 - BREAKING: `DATABASE_URL` wajib (app-db Postgres); kosong/tak terjangkau = tolak
   start (fail-fast). Fallback memory + `get_checkpointer(url)`/`is_postgres_configured`
@@ -50,7 +151,9 @@ Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 - BREAKING (env): hapus `MODEL_PROVIDER`/`OPENAI_*`/`OPENCODE_*`; LLM 100% via
   gateway LiteLLM (`LITELLM_BASE_URL/API_KEY/MODEL`). Lihat migration note di README.
 - `infra/llm.py`: `ChatLiteLLM` + header `x-opencode-session` (thread_id) +
-  `x-litellm-spend-logs-metadata` (project+thread); `max_retries=0` (retry milik proxy).
+  `extra_body.metadata` → `spend_logs_metadata` (project+thread) — RALAT v0.3.1:
+  BUKAN via header `x-litellm-spend-logs-metadata` (terbukti tak mendarat di
+  proxy v1.105.1); `max_retries=0` (retry milik proxy).
 - Baru: `langchain-litellm==0.11.1` (preservasi reasoning); lock regen (140 paket).
 - `health`: cek proxy `/health/liveliness` (timeout 2s) → field `checks.gateway`.
 - Middleware aktif: `ToolCallLimit` (15 total/5 per tool) + `ContextEditing`

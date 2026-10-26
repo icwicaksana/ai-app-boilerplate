@@ -3,6 +3,15 @@
 Alur chat (v0.1, BEKU): started -> token*/thinking*/tool_start/tool_end -> result | error(terminal).
 Terminator = stream close (tidak ada baris `[DONE]` agar parser JSON-per-baris lama tak pecah).
 `type` di sini = jenis EVENT, bukan RFC `type`.
+
+Bentuk WIRE (di luar model ini): controller membungkus tiap event dengan
+envelope transport `{"thread_id": ..., "request_id": ..., **event}` —
+konsumen strict-schema: parse envelope dulu, baru validasi event di dalamnya.
+
+Pengecualian jujur: kegagalan PRE-RUN (400/403/404 validasi thread/agent,
+init gagal) menghasilkan SATU event `error` TANPA `started` — graph belum
+jalan sehingga tak ada stream yang "dimulai". Bila `started` sudah keluar,
+penutup TEPAT SATU `result` | `error` dijamin.
 """
 
 from __future__ import annotations

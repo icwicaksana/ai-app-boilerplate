@@ -12,6 +12,7 @@ def test_parse_amount_valid():
     assert float(parse_amount(10)) == 10
     assert float(parse_amount("12.5")) == 12.5
     assert float(parse_amount(0)) == 0
+    assert float(parse_amount("1_000")) == 1000  # underscore digit: sah (F-11)
 
 
 def test_parse_amount_invalid_none():
@@ -54,7 +55,30 @@ def test_node_validate_filters():
     out = cls._node_validate(None, state)
     assert out["validated"]["count"] == 2
     assert out["validated"]["dropped"] == 5
-    assert all(isinstance(i["amount"], float) for i in out["validated"]["items"])
+    # v0.3.1: amount disimpan STRING (Decimal sampai presentasi — tanpa
+    # round-trip float). Harus tetap parse-able ke Decimal positif.
+    for i in out["validated"]["items"]:
+        assert isinstance(i["amount"], str) and Decimal(i["amount"]) > 0
+
+
+def test_node_validate_preserves_decimal_exactness():
+    """Desimal banyak-digit disimpan exact (float akan membulatkan)."""
+    cls = _agent_like()
+    out = cls._node_validate(None, {"raw_input": {"items": [
+        {"tipe": "income", "amount": "123.45678901234567890123"},
+    ]}})
+    assert out["validated"]["items"][0]["amount"] == "123.45678901234567890123"
+
+
+def test_calculate_decimal_precision_no_binary_error():
+    """0.1 + 0.2 via string amounts = tepat 0.3 (tanpa error biner float)."""
+    cls = _agent_like()
+    out = cls._node_calculate(None, {"validated": {"items": [
+        {"tipe": "income", "amount": "0.1"},
+        {"tipe": "income", "amount": "0.2"},
+    ]}})
+    assert out["totals"]["total_income"] == 0.3
+    assert out["totals"]["balance"] == 0.3
 
 
 def test_node_validate_nan_inf_dropped():

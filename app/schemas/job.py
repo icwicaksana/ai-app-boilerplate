@@ -29,7 +29,13 @@ class JobResponse(BaseModel):
     status: JobStatus = "completed"
     output: dict[str, Any] = Field(
         default_factory=dict,
-        description="v0 (chat-based agent): {'reply': '...'}. v1 (StateGraph murni): output domain.",
+        description=(
+            "v0 (chat-based agent): {'reply': '...'}. v1 (StateGraph murni): "
+            "output domain. NOTE: `output.data` (structured pipeline) "
+            "OPSIONAL — absen bila fallback deterministik aktif "
+            "(structured extraction gagal 2x, status tetap completed). "
+            "Konsumen WAJIB tangani ketiadaan `data` tanpa error."
+        ),
     )
     interrupt: dict | None = None
     meta: ResponseMeta = Field(default_factory=ResponseMeta)

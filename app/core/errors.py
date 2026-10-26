@@ -9,6 +9,7 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.request_id import resolve_instance
 from app.helpers.response import job_error
 
 
@@ -109,7 +110,7 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         status_code=exc.status_code,
         content=job_error(
             title=exc.title, detail=exc.message, status=exc.status_code,
-            code=exc.code, instance=request.headers.get("X-Request-ID", "-"),
+            code=exc.code, instance=resolve_instance(request),
         ),
     )
 
@@ -135,7 +136,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         status_code=422,
         content=job_error(
             title="Validation Error", detail=summary, status=422,
-            code="VALIDATION_ERROR", instance=request.headers.get("X-Request-ID", "-"),
+            code="VALIDATION_ERROR", instance=resolve_instance(request),
             extra={"errors": [
                 {"loc": [p for p in e.get("loc", ()) if p != "body"],
                  "msg": e.get("msg"), "type": e.get("type")}

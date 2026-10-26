@@ -23,10 +23,11 @@ from app.core.errors import UpstreamAIError
 
 
 def get_llm(settings: Settings, session_id: str | None = None):
-    """Kembalikan chat model LangChain via gateway.
+    """Kembalikan chat model LangGraph via gateway.
 
     session_id: diisi thread_id oleh controller (1 sesi stabil per percakapan).
-    Model tetap murah dibentuk; graph yang mahal di-compile sekali per agent.
+    Instance LLM murah dibentuk per build; GRAPH dibangun per request (ADR-11)
+    — jangan cache graph bila header spend per-thread masih menempel di LLM.
 
     Raise UpstreamAIError (502 RFC7807) agar konsisten dengan error AI lain.
     """

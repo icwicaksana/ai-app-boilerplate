@@ -1,8 +1,8 @@
-"""State dasar untuk StateGraph custom (v1+: static flow).
+"""State dasar untuk StateGraph pipeline kaku (sync, non-streaming).
 
-Untuk v0 yang memakai `create_agent`, state internal AgentState sudah cukup.
-Extend BaseState agar XxxAgent/orchestrator yang butuh kontrol penuh
-(routing deterministik, multi-step workflow) tanpa mengubah controller/runner.
+Chat ReAct (`create_agent`) memakai AgentState internal langchain — BUKAN ini.
+Extend BaseState bila butuh kontrol penuh (routing deterministik, multi-step)
+tanpa mengubah controller/runner.
 """
 
 from __future__ import annotations

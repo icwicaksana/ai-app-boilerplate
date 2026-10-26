@@ -62,6 +62,45 @@ def test_registry_contents():
     assert JOB_AGENTS["example_pipeline"] is ExamplePipelineAgent
     assert issubclass(ExampleChatAgent, BaseChatAgent)
     assert issubclass(ExamplePipelineAgent, BasePipelineAgent)
+    # Template = kerangka, BUKAN agen hidup: tak boleh terdaftar.
+    for name in (*CHAT_AGENTS, *JOB_AGENTS):
+        assert "template" not in name.lower()
+
+
+def test_template_chat_guard_rejects_direct_use():
+    """TemplateChatAgent konkret tapi menolak di-instance (anti [ISI] produksi)."""
+    from app.agents.TemplateChatAgent import TemplateChatAgent
+
+    with pytest.raises(TypeError):
+        TemplateChatAgent(_ctx())
+
+
+def test_memory_tools_bound_when_store_present():
+    """save_memory + save_profile_patch terikat otomatis bila store ada."""
+    from app.infra.memory import MemoryStore
+
+    class _Raw:
+        pass
+
+    ctx = AgentContext(settings=_settings(), checkpointer=InMemorySaver(),
+                       runner=Runner(), store=MemoryStore(_Raw(), "toko-a", "budi"))
+    ag = ExampleChatAgent(ctx)
+    assert "save_memory" in ag.bound_tools
+    assert "save_profile_patch" in ag.bound_tools
+    assert "check_stock" in ag.bound_tools  # tool registry tetap ikut
+
+
+def test_no_memory_tools_without_store():
+    ag = ExampleChatAgent(_ctx())
+    assert "save_memory" not in ag.bound_tools
+    assert "check_stock" in ag.bound_tools
+
+
+def test_example_chat_preprocess_caps_length():
+    """Kustomisasi nyata Example (beda dari Template yang inherit polos)."""
+    ag = ExampleChatAgent(_ctx())
+    assert ag.preprocess("x" * 3000) == "x" * 2000
+    assert ag.preprocess("  halo  ") == "halo"
 
 
 def test_controllers_use_registry():

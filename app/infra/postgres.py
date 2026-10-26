@@ -23,6 +23,9 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from app.core.config import Settings
+from app.core.logging import get_logger
+
+log = get_logger(__name__)
 
 if TYPE_CHECKING:  # impor berat hanya untuk type-hint; runtime diimpor lazy
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -30,9 +33,16 @@ if TYPE_CHECKING:  # impor berat hanya untuk type-hint; runtime diimpor lazy
 
 
 def normalize_conninfo(database_url: str) -> str:
-    """Bersihkan URL: strip + skema SQLAlchemy → skema psycopg murni."""
+    """Bersihkan URL: strip + skema SQLAlchemy → skema psycopg murni.
+
+    Hanya ganti PREFIX (bukan replace global — password bisa mengandung
+    substring yang sama).
+    """
     url = (database_url or "").strip()
-    return url.replace("postgresql+psycopg://", "postgresql://")
+    prefix = "postgresql+psycopg://"
+    if url.startswith(prefix):
+        return "postgresql://" + url[len(prefix):]
+    return url
 
 
 def create_pool(settings: Settings) -> AsyncConnectionPool:
@@ -46,6 +56,10 @@ def create_pool(settings: Settings) -> AsyncConnectionPool:
         )
     pool_min = max(1, int(settings.DB_POOL_MIN))
     pool_max = max(pool_min, int(settings.DB_POOL_MAX))
+    if pool_min != settings.DB_POOL_MIN or pool_max != settings.DB_POOL_MAX:
+        # Jangan sembunyikan salah config (mis. MIN>MAX, nol, negatif).
+        log.warning("DB_POOL di-clamp (%s,%s) → (%d,%d); perbaiki env.",
+                    settings.DB_POOL_MIN, settings.DB_POOL_MAX, pool_min, pool_max)
     return AsyncConnectionPool(
         url,
         min_size=pool_min,
@@ -75,7 +89,13 @@ def get_store(pool: AsyncConnectionPool) -> AsyncPostgresStore:
 
 
 async def setup_persistence(checkpointer, store) -> None:
-    """Buat skema tabel bila belum ada. Idempotent — aman tiap startup."""
+    """Buat skema tabel bila belum ada. Idempotent — aman tiap startup.
+
+    Asumsi sadar: SATU proses setup per deploy dalam satu waktu. Dua worker
+    yang start persis bersamaan bisa race DDL — untuk template ini diterima
+    (restart/retry manual); advisory-lock DB ditunda ke v0.4+ bila terbukti
+    jadi masalah operasional.
+    """
     await checkpointer.setup()
     await store.setup()
 
@@ -85,4 +105,6 @@ async def close_pool(pool: AsyncConnectionPool) -> None:
     try:
         await pool.close()
     except Exception:
-        pass
+        # Menelan saat shutdown memang umum, tapi TANPA log = buta (temuan F-04).
+        log.warning("close pool gagal (diabaikan agar shutdown bersih)",
+                    exc_info=True)

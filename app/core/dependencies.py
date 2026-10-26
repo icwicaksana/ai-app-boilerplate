@@ -13,8 +13,9 @@ from app.controllers.ChatController import ChatController
 from app.controllers.JobController import JobController
 from app.controllers.runner import Runner
 from app.core.config import Settings, get_settings
-from app.core.errors import InvalidIdentityError, StorageUnavailableError
-from app.core.threads import TENANT_RE, USER_RE, ThreadIdentity
+from app.core.errors import InvalidIdentityError, InvalidThreadIdError, StorageUnavailableError
+from app.core.request_id import request_id_ctx, resolve_instance
+from app.core.threads import ThreadIdentity, canon_segment
 
 
 def get_runner() -> Runner:
@@ -22,23 +23,37 @@ def get_runner() -> Runner:
 
 
 def get_request_id(request: Request) -> str:
-    """Satu sumber request_id: echo X-Request-ID atau generate 12 hex."""
-    import uuid
+    """Satu sumber request_id: state middleware → echo header → generate.
 
-    return request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    Juga sinkronkan ContextVar log agar log jalur sync membawa ID yang sama.
+    """
+    rid = getattr(getattr(request, "state", None), "request_id", None)
+    if not rid:
+        rid = resolve_instance(request)
+    else:
+        rid = str(rid)
+    try:
+        request.state.request_id = rid
+    except Exception:
+        pass
+    request_id_ctx.set(rid)
+    return rid
 
 
 def get_thread_identity(request: Request) -> ThreadIdentity:
     """Satu sumber identitas: header tepercaya (v0.3) → klaim JWT (v0.4).
 
     Kosong/format salah = 400 eksplisit (bukan 500, bukan default diam-diam).
+
+    Normalisasi (strip/lowercase) HANYA di `canon_segment` (threads.py) —
+    fungsi ini meneruskan header mentah apa adanya; error identitas tetap
+    berkode INVALID_IDENTITY (kontrak beku) meski validasi berbagi pola.
     """
-    tenant = (request.headers.get("X-Tenant-ID") or "").strip().lower()
-    user = (request.headers.get("X-User-ID") or "").strip().lower()
-    if not TENANT_RE.match(tenant):
-        raise InvalidIdentityError(f"X-Tenant-ID='{tenant or '-'}'")
-    if not USER_RE.match(user):
-        raise InvalidIdentityError(f"X-User-ID='{user or '-'}'")
+    try:
+        tenant = canon_segment(request.headers.get("X-Tenant-ID"), "tenant")
+        user = canon_segment(request.headers.get("X-User-ID"), "user")
+    except InvalidThreadIdError as exc:
+        raise InvalidIdentityError(exc.message) from exc
     return ThreadIdentity(tenant=tenant, user=user)
 
 

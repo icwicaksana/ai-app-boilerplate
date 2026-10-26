@@ -204,9 +204,10 @@ async def test_fork_success_writes_new_thread(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fork_rejects_blank_checkpoint_id():
-    """cid kosong/spasi → 404 eksplisit (JANGAN fork dari latest diam-diam)."""
+    """cid kosong/spasi → 400 eksplisit (input invalid, bukan thread hilang)."""
+    from app.core.errors import InvalidThreadIdError
     ctrl = ThreadController(_settings(), _cp(), Runner())
-    with pytest.raises(ThreadNotFoundError):
+    with pytest.raises(InvalidThreadIdError):
         await ctrl.fork(_ident(), "toko-a:budi:sess-1", "   ", "example_chat")
 
 

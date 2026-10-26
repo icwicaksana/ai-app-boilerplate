@@ -8,7 +8,7 @@ from app.core.dependencies import (
     get_request_id,
     get_thread_identity,
 )
-from app.core.errors import UpstreamAIError
+from app.core.errors import AppError
 from app.core.threads import ThreadIdentity
 from app.schemas.job import JobRequest, JobResponse
 
@@ -26,5 +26,8 @@ async def run_job(
     request_id = get_request_id(request)
     result = await ctrl.run(req, identity, agent_name=agent_name, request_id=request_id)
     if not isinstance(result, JobResponse):
-        raise UpstreamAIError("Kontrak JobResponse rusak (bug internal).")
+        # Bug program internal (bukan upstream AI) → 500, bukan 502.
+        raise AppError("Kontrak JobResponse rusak (bug internal).",
+                       status_code=500, code="INTERNAL_ERROR",
+                       title="Internal Error")
     return result

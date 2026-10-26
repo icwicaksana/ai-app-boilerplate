@@ -10,9 +10,12 @@ Controller yang merakit context (session_id = thread_id), agent tinggal pakai.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
 
 from app.core.config import Settings
+
+if TYPE_CHECKING:  # hanya untuk type-check; hindari import cycle runtime
+    from app.infra.memory import MemoryStore
 
 
 @dataclass
@@ -20,7 +23,7 @@ class AgentContext:
     """Wiring agent: config + state backend + pintu LangGraph + sesi percakapan."""
 
     settings: Settings
-    checkpointer: Any
-    runner: Any
+    checkpointer: object
+    runner: object  # Runner asli (object agar fake di test tetap sah)
     session_id: str | None = None
-    store: Any = None  # MemoryStore per-user (chat) atau None (pipeline/test)
+    store: MemoryStore | None = None  # MemoryStore per-user (chat) atau None (pipeline/test)

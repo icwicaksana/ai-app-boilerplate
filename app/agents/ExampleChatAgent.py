@@ -1,7 +1,10 @@
-"""ExampleChatAgent: contoh HIDUP chatbot streaming. Pedoman jalan = TemplateChatAgent.py.
+"""ExampleChatAgent: contoh HIDUP chatbot streaming. Kerangka = TemplateChatAgent.py.
 
 Rel chat: route /chat/stream -> ChatController.stream() -> run di sini.
-Untuk AI App chat baru: copy TemplateChatAgent.py (bukan file ini).
+Untuk AI App chat baru: copy TemplateChatAgent.py (kerangka kosong) — atau
+copy file ini bila mau mulai dari contoh hidup. Aturan sama untuk pipeline
+(TemplatePipelineAgent vs ExamplePipelineAgent): template = kerangka,
+example = referensi jalan.
 """
 
 from __future__ import annotations
@@ -22,9 +25,10 @@ class ExampleChatAgent(BaseChatAgent):
     TOOLS = TOOLS
 
     def preprocess(self, data: str | dict | None) -> str | dict:
-        if isinstance(data, str):
-            return (data or "").strip()
-        return super().preprocess(data)
-
-    def postprocess(self, reply: str) -> dict:
-        return {"reply": reply}
+        """Kustomisasi NYATA contoh ini (beda dari Template yang inherit polos):
+        strip + cap 2000 char anti-bloat token. TemplateChatAgent sengaja
+        TIDAK override apa pun agar copy-paste mulai dari perilaku base."""
+        clean = super().preprocess(data)
+        if isinstance(clean, str) and len(clean) > 2000:
+            return clean[:2000]
+        return clean

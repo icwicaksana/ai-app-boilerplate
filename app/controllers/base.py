@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-from app.core.errors import AgentNotFoundError
 from app.core.logging import get_logger
 from app.core.threads import ThreadIdentity, compose_thread_id, ensure_owner
 
@@ -25,9 +24,9 @@ class BaseController:
             raise ValueError("thread_id kosong — controller wajib isi sebelum new_config().")
         return {"configurable": {"thread_id": thread_id}}
 
-    def _ensure_agent(self, name: str) -> None:
-        if name != self.AGENT_NAME:
-            raise AgentNotFoundError(name)
+    # NOTE: tak ada _ensure_agent generik di sini — tiap rel memakai
+    # registry-lookup sendiri (ChatController→CHAT_AGENTS,
+    # JobController→JOB_AGENTS); exact-match generik sudah dihapus (dead code).
 
     def resolve_thread_config(
         self, identity: ThreadIdentity, req_thread_id: str | None

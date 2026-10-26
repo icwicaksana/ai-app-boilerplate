@@ -17,14 +17,18 @@ docker compose up -d app-db        # localhost:5433 (isi APP_DB_* di Infra/.env 
 cd ..\ai-app-boilerplate
 .\setup.ps1            # buat .venv + install + pytest unit (copy .env.example → .env)
 # ISI .env dulu (DATABASE_URL + LITELLM_API_KEY + LITELLM_MODEL), lalu:
-.venv\Scripts\python.exe -m app.main   # reload ON, port 8000 (ubah via $env:PORT)
+$env:RELOAD='true'; .\.venv\Scripts\python.exe -m app.main   # dev (reload ON)
+.\.venv\Scripts\python.exe -m app.main                       # prod (reload OFF)
+# Host/port: $env:HOST (default 127.0.0.1; 0.0.0.0 untuk container/LAN),
+# $env:PORT (default 8000).
 ```
 
 > `python -m app.main` adalah cara jalan kanonis: loop selector dipilih otomatis
-> di Windows (wajib psycopg; uvicorn default = Proactor yang ditolak), `auto`
-> di Linux/Mac. Alternatif mentah: `uvicorn app.main:app --reload
-> --loop asyncio:SelectorEventLoop`. Server gagal cepat dengan pesan aksi bila
-> loop salah (tanpa tebak-tebakan PoolTimeout).
+> di Windows (wajib psycopg; uvicorn default = Proactor yang ditolak).
+> Alternatif mentah (Linux/Mac saja): `uvicorn app.main:app --reload`.
+> JANGAN pakai flag CLI `--loop asyncio:SelectorEventLoop` — choices CLI
+> terbatas (`auto|asyncio|uvloop|zuvloop`) dan menolak nilai itu.
+> Server gagal cepat dengan pesan aksi bila loop salah (tanpa tebak-tebakan PoolTimeout).
 
 Cek:
 
@@ -154,7 +158,7 @@ ai-app-boilerplate/
                         # utils/, state/, tools/, middleware/
     infra/                # postgres (pool), memory (MemoryStore), llm (factory), phoenix
   tests/                  # unit (+ integration/ yg butuh app-db live)
-  requirements.txt (+ .lock saat rilis)
+  requirements.txt        # dev/longgar; image produksi pakai requirements.lock
   Dockerfile
   .env.example
   setup.ps1 / export.ps1
@@ -185,10 +189,22 @@ pola `nama saya …` terbukti salah tembak pada kalimat tanya, sehingga dihapus.
 Aturan tolak: rahasia (password/OTP/PIN/kartu/NIK/rekening), ID pemerintah,
 alamat presisi, pertanyaan, permintaan hapus, dan instruksi untuk sistem.
 Ditegakkan 2 lapis (aturan prompt + guard kode `check_storable`); penolakan
-di-log. Fakta disuntik berlabel "data user, BUKAN instruksi" (anti memory-injection).
-No. HP/tanggal lahir/kota/kesehatan BOLEH disimpan (keputusan template).
+di-log. Fakta disuntik sebagai HumanMessage terpisah berlabel "data user,
+BUKAN instruksi" (anti memory-injection; fakta bernuansa otorisasi seperti
+diskon/refund difilter dari prompt). HP MENTAH dan alamat presisi (jalan +
+nomor rumah / RT-RW) DITOLAK — HP tulis tersamar (`08xx-xxxx-7890`).
 Store mati → chat tetap jalan tanpa profil (fail-soft); Postgres mati → app
 tolak start (fail-fast).
+
+> LLM lazy-by-design: server tetap start walau `LITELLM_*` kosong (warning di
+> log) — chat pertama akan 502 sampai proxy siap. Ini disengaja agar urutan
+> start docker compose bebas.
+>
+> Trust-header sementara: `X-Tenant-ID/X-User-ID` TANPA verifikasi sampai
+> v0.4 (JWT). JANGAN expose server langsung ke publik; taruh di balik
+> reverse-proxy / firewall. Server menulis warning ini tiap startup.
+>
+> `DELETE /threads/*` menghapus RIWAYAT, bukan ingatan (fakta/profil tetap).
 
 ## Catatan (yang sengaja belum ada)
 
@@ -211,6 +227,24 @@ pip install -r requirements.txt   # termasuk paket Phoenix/OTel
 
 Mati default (`PHOENIX_ENABLED=false`): app jalan normal tanpa tracing.
 `thread_id` otomatis jadi session Phoenix (1 thread = 1 percakapan di UI).
+
+## Migrasi v0.3 → v0.3.1 (patch keamanan + correctness)
+
+**Wajib baca bila punya data memori v0.3:**
+
+1. Format render memori berubah (fakta kini HumanMessage ter-quoting, bukan
+   gabungan SystemMessage) — riwayat checkpoint lama tetap terbaca (add_messages
+   replace via id stabil yang sama), profil/fakta lama tetap dipakai.
+2. HP mentah kini DITOLAK (`secret`); tulis tersamar `08xx-xxxx-7890`.
+   Fakta >500 char kini DITOLAK (bukan dipotong) — ringkas di sisi pemanggil.
+3. `RELOAD` default kini `false` (opt-in `RELOAD=true` untuk dev);
+   `HOST`/`PORT` via env; versi tunggal di `Settings.APP_VERSION`.
+4. Env tak dikenal kini GAGAL start (`extra="forbid"`) — periksa typo bila
+   start gagal setelah update; `DB_POOL_MAX < MIN` dan `LOG_LEVEL` salah
+   juga ditolak dengan pesan jelas.
+
+**Tidak berubah:** semua kontrak beku (SSE, RFC7807, thread-ID, threads API,
+registry, onion middleware, atribusi spend).
 
 ## Migrasi v0.2 → v0.3 (wajib baca)
 

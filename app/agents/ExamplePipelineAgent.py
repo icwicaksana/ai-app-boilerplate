@@ -21,15 +21,6 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
-NARRATE_PROMPT = (
-    "Tulis ringkasan Bahasa Indonesia maksimal 5 baris dari JSON yang diberikan: "
-    "1. Total pemasukan, pengeluaran, dan saldo. "
-    "2. 1 anomali terbesar (kategori paling boros). "
-    "3. 1 saran hemat konkret. "
-    "Jika JSON kosong/nihil, jawab terus terang: data belum tersedia. "
-    "Jangan karang angka di luar JSON."
-)
-
 INSIGHT_PROMPT = (
     "Dari JSON totals berikut, tulis (Bahasa Indonesia): "
     "1 kalimat anomali terbesar + 1 saran hemat konkret. "
@@ -38,6 +29,14 @@ INSIGHT_PROMPT = (
 
 INCOME = "income"
 EXPENSE = "expense"
+
+# Kebijakan amount (diputuskan v0.3.1, dikunci test):
+# - amount <= 0 di-DROP (bukan refund negatif: refund direpresentasikan
+#   sebagai item `tipe: expense` terpisah, bukan nominal minus — cegah
+#   penggelapan tanda + preservasi jejak audit).
+# - Presisi Decimal dipertahankan sampai presentasi (string di state);
+#   konversi float HANYA di batas JSON akhir (sekali, bukan round-trip).
+# - count = item valid; dropped = baris sampah; ignored_unknown = tipe asing.
 
 
 class NarrativeInsight(BaseModel):
@@ -144,7 +143,9 @@ class ExamplePipelineAgent(BasePipelineAgent):
                 dropped += 1
                 continue
             normalized = dict(item)
-            normalized["amount"] = float(amount)
+            # Simpan STRING (bukan float): Decimal dipertahankan sampai
+            # presentasi — tanpa round-trip biner 0.1+0.2 / >2**53.
+            normalized["amount"] = format(amount, "f")
             clean.append(normalized)
         return {"validated": {"count": len(clean), "dropped": dropped, "items": clean}}
 
@@ -187,13 +188,14 @@ class ExamplePipelineAgent(BasePipelineAgent):
             wrapped: Any = AIMessage(content=text)
             return {"final": text, "structured": data,
                     "messages": [HumanMessage(content=json.dumps(totals, ensure_ascii=False)), wrapped]}
-        # Fallback legacy: narasi bebas 1 panggilan (data=None di output).
-        resp = self.llm.invoke(
-            f"{NARRATE_PROMPT}\n\nData (JANGAN karang angka di luar ini): "
-            f"{json.dumps(totals, ensure_ascii=False)}"
-        )
-        text = self._coerce_narrate_text(resp)
-        wrapped = self._wrap_narrate_response(resp)
+        # Fallback (v0.3.1): structured gagal 2x → RENDER DETERMINISTIK dari
+        # totals + insight kosong. Jaminan "LLM tak bisa karang angka"
+        # dipertahankan bahkan saat model tak mampu structured output
+        # (sebelumnya: narasi bebas yang tetap mencetak angka).
+        log.warning("pipeline %s structured gagal 2x → render deterministik "
+                    "(narrate_fallback_total)", type(self).__name__)
+        text = self._render_summary(totals, NarrativeInsight())
+        wrapped = AIMessage(content=text)
         return {"final": text,
                 "messages": [HumanMessage(content=json.dumps(totals, ensure_ascii=False)), wrapped]}
 
@@ -216,7 +218,7 @@ class ExamplePipelineAgent(BasePipelineAgent):
                 "Kembalikan HANYA JSON valid sesuai skema (anomaly, suggestion).")
             return retry if isinstance(retry, NarrativeInsight) else None
         except Exception:
-            log.exception("structured gagal 2x, fallback narasi bebas")
+            log.exception("structured gagal 2x → render deterministik")
             return None
 
     @staticmethod
@@ -232,9 +234,3 @@ class ExamplePipelineAgent(BasePipelineAgent):
         if len(lines) == 1:
             lines.append("Data belum tersedia.")
         return "\n".join(lines)
-
-    @staticmethod
-    def _coerce_narrate_text(resp: Any) -> str:
-        from app.agents.utils.MessageUtils import coerce_llm_text
-
-        return coerce_llm_text(getattr(resp, "content", resp))

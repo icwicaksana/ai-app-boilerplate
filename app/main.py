@@ -3,18 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from contextlib import asynccontextmanager
-
-# Windows: psycopg async MENOLAK ProactorEventLoop (default Windows).
-# Policy ini mencakup jalur asyncio.run/TestClient/pytest. NAMUN uvicorn CLI
-# memaksa Proactor via loop_factory eksplisit (uvicorn/loops/asyncio.py) —
-# sehingga cara jalan KANONIS adalah `python -m app.main` (lihat __main__ di
-# bawah: loop selector dipilih otomatis). Lifespan juga berjaga: Proactor
-# terdeteksi → gagal cepat dengan pesan aksi.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,10 +12,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+
+def ensure_selector_loop() -> None:
+    """Paksa SelectorEventLoop (Windows): psycopg async MENOLAK Proactor.
+
+    Dipanggil eksplisit dari entrypoint `python -m app.main` — BUKAN saat
+    import (import-time side effect dihapus, temuan core #1). Nilai loop
+    programmatic `asyncio:SelectorEventLoop` VALID (uvicorn resolve ke kelas
+    loop); yang INVALID adalah flag CLI `--loop` (choices terbatas) —
+    jangan resepkan CLI flag itu di mana pun. Lifespan tetap berjaga
+    (Proactor terdeteksi → gagal cepat dengan pesan aksi).
+    """
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from app.api.v1.router import router as v1_router
 from app.core.config import get_settings
 from app.core.errors import AppError, app_error_handler, validation_error_handler
 from app.core.logging import get_logger, setup_logging
+from app.core.request_id import RequestIDMiddleware, resolve_instance
 from app.helpers.response import job_error
 from app.infra.phoenix import setup_phoenix_tracing
 from app.infra.postgres import (
@@ -40,16 +45,29 @@ from app.infra.postgres import (
 log = get_logger(__name__)
 
 
+_HTTP_TITLES = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    409: "Conflict",
+    413: "Payload Too Large",
+    422: "Unprocessable Entity",
+    429: "Too Many Requests",
+}
+
+
 async def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """404/405/dll → RFC 7807 (bukan format default FastAPI)."""
     status = int(getattr(exc, "status_code", 500))
-    title = "Not Found" if status == 404 else "HTTP Error"
+    title = _HTTP_TITLES.get(status, "HTTP Error")
     return JSONResponse(
         status_code=status,
         content=job_error(
             title=title, detail=str(getattr(exc, "detail", exc)),
             status=status, code=f"HTTP_{status}",
-            instance=request.headers.get("X-Request-ID", "-"),
+            instance=resolve_instance(request),
         ),
     )
 
@@ -61,7 +79,7 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
         content=job_error(
             title="Internal Error", detail="Terjadi kesalahan internal.",
             status=500, code="INTERNAL_ERROR",
-            instance=request.headers.get("X-Request-ID", "-"),
+            instance=resolve_instance(request),
         ),
     )
 
@@ -71,61 +89,85 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings.LOG_LEVEL)
     # Jaga Proactor (Windows): pool psycopg pasti PoolTimeout di atasnya.
-    # Terjadi bila server dijalankan TANPA --loop asyncio:SelectorEventLoop.
+    # Terjadi bila server dijalankan tanpa entrypoint kanonis
+    # `python -m app.main` (yang memilih loop selector otomatis).
     _proactor = getattr(asyncio, "ProactorEventLoop", None)
     if _proactor is not None and isinstance(asyncio.get_running_loop(), _proactor):
         raise RuntimeError(
             "Event loop Proactor terdeteksi — psycopg async menolaknya. "
-            "Jalankan server via `python -m app.main` (loop otomatis benar), "
-            "atau uvicorn CLI dengan flag `--loop asyncio:SelectorEventLoop`."
+            "Jalankan server via `python -m app.main` (entrypoint kanonis: "
+            "loop selector dipilih otomatis di Windows)."
         )
     # v0.3+: FAIL-FAST. DB adalah kebutuhan wajib — jangan start setengah jadi
     # (data hilang diam-diam lebih buruk dari error jelas di depan).
     pool = create_pool(settings)  # raise RuntimeError actionable bila URL kosong
+    checkpointer = store = None
     try:
-        await open_pool(pool)
-    except Exception as exc:
-        raise RuntimeError(
-            "Postgres app-db tak terjangkau. Jalankan "
-            "`docker compose up -d app-db` di folder Infra/ dan pastikan "
-            f"DATABASE_URL benar. Detail: {type(exc).__name__}: {exc}"
-        ) from exc
-    checkpointer = get_checkpointer(pool)
-    store = get_store(pool)
-    try:
-        await setup_persistence(checkpointer, store)  # idempotent
-    except Exception as exc:
-        await close_pool(pool)  # jangan bocorkan pool saat startup gagal
-        raise RuntimeError(
-            "Setup skema Postgres gagal. Pastikan user DB punya hak CREATE "
-            f"dan app-db sehat (`docker compose ps app-db` di Infra/). "
-            f"Detail: {type(exc).__name__}: {exc}"
-        ) from exc
-    app.state.pool = pool
-    app.state.checkpointer = checkpointer
-    app.state.store = store
+        try:
+            await open_pool(pool)
+        except Exception as exc:
+            raise RuntimeError(
+                "Postgres app-db tak terjangkau. Jalankan "
+                "`docker compose up -d app-db` di folder Infra/ dan pastikan "
+                f"DATABASE_URL benar. Detail: {type(exc).__name__}: {exc}"
+            ) from exc
+        checkpointer = get_checkpointer(pool)
+        store = get_store(pool)
+        try:
+            await setup_persistence(checkpointer, store)  # idempotent
+        except Exception as exc:
+            raise RuntimeError(
+                "Setup skema Postgres gagal. Pastikan user DB punya hak CREATE "
+                f"dan app-db sehat (`docker compose ps app-db` di Infra/). "
+                f"Detail: {type(exc).__name__}: {exc}"
+            ) from exc
+        # Assignment di DALAM try (F-05): raise di antara assignment dan
+        # yield tak lagi bocorkan pool (except luar menutup 1x).
+        app.state.pool = pool
+        app.state.checkpointer = checkpointer
+        app.state.store = store
+    except Exception:
+        await close_pool(pool)  # jangan bocorkan koneksi parsial saat startup gagal
+        raise
     log.info("persistence ready (pool min=%d max=%d)",
              settings.DB_POOL_MIN, settings.DB_POOL_MAX)
-    setup_phoenix_tracing(settings)  # no-op jika disabled/belum install (log di dalam)
-    yield
-    await close_pool(pool)
-    log.info("pool closed")
+    # Peringatan operasional eksplisit (bukan diam-diam):
+    # - trust-header: isolasi tenant = header mudah dipalsu sampai v0.4 JWT.
+    # - LLM lazy-by-design: proxy boleh menyusul, tapi chat akan 502.
+    log.warning("trust-header aktif (X-Tenant-ID/X-User-ID tanpa verifikasi) — "
+                "JANGAN expose ke publik sampai v0.4 JWT.")
+    if not settings.LITELLM_API_KEY.strip() or not settings.LITELLM_MODEL.strip():
+        log.warning("LLM belum terkonfigurasi (LITELLM_API_KEY/MODEL kosong) — "
+                    "server tetap jalan (lazy-by-design), chat akan 502 "
+                    "sampai proxy siap.")
+    try:
+        setup_phoenix_tracing(settings)  # no-op jika disabled/belum install (log di dalam)
+    except Exception:
+        # Observability tak boleh merobohkan startup (temuan F-11).
+        log.exception("phoenix tracing gagal init (lanjut tanpa tracing)")
+    try:
+        yield
+    finally:
+        # Shutdown BERSIH walau generator lifespan terima exception.
+        await close_pool(pool)
+        log.info("pool closed")
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title=settings.PROJECT_NAME, version="v0.3", lifespan=lifespan)
-    origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
+    app = FastAPI(title=settings.PROJECT_NAME, version=settings.APP_VERSION,
+                  lifespan=lifespan)
+    origins = settings.cors_origins()
     if origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
             allow_credentials=True,
-            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization", "X-Request-ID",
-                           "X-Tenant-ID", "X-User-ID"],
+            allow_methods=settings.cors_methods(),
+            allow_headers=settings.cors_headers(),
             expose_headers=["X-Request-ID"],
         )
+    app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
@@ -140,10 +182,11 @@ app = create_app()
 if __name__ == "__main__":  # python -m app.main (cara jalan KANONIS, lintas OS)
     import uvicorn
 
-    # Windows: loop selector eksplisit (uvicorn default = Proactor = PoolTimeout).
+    ensure_selector_loop()
+    boot = get_settings()
+    # Loop programmatic "asyncio:SelectorEventLoop" VALID di Windows
+    # (uvicorn resolve ke kelas loop; lifecycle guard memverifikasi).
     # Linux/Mac: "auto" (boleh uvloop bila terinstall — tercepat di sana).
     _loop = "asyncio:SelectorEventLoop" if sys.platform == "win32" else "auto"
-    _port = int(os.environ.get("PORT", "8000"))
-    _reload = os.environ.get("RELOAD", "true").lower() in ("1", "true", "yes")
-    uvicorn.run("app.main:app", host="127.0.0.1", port=_port,
-                reload=_reload, loop=_loop)
+    uvicorn.run("app.main:app", host=boot.HOST, port=boot.PORT,
+                reload=boot.RELOAD, loop=_loop)

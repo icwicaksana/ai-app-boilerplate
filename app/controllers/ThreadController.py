@@ -24,6 +24,7 @@ from app.controllers.runner import Runner
 from app.core.config import Settings
 from app.core.errors import (
     AgentNotFoundError,
+    InvalidThreadIdError,
     ThreadNotFoundError,
     UpstreamAIError,
 )
@@ -91,7 +92,6 @@ def _count_conversational(messages) -> int:
 
 
 def _checkpoint_id_of(tup) -> str:
-    return str((tup.config.get("configurable") or {}).get("checkpoint_id", ""))
     return str((tup.config.get("configurable") or {}).get("checkpoint_id", ""))
 
 
@@ -207,7 +207,7 @@ class ThreadController(BaseController):
         tid = thread_id.strip().lower()
         cid = (checkpoint_id or "").strip()
         if not cid:  # "" falsy → _require_tuple akan ambil latest (SALAH)
-            raise ThreadNotFoundError(f"{tid}@<checkpoint kosong>")
+            raise InvalidThreadIdError(f"{tid}@<checkpoint kosong>")
         tup = await self._require_tuple(tid, cid)
         new_thread = compose_thread_id(tenant, user)
         graph = self._graph_for_fork(agents[agent_name], new_thread)
@@ -233,7 +233,7 @@ class ThreadController(BaseController):
                 runner=self.runner, session_id=new_thread,
             )
             return agent_cls(ctx).graph
-        except UpstreamAIError:
+        except (UpstreamAIError, ValueError):
             placeholder = self.settings.model_copy(update={
                 "LITELLM_API_KEY": "fork-tanpa-llm", "LITELLM_MODEL": "fork-tanpa-llm",
             })
