@@ -30,9 +30,9 @@ def test_middleware_generates_request_id():
 def test_error_instance_uses_request_id_not_dash():
     c = _client()
     res = c.get("/api/v1/threads/toko-a:budi:sess-1/state")
-    assert res.status_code == 400  # tanpa header identitas
+    assert res.status_code == 401  # v0.4: tanpa Bearer token
     body = res.json()
-    assert body["code"] == "INVALID_IDENTITY"
+    assert body["code"] == "UNAUTHENTICATED"
     assert body["instance"] == res.headers["X-Request-ID"]
     assert body["instance"] != "-"
 

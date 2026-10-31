@@ -2,6 +2,63 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.4 (2026-11-01) — Cache (Valkey) + Auth JWT + hardening
+
+**BREAKING (auth):** identitas TIDAK lagi dari header `X-Tenant-ID`/`X-User-ID`.
+Default `AUTH_MODE=jwt`; route chat/jobs/threads butuh `Authorization: Bearer
+<access_token>`. Header lama diabaikan (bukan fallback diam-diam). Migrasi:
+README §Migrasi v0.3.1 → v0.4.
+
+**Infra (ADR-13):** service `cache` = `valkey/valkey-bundle:8.1.11-alpine`
+(pin exact), host `6380`, tanpa volume (ephemeral by design), password
+`CACHE_PASSWORD`. Modul `json`/`search`/`bloom` tersedia untuk kebutuhan nanti
+(RAG v0.7) walau v0.4 hanya memakai perintah inti.
+
+**Cache layer (`app/infra/cache.py`):** satu pool di lifespan;
+`CacheUnavailable` seragam; key ter-namespace (`rl:*`, `idem:*`, `jwt:deny:*`);
+Lua atomik untuk counter window. Tanpa fallback in-memory (ADR-15). Startup
+fail-fast bila `CACHE_URL` diisi tapi tak terjangkau; runtime fail-open (ADR-16).
+
+**Auth JWT (`core/security.py`, `core/auth.py`, `routes/auth.py`):**
+Argon2id (`pwdlib`); **PyJWT HS256 dipin** (alg-confusion ditolak), klaim wajib
+`exp/iat/jti/sub/typ/tenant/iss`. Endpoint: `POST /auth/login`,
+`POST /auth/refresh` (**rotasi**: refresh lama masuk denylist sebelum yang baru
+terbit), `POST /auth/logout` (revoke access+refresh), `GET /auth/me`. Tabel
+`app_users` di app-db + CLI `python -m app.scripts.create_user`. Pesan gagal
+login SELALU generik (anti-enumerasi). `get_thread_identity` jadi satu titik
+tukar — controller/`ensure_owner` tak berubah, 403/404 tetap seperti v0.3.
+
+**Rate limit (`core/ratelimit.py`):** fixed-window per (tenant,user) via Lua;
+`/chat/stream` & `/jobs/*` + `/auth/login` per (IP+username). 429 RFC 7807 +
+`Retry-After` + `X-RateLimit-Limit`; fail-open saat cache down (terlihat di
+`/health` → `cache: down` + log warning; status juga dicatat di
+`request.state.rate_limit_degraded`).
+
+**Idempotency (`core/idempotency.py`):** `Idempotency-Key` untuk `POST /jobs/*`
+→ replay tanpa eksekusi (`Idempotent-Replayed: true`), payload berbeda = 409
+`IDEMPOTENCY_KEY_REUSED`, paralel = 409 `IDEMPOTENCY_IN_PROGRESS`, eksekusi
+gagal melepas kunci (boleh retry).
+
+**Hardening:** `SecurityHeadersMiddleware` (nosniff, DENY frame, referrer,
+permissions, COOP/CORP; HSTS hanya prod); `/docs`+`/openapi.json` mati default
+(`ENABLE_DOCS`), prod mewajibkan mati; batas payload jobs
+`MAX_JOB_PAYLOAD_BYTES` → 413; guard config prod (jwt+cache+no-docs, tolak
+trusted-headers); Phoenix dimatikan otomatis bila collector tak terjangkau
+(mencegah request lambat akibat retry OTLP).
+
+**Proxy (ADR-18):** `litellm_settings.cache` exact-match via Valkey. Semantic
+cache SENGAJA belum (butuh valkey-search + embedding; berisiko untuk trafik
+agenik multi-turn) — kandidat v0.4.x/v0.7.
+
+**Tests:** 444 unit + 21 integrasi (Valkey+Postgres live) = 465 hijau, plus E2E
+17 pemeriksaan terhadap server berjalan (`Test/spike_v04/live_v04.py`):
+login/401/403/404, rate-limit 429+Retry-After, rotasi refresh, logout revoke,
+security headers. Bukti Valkey: `rl:*`, `jwt:deny:*`, TTL aktif.
+
+**Diketahui (bukan bug):** gateway down → 502 setelah ±8 dtk karena retry SDK
+OpenAI di dalam LiteLLM (bukan retry BE); turunkan `num_retries` klien bila
+perlu.
+
 ## v0.3.1 (2026-10-26) — Remediasi review v0–v0.3 (memory, SSE, request-id, config)
 
 Hasil review 5-reviewer + verifikasi silang (laporan final: nol bug correctness

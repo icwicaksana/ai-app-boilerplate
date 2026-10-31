@@ -27,11 +27,13 @@ def ensure_selector_loop() -> None:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from app.api.v1.router import router as v1_router
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import AppError, app_error_handler, validation_error_handler
+from app.core.headers import SecurityHeadersMiddleware
 from app.core.logging import get_logger, setup_logging
 from app.core.request_id import RequestIDMiddleware, resolve_instance
 from app.helpers.response import job_error
+from app.infra.cache import build_cache
 from app.infra.phoenix import setup_phoenix_tracing
 from app.infra.postgres import (
     close_pool,
@@ -41,6 +43,7 @@ from app.infra.postgres import (
     open_pool,
     setup_persistence,
 )
+from app.infra.users import ensure_schema
 
 log = get_logger(__name__)
 
@@ -121,6 +124,14 @@ async def lifespan(app: FastAPI):
                 f"dan app-db sehat (`docker compose ps app-db` di Infra/). "
                 f"Detail: {type(exc).__name__}: {exc}"
             ) from exc
+        # v0.4: tabel user (auth). Gagal = fail-fast (auth butuh SoR).
+        try:
+            await ensure_schema(pool)
+        except Exception as exc:
+            raise RuntimeError(
+                "Setup tabel auth (app_users) gagal. Pastikan user DB punya "
+                f"hak CREATE di schema public. Detail: {type(exc).__name__}: {exc}"
+            ) from exc
         # Assignment di DALAM try (F-05): raise di antara assignment dan
         # yield tak lagi bocorkan pool (except luar menutup 1x).
         app.state.pool = pool
@@ -131,11 +142,38 @@ async def lifespan(app: FastAPI):
         raise
     log.info("persistence ready (pool min=%d max=%d)",
              settings.DB_POOL_MIN, settings.DB_POOL_MAX)
+    # --- v0.4: cache (Valkey). STARTUP = fail-fast; RUNTIME = fail-open. ---
+    # CACHE_URL kosong → fitur nonaktif (warning jelas, bukan jalur kedua).
+    # CACHE_URL diisi tapi tak terjangkau → tolak start (salah config, bukan
+    # gangguan sesaat); saat runtime mati, rate-limit fail-open + health down.
+    cache = build_cache(settings)
+    if cache is not None:
+        try:
+            await cache.open()
+        except Exception as exc:
+            raise RuntimeError(
+                "Cache (Valkey) tak terjangkau. Jalankan "
+                "`docker compose up -d cache` di folder Infra/ dan pastikan "
+                f"CACHE_URL benar. Detail: {type(exc).__name__}: {exc}"
+            ) from exc
+        log.info("cache ready (valkey)")
+    app.state.cache = cache
     # Peringatan operasional eksplisit (bukan diam-diam):
-    # - trust-header: isolasi tenant = header mudah dipalsu sampai v0.4 JWT.
+    # - auth: mode aktif + apakah benar-benar bisa melayani request.
     # - LLM lazy-by-design: proxy boleh menyusul, tapi chat akan 502.
-    log.warning("trust-header aktif (X-Tenant-ID/X-User-ID tanpa verifikasi) — "
-                "JANGAN expose ke publik sampai v0.4 JWT.")
+    if settings.AUTH_MODE == "trusted_headers":
+        log.warning("AUTH_MODE=trusted_headers — header X-Tenant-ID/X-User-ID "
+                    "DIPERCAYA tanpa verifikasi. Dev/staging SAJA.")
+    elif not settings.auth_configured:
+        log.warning("AUTH_MODE=jwt tapi JWT_SECRET kosong — endpoint butuh "
+                    "identitas akan menolak (503 AUTH_NOT_CONFIGURED). "
+                    "Isi JWT_SECRET (min 32 char) di .env.")
+    else:
+        log.info("auth ready (mode=jwt, access_ttl=%ss)",
+                 settings.ACCESS_TOKEN_TTL_SECONDS)
+    if settings.RATE_LIMIT_ENABLED and cache is None:
+        log.warning("RATE_LIMIT_ENABLED=true tapi CACHE_URL kosong — "
+                    "rate-limit & idempotency TIDAK berjalan.")
     if not settings.LITELLM_API_KEY.strip() or not settings.LITELLM_MODEL.strip():
         log.warning("LLM belum terkonfigurasi (LITELLM_API_KEY/MODEL kosong) — "
                     "server tetap jalan (lazy-by-design), chat akan 502 "
@@ -149,14 +187,25 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         # Shutdown BERSIH walau generator lifespan terima exception.
+        if cache is not None:
+            await cache.close()
+            log.info("cache closed")
         await close_pool(pool)
         log.info("pool closed")
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
-    app = FastAPI(title=settings.PROJECT_NAME, version=settings.APP_VERSION,
-                  lifespan=lifespan)
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Factory app. `settings` opsional (dipakai test agar deterministik)."""
+    settings = settings or get_settings()
+    # Docs gating (v0.4): mati default; prod mewajibkan mati (divalidasi config).
+    docs_on = settings.ENABLE_DOCS
+    app = FastAPI(
+        title=settings.PROJECT_NAME, version=settings.APP_VERSION,
+        lifespan=lifespan,
+        docs_url="/docs" if docs_on else None,
+        redoc_url="/redoc" if docs_on else None,
+        openapi_url="/openapi.json" if docs_on else None,
+    )
     origins = settings.cors_origins()
     if origins:
         app.add_middleware(
@@ -168,6 +217,8 @@ def create_app() -> FastAPI:
             expose_headers=["X-Request-ID"],
         )
     app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware,
+                       hsts=(settings.ENVIRONMENT == "prod"))
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_error_handler)

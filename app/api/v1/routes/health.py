@@ -59,12 +59,28 @@ async def _persistence_status(request: Request, settings: Settings) -> tuple[str
     return pool_info, ("postgres" if store is not None else "not initialized")
 
 
+async def _cache_status(request: Request, settings: Settings) -> str:
+    """Status cache: ok / disabled / down. Tak pernah raise.
+
+    Cache OPSIONAL (ADR-16 fail-open): `down` menurunkan status ke degraded,
+    tapi TIDAK membuat `/ready` 503 — BE tetap melayani tanpa rate-limit.
+    """
+    cache = getattr(request.app.state, "cache", None)
+    if cache is None:
+        return ("disabled (CACHE_URL kosong)" if not settings.cache_enabled
+                else "not initialized (lifespan gagal?)")
+    return "ok" if await cache.ping() else "down (ping gagal)"
+
+
 async def _health_body(request: Request, settings: Settings) -> dict:
     gateway = await _gateway_status(settings)
     checkpointer, store = await _persistence_status(request, settings)
+    cache = await _cache_status(request, settings)
     ready = gateway == "ok" and checkpointer.startswith("postgres")
+    # degraded bila ada komponen opsional bermasalah (cache) — tetap ready.
+    degraded = cache.startswith("down") or cache.startswith("not initialized")
     return {
-        "status": "ok" if ready else "degraded",
+        "status": "ok" if (ready and not degraded) else "degraded",
         "service": settings.PROJECT_NAME,
         "version": settings.APP_VERSION,
         "checks": {
@@ -72,6 +88,8 @@ async def _health_body(request: Request, settings: Settings) -> dict:
             "gateway": gateway,
             "checkpointer": checkpointer,
             "store": store,
+            "cache": cache,
+            "auth": f"{settings.AUTH_MODE} ({'ready' if settings.auth_configured else 'NOT CONFIGURED'})",
             "hitl": "enabled" if settings.HITL_ENABLED else "disabled",
         },
     }

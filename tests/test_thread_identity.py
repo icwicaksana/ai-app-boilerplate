@@ -4,6 +4,7 @@ import pytest
 from fastapi import Request
 
 from app.controllers.base import BaseController
+from app.core.config import Settings
 from app.core.dependencies import get_thread_identity
 from app.core.errors import (
     CrossTenantError,
@@ -25,6 +26,12 @@ def _req(headers: dict) -> Request:
         "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
     }
     return Request(scope)
+
+
+def _trusted_settings() -> Settings:
+    """Mode trust-header EKSPLISIT (perilaku v0.3) — default v0.4 = jwt."""
+    return Settings(_env_file=None, AUTH_MODE="trusted_headers",
+                    AUTH_ALLOW_TRUSTED_HEADERS=True)
 
 
 def test_parse_valid_lowercase_canon():
@@ -85,11 +92,28 @@ def test_resolve_compose_and_continue():
         ctrl.resolve_thread_config(ident, "thr-lama")
 
 
-def test_identity_from_headers():
-    ident = get_thread_identity(_req({"X-Tenant-ID": "Toko-A", "X-User-ID": "Budi"}))
+@pytest.mark.asyncio
+async def test_identity_from_headers_trusted_mode():
+    """Mode trust-header (dev): kanon + error 400 (perilaku v0.3 dipertahankan)."""
+    s = _trusted_settings()
+    ident = await get_thread_identity(
+        _req({"X-Tenant-ID": "Toko-A", "X-User-ID": "Budi"}), settings=s, cache=None)
     assert ident == ThreadIdentity(tenant="toko-a", user="budi")
     with pytest.raises(InvalidIdentityError) as ei:
-        get_thread_identity(_req({}))
+        await get_thread_identity(_req({}), settings=s, cache=None)
     assert ei.value.status_code == 400 and ei.value.code == "INVALID_IDENTITY"
     with pytest.raises(InvalidIdentityError):
-        get_thread_identity(_req({"X-Tenant-ID": "to", "X-User-ID": "budi"}))
+        await get_thread_identity(
+            _req({"X-Tenant-ID": "to", "X-User-ID": "budi"}), settings=s, cache=None)
+
+
+@pytest.mark.asyncio
+async def test_identity_jwt_mode_ignores_headers_without_token():
+    """v0.4 default: header identitas TIDAK dipercaya; tanpa Bearer → 401."""
+    from app.core.errors import UnauthenticatedError
+
+    s = Settings(_env_file=None, AUTH_MODE="jwt", JWT_SECRET="x" * 40)
+    with pytest.raises(UnauthenticatedError):
+        await get_thread_identity(
+            _req({"X-Tenant-ID": "toko-a", "X-User-ID": "budi"}),
+            settings=s, cache=None)

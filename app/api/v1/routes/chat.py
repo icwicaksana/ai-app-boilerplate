@@ -13,6 +13,7 @@ from app.core.dependencies import (
     get_thread_identity,
 )
 from app.core.logging import get_logger
+from app.core.ratelimit import rate_limit_dependency
 from app.core.request_id import request_id_ctx
 from app.core.threads import ThreadIdentity
 from app.schemas.chat import ChatRequest
@@ -27,6 +28,7 @@ async def stream_chat(
     request: Request,
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: ChatController = Depends(get_chat_controller),
+    _rl=Depends(rate_limit_dependency("chat", "RATE_LIMIT_CHAT_PER_MIN")),
 ) -> StreamingResponse:
     request_id = get_request_id(request)
     # Validasi DI SINI (sebelum StreamingResponse): 400/403/404 agent &

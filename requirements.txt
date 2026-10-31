@@ -16,9 +16,15 @@ langgraph
 langgraph-checkpoint-postgres
 psycopg[binary,pool]
 
+# v0.4 — cache/rate-limit/idempotency (Valkey/Redis) + auth JWT
+redis[hiredis]     # client async; Valkey wire-compatible (ADR-13)
+pwdlib[argon2]     # hash password Argon2id (passlib tak dirawat lagi)
+PyJWT              # JWT HS256, alg dipin
+
 # Test
 pytest
 pytest-asyncio
+fakeredis          # unit test cache tanpa Valkey (integrasi pakai Valkey asli)
 
 # Observability Phoenix (opsional — app jalan tanpanya jika PHOENIX_ENABLED=false)
 # arize-phoenix-otel = paket ringan khusus kirim trace (pola resmi docs).

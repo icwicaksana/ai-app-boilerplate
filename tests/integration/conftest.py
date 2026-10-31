@@ -10,12 +10,23 @@ import asyncio
 import os
 import sys
 import uuid
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# Muat `.env` repo secara eksplisit: test integrasi WAJIB memakai config nyata
+# (DATABASE_URL/CACHE_URL), dan perilaku `load_dotenv` pihak ketiga tidak boleh
+# jadi ketergantungan tersembunyi. `override=False` = env OS tetap menang.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+except ImportError:  # pragma: no cover
+    pass
 
 from app.core.config import Settings  # noqa: E402
 from app.infra.postgres import (  # noqa: E402
@@ -70,3 +81,43 @@ async def persistence(db_url):
     await setup_persistence(checkpointer, store)
     yield pool, checkpointer, store
     await close_pool(pool)
+
+
+# --- v0.4: cache (Valkey) live ---
+
+def require_cache() -> str:
+    """URL cache live, atau SKIP bila tak terjangkau."""
+    raw = (os.environ.get("TEST_CACHE_URL")
+           or os.environ.get("CACHE_URL", "")).strip()
+    if not raw:
+        pytest.skip("TEST_CACHE_URL/CACHE_URL kosong — nyalakan cache dulu")
+    return raw
+
+
+@pytest_asyncio.fixture
+async def cache_url() -> str:
+    return require_cache()
+
+
+@pytest_asyncio.fixture
+async def cache(cache_url):
+    """CacheClient nyata (Valkey). Skip bila ping gagal."""
+    from app.infra.cache import CacheClient
+
+    client = CacheClient.from_url(cache_url, socket_timeout=2.0)
+    if not await client.ping():
+        await client.close()
+        pytest.skip("Valkey tak terjangkau — `docker compose up -d cache`")
+    yield client
+    await client.close()
+
+
+@pytest_asyncio.fixture
+async def pool(db_url):
+    """Pool Postgres mentah (untuk repo user di test auth)."""
+    from app.infra.postgres import create_pool as _create
+
+    p = _create(Settings(_env_file=None, DATABASE_URL=db_url))
+    await open_pool(p)
+    yield p
+    await close_pool(p)

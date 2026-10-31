@@ -21,12 +21,14 @@ class AppError(Exception):
         status_code: int = 500,
         code: str = "INTERNAL_ERROR",
         title: str = "Internal Error",
+        headers: dict[str, str] | None = None,
     ):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.code = code
         self.title = title
+        self.headers = headers or {}
 
 
 class AgentNotFoundError(AppError):
@@ -105,6 +107,74 @@ class InvalidIdentityError(AppError):
         )
 
 
+# --- v0.4: auth / rate limit / idempotency / payload ---
+
+_WWW_BEARER = {"WWW-Authenticate": 'Bearer realm="api"'}
+
+
+class UnauthenticatedError(AppError):
+    """Tidak ada kredensial (401). `WWW-Authenticate` wajib per RFC 7235."""
+
+    def __init__(self, message: str = "Kredensial tidak ada. Kirim "
+                                      "`Authorization: Bearer <token>`."):
+        super().__init__(message, status_code=401, code="UNAUTHENTICATED",
+                         title="Unauthorized", headers=dict(_WWW_BEARER))
+
+
+class InvalidTokenError(AppError):
+    def __init__(self, message: str = "Token tidak valid."):
+        super().__init__(message, status_code=401, code="INVALID_TOKEN",
+                         title="Unauthorized", headers=dict(_WWW_BEARER))
+
+
+class TokenExpiredError(AppError):
+    def __init__(self, message: str = "Token kedaluwarsa — login/refresh ulang."):
+        super().__init__(message, status_code=401, code="TOKEN_EXPIRED",
+                         title="Unauthorized", headers=dict(_WWW_BEARER))
+
+
+class ForbiddenError(AppError):
+    def __init__(self, message: str = "Akses ditolak (scope tidak mencukupi)."):
+        super().__init__(message, status_code=403, code="FORBIDDEN",
+                         title="Forbidden")
+
+
+class AuthNotConfiguredError(AppError):
+    """Mode jwt aktif tapi JWT_SECRET kosong = salah config, bukan salah user."""
+
+    def __init__(self):
+        super().__init__(
+            "Auth belum terkonfigurasi di server (JWT_SECRET kosong). "
+            "Isi JWT_SECRET (min 32 char) di .env lalu restart.",
+            status_code=503, code="AUTH_NOT_CONFIGURED",
+            title="Auth Not Configured")
+
+
+class RateLimitedError(AppError):
+    def __init__(self, retry_after: int, limit: int):
+        super().__init__(
+            f"Terlalu banyak permintaan (limit {limit}/menit). "
+            f"Coba lagi dalam {max(1, retry_after)} detik.",
+            status_code=429, code="RATE_LIMITED", title="Too Many Requests",
+            headers={"Retry-After": str(max(1, retry_after)),
+                     "X-RateLimit-Limit": str(limit)},
+        )
+
+
+class IdempotencyConflictError(AppError):
+    def __init__(self, message: str, code: str = "IDEMPOTENCY_KEY_REUSED"):
+        super().__init__(message, status_code=409, code=code,
+                         title="Idempotency Conflict")
+
+
+class PayloadTooLargeError(AppError):
+    def __init__(self, size: int, limit: int):
+        super().__init__(
+            f"Payload {size} byte melebihi batas {limit} byte.",
+            status_code=413, code="PAYLOAD_TOO_LARGE",
+            title="Payload Too Large")
+
+
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
@@ -112,6 +182,7 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
             title=exc.title, detail=exc.message, status=exc.status_code,
             code=exc.code, instance=resolve_instance(request),
         ),
+        headers=exc.headers or None,
     )
 
 

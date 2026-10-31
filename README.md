@@ -9,14 +9,21 @@ Pola: `Route -> Controller -> Agent`. Lihat `CHANGELOG.md` untuk riwayat versi.
 ## Mulai cepat (dari clone fresh)
 
 ```powershell
-# 1) Nyalakan DB aplikasi (WAJIB sejak v0.3 — di repo Infra terpisah)
+# 1) Nyalakan dependensi (WAJIB sejak v0.3/v0.4 — di repo Infra terpisah)
 cd ..\Infra
-docker compose up -d app-db        # localhost:5433 (isi APP_DB_* di Infra/.env dulu)
+docker compose up -d app-db cache   # app-db :5433, cache(Valkey) :6380
+#    isi APP_DB_* + CACHE_PASSWORD di Infra/.env dulu (copy .env.example)
 
 # 2) Setup BE
 cd ..\ai-app-boilerplate
-.\setup.ps1            # buat .venv + install + pytest unit (copy .env.example → .env)
-# ISI .env dulu (DATABASE_URL + LITELLM_API_KEY + LITELLM_MODEL), lalu:
+.\setup.ps1            # .venv + install + pytest unit + .env (JWT_SECRET digenerate)
+# ISI .env: DATABASE_URL, CACHE_URL, LITELLM_API_KEY, LITELLM_MODEL
+
+# 3) Buat akun pertama (admin/CLI — tidak ada endpoint publik)
+.\.venv\Scripts\python.exe -m app.scripts.create_user `
+    --tenant toko-a --username budi --password 'rahasia-kuat'
+
+# 4) Jalan
 $env:RELOAD='true'; .\.venv\Scripts\python.exe -m app.main   # dev (reload ON)
 .\.venv\Scripts\python.exe -m app.main                       # prod (reload OFF)
 # Host/port: $env:HOST (default 127.0.0.1; 0.0.0.0 untuk container/LAN),
@@ -168,15 +175,48 @@ ai-app-boilerplate/
 ## Thread-ID + identitas (v0.3, beku)
 
 Format kanonis: **`tenant:user:session`** (huruf kecil, contoh `toko-a:budi:sess-7f3a2c1e`).
-`thread_id` kosong → server susun dari header. Format lama (`thr-xxx`) ditolak `400`.
+`thread_id` kosong → server susun dari identitas pemanggil. Format lama
+(`thr-xxx`) ditolak `400`.
 
-| Header | Wajib | Keterangan |
+| Sumber identitas | Wajib | Keterangan |
 |---|---|---|
-| `X-Tenant-ID` | ya | mis. `toko-a` (3–32 char). v0.3: tepercaya; v0.4: dari JWT. |
-| `X-User-ID` | ya | mis. `budi` (1–64 char). |
-| `X-Request-ID` | tidak | Idempotency/tracing key (TERPISAH dari thread_id). |
+| `Authorization: Bearer <token>` | ya (v0.4) | JWT dari `/auth/login`. Klaim `tenant` + `sub`(user) jadi identitas. |
+| `X-Tenant-ID` / `X-User-ID` | ❌ tidak dipakai | Hanya untuk `AUTH_MODE=trusted_headers` (dev, butuh flag eksplisit). |
+| `X-Request-ID` | tidak | Tracing key (TERPISAH dari thread_id). |
 
 Akses silang tenant/user → `403`. Thread asing → `404`.
+
+## Auth + proteksi API (v0.4)
+
+```bash
+# 1) buat user (admin/CLI — tidak ada endpoint publik pembuatan akun)
+python -m app.scripts.create_user --tenant toko-a --username budi \
+    --password 'rahasia-kuat' --scopes "chat jobs threads"
+
+# 2) login → token pair
+curl -X POST localhost:8000/api/v1/auth/login -H "Content-Type: application/json" \
+  -d '{"tenant":"toko-a","username":"budi","password":"rahasia-kuat"}'
+
+# 3) pakai token
+curl -N -X POST localhost:8000/api/v1/chat/stream \
+  -H "Authorization: Bearer <access_token>" -H "Content-Type: application/json" \
+  -d '{"agent":"example_chat","input":"stok ITEM-99 berapa?"}'
+
+# 4) refresh (rotasi: token lama langsung mati) / logout (revoke)
+curl -X POST localhost:8000/api/v1/auth/refresh -H "Content-Type: application/json" \
+  -d '{"refresh_token":"<refresh_token>"}'
+```
+
+| Proteksi | Perilaku |
+|---|---|
+| Rate limit | `/chat/stream` 20/menit, `/jobs/*` 10/menit, `/auth/login` 5/menit per (IP+username). Lewat batas → `429` + `Retry-After`. |
+| Idempotency | `POST /jobs/*` dengan header `Idempotency-Key`: request ulang = replay (`Idempotent-Replayed: true`), payload beda = `409`, paralel = `409`. |
+| Payload cap | `MAX_JOB_PAYLOAD_BYTES` (default 256 KB) → `413`. |
+| Docs | `/docs` + `/openapi.json` mati default; `ENABLE_DOCS=true` untuk dev. |
+| Security headers | nosniff, `X-Frame-Options: DENY`, Referrer-Policy, Permissions-Policy, COOP/CORP; HSTS hanya `ENVIRONMENT=prod`. |
+
+Token: access 15 menit, refresh 7 hari, HS256 (alg dipin), tiap token punya
+`jti` → logout/rotasi masuk denylist di Valkey sampai kedaluwarsa.
 
 ## Memori user (v0.3, prompt-driven)
 
@@ -227,6 +267,28 @@ pip install -r requirements.txt   # termasuk paket Phoenix/OTel
 
 Mati default (`PHOENIX_ENABLED=false`): app jalan normal tanpa tracing.
 `thread_id` otomatis jadi session Phoenix (1 thread = 1 percakapan di UI).
+
+## Migrasi v0.3.1 → v0.4 (WAJIB baca — auth breaking)
+
+1. **Identitas pindah ke JWT.** Header `X-Tenant-ID`/`X-User-ID` TIDAK lagi
+   dipercaya (default `AUTH_MODE=jwt`). Aksi:
+   - nyalakan cache: `cd ..\Infra; docker compose up -d cache`
+   - isi `.env`: `CACHE_URL=redis://:<CACHE_PASSWORD>@localhost:6380/0` dan
+     `JWT_SECRET` (min 32 char; generate acak)
+   - buat akun: `python -m app.scripts.create_user --tenant ... --username ...`
+   - klien: `POST /auth/login` → simpan access+refresh → kirim
+     `Authorization: Bearer <access_token>`.
+   - transisi sementara (dev saja): `AUTH_MODE=trusted_headers` +
+     `AUTH_ALLOW_TRUSTED_HEADERS=true` (DITOLAK bila `ENVIRONMENT=prod`).
+2. **`ENVIRONMENT`** baru (`dev|staging|prod`). `prod` mewajibkan: JWT_SECRET,
+   CACHE_URL, ENABLE_DOCS=false, AUTH_MODE=jwt, trusted-headers false.
+3. **`ENABLE_DOCS`** default `false` → `/docs` hilang kecuali diaktifkan.
+4. **`.env.example`** ditambah key v0.4 (cache/auth/rate-limit). `extra="forbid"`
+   → key asing/typo = start gagal (baca pesannya).
+5. **Dependency baru** (sudah di `requirements.lock`): `redis[hiredis]`,
+   `pwdlib[argon2]`, `PyJWT`, `fakeredis` (test).
+6. **Tidak berubah:** envelope SSE, RFC 7807, thread-ID, API threads, registry,
+   middleware onion, atribusi spend. 401/409/413/429 adalah kode BARU (aditif).
 
 ## Migrasi v0.3 → v0.3.1 (patch keamanan + correctness)
 
@@ -279,3 +341,4 @@ pipeline, registry, route. Aditif saja: `output.data` di pipeline
 (8k/keep-3), tool-error ramah. Tidak perlu config tambahan.
 Spend tracking: buat virtual key per project di UI proxy, isi sebagai
 `LITELLM_API_KEY`; lihat usage di UI → Usage atau `GET /spend/logs`.
+

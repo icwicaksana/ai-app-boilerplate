@@ -39,9 +39,22 @@ if (-not (Test-Path ".env")) {
     Write-Host ">> .env dibuat dari .env.example (ISI API KEY DULU)"
 }
 
+# v0.4: isi JWT_SECRET otomatis bila masih kosong (cegah start dengan auth mati).
+$envText = Get-Content ".env" -Raw
+if ($envText -match "(?m)^JWT_SECRET=\s*$") {
+    $secret = ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
+    $envText = $envText -replace "(?m)^JWT_SECRET=\s*$", "JWT_SECRET=$secret"
+    Set-Content ".env" -Value $envText -NoNewline -Encoding utf8
+    Write-Host ">> JWT_SECRET digenerate otomatis di .env"
+}
+
 if (-not $SkipTests) {
     Write-Host ">> pytest (unit; integrasi butuh docker: pytest tests/ -m integration) ..."
     & $venvPy -m pytest tests/ -q -p no:cacheprovider -m "not integration"
 }
 
-Write-Host ">> OK. Jalan: .venv/Scripts/python.exe -m app.main"
+Write-Host ">> OK. Langkah berikut:"
+Write-Host "   1) cd ..\Infra; docker compose up -d app-db cache   (wajib v0.3+)"
+Write-Host "   2) isi DATABASE_URL + CACHE_URL + LITELLM_* di .env"
+Write-Host "   3) buat akun: .venv\Scripts\python.exe -m app.scripts.create_user --tenant toko-a --username budi --password '...'"
+Write-Host "   4) jalan: .venv\Scripts\python.exe -m app.main"

@@ -28,6 +28,15 @@ def setup_phoenix_tracing(settings: Settings) -> bool:
     if not settings.PHOENIX_ENABLED:
         log.info("phoenix tracing disabled (PHOENIX_ENABLED=false)")
         return False
+    # Cek keterjangkauan SEBELUM memasang exporter: OTLP exporter melakukan
+    # retry+backoff saat collector mati → SETIAP request jadi lambat (puluhan
+    # detik, terbukti saat uji integrasi). Lebih baik matikan dengan warning.
+    if not _endpoint_reachable(settings.PHOENIX_ENDPOINT):
+        log.warning("PHOENIX_ENABLED=true tapi collector tak terjangkau (%s) — "
+                    "tracing DIMATIKAN agar request tidak lambat. Nyalakan "
+                    "`docker compose up -d phoenix` di Infra/ atau set "
+                    "PHOENIX_ENABLED=false.", settings.PHOENIX_ENDPOINT)
+        return False
     try:
         from phoenix.otel import register
     except ImportError as exc:  # pragma: no cover
@@ -48,6 +57,19 @@ def setup_phoenix_tracing(settings: Settings) -> bool:
     log.info("phoenix tracing enabled -> %s (project=%s)",
              settings.PHOENIX_ENDPOINT, settings.PHOENIX_PROJECT)
     return True
+
+
+def _endpoint_reachable(endpoint: str) -> bool:
+    """GET cepat ke base collector; False bila tak terjangkau (timeout 1 dtk)."""
+    try:
+        import httpx
+
+        base = (endpoint or "").split("/v1/")[0].rstrip("/")
+        if not base:
+            return False
+        return httpx.get(base, timeout=1.0).status_code < 500
+    except Exception:
+        return False
 
 
 def session_context(thread_id: str) -> Any:

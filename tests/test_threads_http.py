@@ -12,7 +12,7 @@ from app.controllers.runner import Runner
 from app.core import dependencies as deps
 from app.core.config import Settings
 from app.infra.memory import PROFILE_MSG_ID
-from app.main import create_app
+from tests._auth_helpers import app_with_settings, auth_headers
 
 
 class _Tup:
@@ -55,14 +55,15 @@ def _settings():
 
 
 def _client(cp):
-    app = create_app()
+    app = app_with_settings()
     app.dependency_overrides[deps.get_thread_controller] = \
         lambda: ThreadController(_settings(), cp, Runner())
     return TestClient(app, raise_server_exceptions=False)
 
 
 def _hdr(user="budi", tenant="toko-a", rid="t1"):
-    return {"X-Tenant-ID": tenant, "X-User-ID": user, "X-Request-ID": rid}
+    return auth_headers(tenant=tenant, user=user, request_id=rid)
+
 
 
 TID = "toko-a:budi:sess-1"

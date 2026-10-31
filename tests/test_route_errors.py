@@ -7,12 +7,13 @@ from app.controllers.runner import Runner
 from app.core.config import Settings
 from app.core.dependencies import get_chat_controller
 from app.main import create_app
+from tests._auth_helpers import app_with_settings, auth_headers
 
-_HEADERS = {"X-Tenant-ID": "toko-a", "X-User-ID": "budi"}
+_HEADERS = auth_headers()
 
 
 def _app_with_fake_ctrl():
-    app = create_app()
+    app = app_with_settings()
     fake = ChatController(Settings(_env_file=None), checkpointer=object(), runner=Runner())
     app.dependency_overrides[get_chat_controller] = lambda: fake
     return app
@@ -43,12 +44,21 @@ def test_chat_cross_tenant_returns_json_403():
     assert res.json()["code"] == "CROSS_TENANT_DENIED"
 
 
-def test_missing_identity_headers_returns_400():
-    """Header salah → 400 INVALID_IDENTITY (tanpa butuh lifespan/DB)."""
-    client = TestClient(create_app(), raise_server_exceptions=False)
+def test_missing_token_returns_401():
+    """v0.4: tanpa Bearer → 401 UNAUTHENTICATED (+ WWW-Authenticate)."""
+    client = TestClient(app_with_settings(), raise_server_exceptions=False)
     res = client.post("/api/v1/chat/stream", json={"input": "hi"})
-    assert res.status_code == 400
-    assert res.json()["code"] == "INVALID_IDENTITY"
+    assert res.status_code == 401
+    assert res.json()["code"] == "UNAUTHENTICATED"
+    assert res.headers.get("www-authenticate", "").lower().startswith("bearer")
+
+
+def test_trusted_headers_ignored_in_jwt_mode():
+    """Header identitas TIDAK dipercaya lagi saat AUTH_MODE=jwt."""
+    client = TestClient(app_with_settings(), raise_server_exceptions=False)
+    res = client.post("/api/v1/chat/stream", json={"input": "hi"},
+                      headers={"X-Tenant-ID": "toko-a", "X-User-ID": "budi"})
+    assert res.status_code == 401
 
 
 class _FakeConnCM:
