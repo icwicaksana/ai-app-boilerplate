@@ -156,6 +156,52 @@ class CacheClient:
         except Exception as exc:
             raise CacheUnavailable(f"delete gagal: {exc}") from exc
 
+    # --- stream ops (v0.5a: turn log resumable) ---
+
+    async def xadd(self, key: str, fields: dict[str, Any],
+                   maxlen: int | None = None) -> str:
+        """Tambah entri stream; kembalikan entry ID (cursor untuk resume)."""
+        try:
+            return str(await self._client.xadd(
+                key, fields, maxlen=maxlen, approximate=True))
+        except Exception as exc:
+            raise CacheUnavailable(f"xadd gagal: {exc}") from exc
+
+    async def xrange(self, key: str, start: str = "-",
+                     end: str = "+", count: int = 500) -> list[tuple[str, dict]]:
+        """Baca entri dari cursor `start` (inklusif)."""
+        try:
+            rows = await self._client.xrange(key, min=start, max=end, count=count)
+        except Exception as exc:
+            raise CacheUnavailable(f"xrange gagal: {exc}") from exc
+        return [(str(rid), dict(fields)) for rid, fields in rows or []]
+
+    async def xread(self, key: str, cursor: str, block_ms: int = 1000,
+                    count: int = 200) -> list[tuple[str, dict]]:
+        """Baca entri BARU setelah `cursor` (blocking singkat)."""
+        try:
+            res = await self._client.xread({key: cursor}, block=block_ms, count=count)
+        except Exception as exc:
+            raise CacheUnavailable(f"xread gagal: {exc}") from exc
+        out: list[tuple[str, dict]] = []
+        for _stream, entries in res or []:
+            for rid, fields in entries:
+                out.append((str(rid), dict(fields)))
+        return out
+
+    async def expire(self, key: str, ttl_seconds: int) -> bool:
+        try:
+            return bool(await self._client.expire(key, max(1, int(ttl_seconds))))
+        except Exception as exc:
+            raise CacheUnavailable(f"expire gagal: {exc}") from exc
+
+    async def eval_int(self, script: str, keys: list[str], args: list[Any]) -> Any:
+        """Jalankan Lua yang mengembalikan nilai sederhana."""
+        try:
+            return await self._client.eval(script, len(keys), *keys, *args)
+        except Exception as exc:
+            raise CacheUnavailable(f"eval gagal: {exc}") from exc
+
 
 def build_cache(settings: Settings) -> CacheClient | None:
     """Cache dari settings; None bila CACHE_URL kosong (fitur nonaktif)."""

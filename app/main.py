@@ -158,6 +158,12 @@ async def lifespan(app: FastAPI):
             ) from exc
         log.info("cache ready (valkey)")
     app.state.cache = cache
+    # v0.5a: turn log resumable (producer terpisah dari koneksi klien).
+    from app.core.turns import TurnManager
+    from app.infra.turnlog import TurnLog
+
+    app.state.turns = TurnManager(TurnLog(cache))
+    log.info("turn log %s", "ready (valkey streams)" if cache else "NONAKTIF")
     # Peringatan operasional eksplisit (bukan diam-diam):
     # - auth: mode aktif + apakah benar-benar bisa melayani request.
     # - LLM lazy-by-design: proxy boleh menyusul, tapi chat akan 502.
@@ -187,6 +193,10 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         # Shutdown BERSIH walau generator lifespan terima exception.
+        try:
+            await app.state.turns.cancel_all()
+        except Exception:
+            log.exception("gagal membatalkan turn producer saat shutdown")
         if cache is not None:
             await cache.close()
             log.info("cache closed")

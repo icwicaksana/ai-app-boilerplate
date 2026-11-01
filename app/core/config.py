@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "ai-app-boilerplate"
     API_V1_PREFIX: str = "/api/v1"
-    APP_VERSION: str = "v0.4.1"  # satu sumber versi (OpenAPI + health baca ini)
+    APP_VERSION: str = "v0.5"  # satu sumber versi (OpenAPI + health baca ini)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     # Server (entrypoint `python -m app.main` baca dari sini — .env/OS-env).
@@ -88,6 +88,14 @@ class Settings(BaseSettings):
     # berikutnya (wajib untuk alur HITL agar pause tak hilang saat crash),
     # "async" lebih cepat, "exit" hanya di akhir run.
     GRAPH_DURABILITY: Literal["sync", "async", "exit"] = "async"
+
+    # --- v0.5b: WebSocket realtime ---
+    WS_ENABLED: bool = True
+    WS_TICKET_TTL_SECONDS: int = Field(default=30, ge=5, le=300)
+    WS_HEARTBEAT_SECONDS: int = Field(default=25, ge=5, le=120)
+    WS_MAX_QUEUE: int = Field(default=256, ge=8, le=10_000)
+    # Origin yang diizinkan untuk handshake WS (CSWSH). Kosong = pakai CORS_ORIGINS.
+    WS_ORIGINS: str = ""
 
     # Observability Phoenix
     PHOENIX_ENABLED: bool = False
@@ -200,6 +208,11 @@ class Settings(BaseSettings):
     def cors_headers(self) -> list[str]:
         return [h.strip() for h in (self.CORS_ALLOW_HEADERS or "").split(",")
                 if h.strip()]
+
+    def ws_origins(self) -> list[str]:
+        """Origin yang diizinkan untuk WS; fallback ke CORS_ORIGINS."""
+        raw = (self.WS_ORIGINS or "").strip() or self.CORS_ORIGINS
+        return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
 
 
 @lru_cache

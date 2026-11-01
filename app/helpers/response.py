@@ -93,8 +93,8 @@ def job_error(
                     code=code, instance=instance, extra=extra)
 
 
-def stream_started() -> dict[str, Any]:
-    return StreamStarted().model_dump(mode="json")
+def stream_started(turn_id: str | None = None) -> dict[str, Any]:
+    return StreamStarted(turn_id=turn_id).model_dump(mode="json")
 
 
 def stream_token(delta: str) -> dict[str, Any]:

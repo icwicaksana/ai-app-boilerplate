@@ -2,6 +2,42 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.5 (2026-11-01) — Realtime: resumable SSE (turn-level) + WebSocket
+
+**v0.5a — Resume turn-level (ADR-20).** Streaming SSE sekarang **tahan putus**:
+- `app/infra/turnlog.py`: satu turn = satu Valkey Stream (`turn:{tenant}:{turn_id}`).
+  Event pertama + TTL ditulis **atomik** (Lua XADD+EXPIRE) — key tetap punya TTL
+  walau proses mati tepat setelah tulis. Event terminal (`result`/`error`)
+  mengakhiri; `finish()` memperpendek TTL ke jendela reconnect; kedaluwarsa → 410.
+- `app/core/turns.py`: **producer terpisah dari koneksi klien** (task latar).
+  Disconnect klien TIDAK menghentikan produksi; klien lain bisa menyusul.
+- SSE `id:` = entry ID stream (satu-satunya cursor); `Last-Event-ID` melanjutkan
+  dari posisi terakhir. `started` membawa `turn_id` (aditif).
+- `GET /chat/stream/{turn_id}` → replay + live sampai terminal; 410 `STREAM_GONE`
+  bila kedaluwarsa/tidak dikenal.
+- Tanpa cache (`CACHE_URL` kosong) → streaming langsung seperti v0.4 (degradasi
+  eksplisit, didokumentasikan).
+
+**v0.5b — WebSocket `/ws/chat` (ADR-21).**
+- Auth **ticket sekali pakai**: `POST /realtime/ticket` (Bearer) → ticket TTL 30 dtk,
+  di-consume atomik (GET+DEL). Browser tak bisa kirim header `Authorization` dan
+  token di query bocor ke log — ticket menutup keduanya.
+- **Origin allowlist** (CWE-1385 / OWASP ASVS 4.4): origin asing ditolak 1008.
+- Envelope identik SSE + `seq` monotonic per koneksi; ping/pong; `cancel`;
+  `resume` memakai turn log yang sama dengan SSE.
+- **Backpressure**: queue per koneksi `WS_MAX_QUEUE`; frame `token`/`thinking`
+  di-drop saat penuh (aman — bisa resume), frame terminal tidak pernah di-drop;
+  klien yang terus lambat diputus 1013.
+- Heartbeat aplikasi `WS_HEARTBEAT_SECONDS` + presence `ws:presence:{tenant}:{user}`
+  (TTL 2× heartbeat, dihapus saat disconnect).
+- Shutdown: producer turn dibatalkan, cache ditutup bersih.
+
+**Tests:** 512 hijau (unit + integrasi). Baru: `test_turnlog.py` (producer,
+terminal, cancel), `test_ws_ticket.py` (single-use, Origin), integrasi
+`test_turnlog_live.py` (Streams nyata: cursor, TTL, isolasi tenant),
+`test_resume_live.py` (putus → reconnect → `Last-Event-ID` tanpa gap),
+`test_ws_live.py` (ticket, Origin, envelope+seq, cancel, pesan ngawur).
+
 ## v0.4.1 (2026-11-01) — Hotfix deteksi interrupt LangGraph
 
 **Bug (latent sejak v0.3.1):** jalur streaming (`Runner._final_result_event`)

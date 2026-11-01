@@ -25,6 +25,9 @@ from app.schemas.common import JobStatus
 
 class StreamStarted(BaseModel):
     type: Literal["started"] = "started"
+    # v0.5a (aditif): ID turn untuk resume. Klien menyimpan ini dan memakai
+    # `GET /chat/stream/{turn_id}` + header `Last-Event-ID` saat putus.
+    turn_id: str | None = None
 
 
 class StreamToken(BaseModel):

@@ -175,6 +175,16 @@ class PayloadTooLargeError(AppError):
             title="Payload Too Large")
 
 
+class StreamGoneError(AppError):
+    """Turn stream kedaluwarsa/tidak dikenal (410) — jangan menggantung klien."""
+
+    def __init__(self, turn_id: str = ""):
+        super().__init__(
+            f"Turn '{turn_id}' tidak tersedia (kedaluwarsa atau belum pernah ada). "
+            "Mulai permintaan baru.",
+            status_code=410, code="STREAM_GONE", title="Gone")
+
+
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,

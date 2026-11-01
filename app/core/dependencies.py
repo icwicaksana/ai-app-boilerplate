@@ -19,7 +19,9 @@ from app.core.errors import StorageUnavailableError
 from app.core.request_id import request_id_ctx, resolve_instance
 from app.core.security import TokenClaims
 from app.core.threads import ThreadIdentity
+from app.core.turns import TurnManager
 from app.infra.cache import CacheClient
+from app.infra.turnlog import TurnLog
 
 
 def get_runner() -> Runner:
@@ -52,6 +54,14 @@ def get_request_id(request: Request) -> str:
 def get_cache(request: Request) -> CacheClient | None:
     """Cache dari lifespan; None = fitur cache nonaktif (ADR-15)."""
     return getattr(request.app.state, "cache", None)
+
+
+def get_turn_manager(request: Request) -> TurnManager:
+    """TurnManager dari lifespan (turn log resumable, v0.5a)."""
+    manager = getattr(request.app.state, "turns", None)
+    if manager is None:  # lifespan tak jalan (test) → manager nonaktif
+        manager = TurnManager(TurnLog(None))
+    return manager
 
 
 async def get_thread_identity(
