@@ -54,6 +54,11 @@ class TurnManager:
         terminal = False
         try:
             async for event in events:
+                # `started` sudah ditulis sebagai first_event (membawa turn_id);
+                # started dari runner = duplikat → lewati agar kontrak
+                # "started tepat satu kali" tetap utuh.
+                if event.get("type") == "started":
+                    continue
                 await self.turnlog.append(tenant=tenant, turn_id=turn_id,
                                           event=event)
                 if is_terminal(event):

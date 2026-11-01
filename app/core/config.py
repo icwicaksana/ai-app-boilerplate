@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "ai-app-boilerplate"
     API_V1_PREFIX: str = "/api/v1"
-    APP_VERSION: str = "v0.6"  # satu sumber versi (OpenAPI + health baca ini)
+    APP_VERSION: str = "v0.6.1"  # satu sumber versi (OpenAPI + health baca ini)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     # Server (entrypoint `python -m app.main` baca dari sini — .env/OS-env).
@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     WS_TICKET_TTL_SECONDS: int = Field(default=30, ge=5, le=300)
     WS_HEARTBEAT_SECONDS: int = Field(default=25, ge=5, le=120)
     WS_MAX_QUEUE: int = Field(default=256, ge=8, le=10_000)
+    # Batas umur koneksi: handshake hanya membuktikan identitas SEKALI, jadi
+    # koneksi panjang wajib diputus berkala → klien minta ticket baru lalu
+    # reconnect + `resume` (turn log) tanpa kehilangan token jawaban.
+    WS_MAX_CONNECTION_SECONDS: int = Field(default=1800, ge=5, le=86_400)
     # Origin yang diizinkan untuk handshake WS (CSWSH). Kosong = pakai CORS_ORIGINS.
     WS_ORIGINS: str = ""
 

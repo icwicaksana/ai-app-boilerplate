@@ -127,6 +127,20 @@ async def test_follow_passthrough_and_running_flag():
 
 
 @pytest.mark.asyncio
+async def test_producer_skips_duplicate_started():
+    """`started` hanya ditulis sekali (first_event), bukan dari runner juga."""
+    log = FakeTurnLog()
+    mgr = TurnManager(log)
+    await mgr.start(tenant="t", turn_id="t6",
+                    first_event={"type": "started", "turn_id": "t6"},
+                    events=_stream({"type": "started"},
+                                   {"type": "token", "delta": "a"},
+                                   {"type": "result"}))
+    await asyncio.gather(*list(mgr._tasks.values()))
+    assert [e["type"] for e in log.events] == ["started", "token", "result"]
+
+
+@pytest.mark.asyncio
 async def test_cancel_all_stops_producers():
     log = FakeTurnLog()
 

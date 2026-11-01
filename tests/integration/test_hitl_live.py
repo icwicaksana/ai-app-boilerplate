@@ -222,3 +222,101 @@ async def test_tenant_isolation_of_approvals(env):
     with pytest.raises(ApprovalNotFoundError):
         await svc.get(tenant=other, approval_id=rows[0]["id"])
 
+
+# --- edge cases v0.6 ---
+
+async def _make_pending(svc, settings, cp, tenant, thread_id):
+    graph = _graph(settings, cp, thread_id)
+    first = await svc.runner.run(graph, {"approved": False},
+                                 {"configurable": {"thread_id": thread_id}})
+    rows = await svc.record_interrupts(tenant=tenant, thread_id=thread_id,
+                                       agent="hitl_fake",
+                                       interrupts=first["interrupts"])
+    return rows[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_expired_approval_cannot_be_decided(env):
+    from app.core.approvals import ApprovalExpiredError
+
+    settings, pool, cp = env
+    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    svc = _service(settings, pool, cp)
+    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE approvals SET expires_at = now() - interval '1 minute' "
+            "WHERE id = %s", (approval_id,))
+    with pytest.raises(ApprovalExpiredError):
+        await svc.decide(tenant=tenant, actor="budi",
+                         approval_id=approval_id, decision="approve")
+    row = await repo.get_approval(pool, tenant=tenant, approval_id=approval_id)
+    assert row["status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_unknown_approval_404_and_invalid_decision(env):
+    from app.core.errors import AppError
+
+    settings, pool, cp = env
+    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
+    svc = _service(settings, pool, cp)
+    with pytest.raises(ApprovalNotFoundError):
+        await svc.get(tenant=tenant, approval_id=999_999)
+
+    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+    with pytest.raises(AppError) as ei:
+        await svc.decide(tenant=tenant, actor="budi",
+                         approval_id=approval_id, decision="mungkin")
+    assert ei.value.status_code == 422 and ei.value.code == "INVALID_DECISION"
+
+
+@pytest.mark.asyncio
+async def test_reject_then_approve_is_409(env):
+    settings, pool, cp = env
+    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    svc = _service(settings, pool, cp)
+    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+
+    await svc.decide(tenant=tenant, actor="budi", approval_id=approval_id,
+                     decision="reject")
+    with pytest.raises(ApprovalStateError):
+        await svc.decide(tenant=tenant, actor="budi",
+                         approval_id=approval_id, decision="approve")
+
+
+@pytest.mark.asyncio
+async def test_audit_tampering_detected(env):
+    settings, pool, cp = env
+    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    svc = _service(settings, pool, cp)
+    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+    await svc.decide(tenant=tenant, actor="budi", approval_id=approval_id,
+                     decision="approve")
+
+    ok, bad = await repo.verify_chain(pool, tenant=tenant)
+    assert ok is True and bad is None
+
+    async with pool.connection() as conn:
+        await conn.execute(
+            "UPDATE audit_log SET payload = payload || '{\"tampered\":true}'::jsonb "
+            "WHERE tenant = %s AND action = 'approval_decided'", (tenant,))
+    ok2, bad2 = await repo.verify_chain(pool, tenant=tenant)
+    assert ok2 is False and bad2 is not None
+
+
+@pytest.mark.asyncio
+async def test_no_pending_left_after_approval(env):
+    settings, pool, cp = env
+    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    svc = _service(settings, pool, cp)
+    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+    await svc.decide(tenant=tenant, actor="budi", approval_id=approval_id,
+                     decision="approve")
+    assert await svc.list(tenant=tenant) == []

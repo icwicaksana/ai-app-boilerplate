@@ -44,6 +44,7 @@ SUBPROTOCOL = "ai-app.v1"
 CLOSE_POLICY = 1008
 CLOSE_TRY_AGAIN = 1013
 CLOSE_RESTART = 1012
+CLOSE_AUTH_EXPIRED = 4001  # kode aplikasi: sesi WS habis, reconnect + resume
 
 DROPPABLE = frozenset({"token", "thinking"})
 
@@ -112,10 +113,17 @@ class _Connection:
         self.dropped = 0
         self.run_task: asyncio.Task | None = None
         self._sender: asyncio.Task | None = None
+        self._watchdog: asyncio.Task | None = None
 
     # --- lifecycle ---
     async def run(self) -> None:
         self._sender = asyncio.create_task(self._send_loop())
+        self._watchdog = asyncio.create_task(self._lifetime_watchdog())
+        # `ready` memberi tahu klien umur koneksi + heartbeat, sehingga klien
+        # bisa menjadwalkan re-ticket + reconnect + resume SEBELUM diputus.
+        await self._send({"type": "ready", "subprotocol": SUBPROTOCOL,
+                          "expires_in": self.settings.WS_MAX_CONNECTION_SECONDS,
+                          "heartbeat": self.settings.WS_HEARTBEAT_SECONDS})
         try:
             while True:
                 msg = await self.ws.receive_json()
@@ -127,6 +135,18 @@ class _Connection:
         finally:
             await self._cleanup()
 
+    async def _lifetime_watchdog(self) -> None:
+        """Putuskan koneksi setelah batas umur (identitas hanya dicek saat handshake)."""
+        await asyncio.sleep(max(1, self.settings.WS_MAX_CONNECTION_SECONDS))
+        try:
+            await self._send({"type": "auth_expired",
+                              "reason": "max_connection_lifetime",
+                              "close_code": CLOSE_AUTH_EXPIRED})
+        except Exception:
+            log.debug("gagal kirim auth_expired (koneksi sudah tutup)",
+                      exc_info=True)
+        await self.ws.close(code=CLOSE_AUTH_EXPIRED)
+
     def _id(self) -> tuple[str, str]:
         return self.identity.tenant, self.identity.user
 
@@ -135,10 +155,11 @@ class _Connection:
             self.run_task.cancel()
             with contextlib.suppress(BaseException):
                 await self.run_task
-        if self._sender:
-            self._sender.cancel()
-            with contextlib.suppress(BaseException):
-                await self._sender
+        for task in (self._sender, getattr(self, "_watchdog", None)):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
         await self._presence(offline=True)
 
     # --- handlers ---

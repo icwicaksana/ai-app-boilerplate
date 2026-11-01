@@ -17,9 +17,12 @@ from app.agents.BaseChatAgent import BaseChatAgent
 from app.agents.BasePipelineAgent import BasePipelineAgent
 from app.agents.ExampleChatAgent import ExampleChatAgent
 from app.agents.ExamplePipelineAgent import ExamplePipelineAgent
+from app.agents.HitlDemoAgent import HitlDemoAgent
 
 CHAT_AGENTS: dict[str, type[BaseChatAgent]] = {
     "example_chat": ExampleChatAgent,
+    # Demo HITL tanpa LLM (v0.6): mencoba alur approval end-to-end.
+    "hitl_demo": HitlDemoAgent,
 }
 
 JOB_AGENTS: dict[str, type[BasePipelineAgent]] = {

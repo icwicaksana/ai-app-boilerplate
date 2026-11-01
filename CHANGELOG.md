@@ -2,6 +2,41 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.6.1 (2026-11-01) — Batas umur koneksi WS + E2E menyeluruh
+
+**Batas umur koneksi WebSocket (`WS_MAX_CONNECTION_SECONDS`, default 1800).**
+Handshake hanya membuktikan identitas **sekali**; koneksi panjang bisa hidup
+lebih lama dari access token. Sekarang:
+- setelah `accept`, server mengirim frame `ready` berisi `expires_in` +
+  `heartbeat` sehingga klien bisa menjadwalkan re-ticket **sebelum** diputus;
+- saat batas tercapai: frame `auth_expired` (`reason`, `close_code`) lalu
+  close **4001**; klien minta ticket baru, reconnect, lalu `resume` turn
+  (v0.5a) tanpa kehilangan token jawaban.
+
+**Agent demo HITL `hitl_demo`** (tanpa LLM): graf dua node
+(`propose` → `interrupt` → `execute`) dengan payload refund Rp 750.000.
+Dipakai untuk mencoba approval end-to-end dan untuk E2E lintas proses tanpa
+API key LLM.
+
+**Bug ditemukan lewat E2E & diperbaiki:** jalur turn-log menulis **dua**
+event `started` (dari route + dari runner). Kini `TurnManager` melewati
+`started` dari producer sehingga kontrak "started tepat satu kali" utuh.
+
+**Testing (naik dari 524 → 545):**
+- `test_ws_live.py` diperluas: `ready` frame, ticket sekali pakai, ticket
+  dicabut, Origin asing/allowlist, envelope+`seq` (ready=seq 1), `BUSY` saat
+  run aktif, `cancel`, pesan ngawur, error validasi sebagai frame (bukan
+  disconnect), dan **batas umur koneksi** (auth_expired + close 4001).
+- `test_hitl_live.py` diperluas: approval kedaluwarsa → 409 `APPROVAL_EXPIRED`,
+  id tak dikenal → 404, decision invalid → 422, reject-lalu-approve → 409,
+  **tamper audit → `verify_chain` gagal** dengan `first_bad_id`, dan tidak ada
+  pending tersisa setelah approve.
+- `Test/spike_v06/live_e2e.py` — **E2E terhadap uvicorn nyata (Postgres +
+  Valkey)**: 21 pemeriksaan hijau, mencakup SSE `pending_approval` + `X-Turn-ID`,
+  resume replay + `Last-Event-ID`, turn asing → 410, WS `ready`/ping-pong/
+  envelope, ticket reuse & Origin ditolak, approval tercatat → approve →
+  resume `completed`, double-decide 409, audit chain valid.
+
 ## v0.6 (2026-11-01) — HITL tool-level + approval API + audit hash-chain
 
 **Deteksi interrupt** (dari v0.4.1) kini dipakai penuh: `snapshot.interrupts`
