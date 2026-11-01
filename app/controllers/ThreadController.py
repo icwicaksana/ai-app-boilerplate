@@ -95,6 +95,25 @@ def _checkpoint_id_of(tup) -> str:
     return str((tup.config.get("configurable") or {}).get("checkpoint_id", ""))
 
 
+def _next_nodes_of(tup) -> list[str] | None:
+    """Node berikutnya dari checkpoint tuple (v0.6, untuk dashboard approval)."""
+    meta = getattr(tup, "metadata", None) or {}
+    nxt = meta.get("next") if isinstance(meta, dict) else None
+    if nxt is None:
+        nxt = getattr(tup, "next", None)
+    if not nxt:
+        return None
+    return [str(n) for n in nxt] if isinstance(nxt, (list, tuple)) else [str(nxt)]
+
+
+def _interrupt_ids_of(tup) -> list[str] | None:
+    """ID interrupt yang menunggu (dari checkpoint tuple, bila tersedia)."""
+    items = getattr(tup, "interrupts", None) or ()
+    ids = [str(getattr(i, "id", "")) for i in items]
+    ids = [i for i in ids if i]
+    return ids or None
+
+
 def _values_of(tup) -> dict:
     cp = getattr(tup, "checkpoint", None) or {}
     if isinstance(cp, dict):
@@ -152,6 +171,8 @@ class ThreadController(BaseController):
                 getattr(tup, "checkpoint", None), dict) else None),
             messages_count=len(previews),
             messages=previews,
+            next=_next_nodes_of(tup),
+            interrupt_ids=_interrupt_ids_of(tup),
         )
 
     async def get_history(self, identity: ThreadIdentity, thread_id: str,

@@ -132,6 +132,16 @@ async def lifespan(app: FastAPI):
                 "Setup tabel auth (app_users) gagal. Pastikan user DB punya "
                 f"hak CREATE di schema public. Detail: {type(exc).__name__}: {exc}"
             ) from exc
+        # v0.6: tabel approvals + audit trail (HITL).
+        try:
+            from app.infra.approvals import ensure_schema as ensure_hitl_schema
+
+            await ensure_hitl_schema(pool)
+        except Exception as exc:
+            raise RuntimeError(
+                "Setup tabel HITL (approvals/audit_log) gagal. Pastikan user DB "
+                f"punya hak CREATE. Detail: {type(exc).__name__}: {exc}"
+            ) from exc
         # Assignment di DALAM try (F-05): raise di antara assignment dan
         # yield tak lagi bocorkan pool (except luar menutup 1x).
         app.state.pool = pool

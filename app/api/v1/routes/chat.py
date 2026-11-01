@@ -1,4 +1,4 @@
-"""Route chat: SSE streaming + resume turn-level (v0.5a).
+"""Route chat: SSE streaming + resume turn-level (v0.5a) + hook approval (v0.6).
 
 Dua jalur:
 1. `POST /chat/stream` — buat turn, jalankan producer di latar, tail log.
@@ -11,11 +11,13 @@ langsung tanpa resume (degradasi eksplisit, bukan diam-diam).
 
 import asyncio
 import json
+from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
 from app.controllers.ChatController import ChatController
+from app.core.approvals import record_pending_approvals
 from app.core.dependencies import (
     get_chat_controller,
     get_request_id,
@@ -35,15 +37,25 @@ from app.schemas.stream import StreamStarted
 router = APIRouter(tags=["chat"])
 log = get_logger(__name__)
 
-_SSE_HEADERS = {
-    "Cache-Control": "no-cache",
-    "X-Accel-Buffering": "no",
-}
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+OnEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _sse(entry_id: str, event: dict) -> str:
     """Satu frame SSE: `id:` = cursor stream (untuk Last-Event-ID)."""
     return f"id: {entry_id}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+def _approval_hook(request: Request, identity: ThreadIdentity, thread_id: str,
+                   agent: str, request_id: str) -> OnEvent:
+    """Hook: interrupt → baris approval pending (v0.6)."""
+    async def _hook(event: dict[str, Any]) -> None:
+        if event.get("type") != "result" or event.get("status") != "pending_approval":
+            return
+        await record_pending_approvals(
+            request, identity=identity, thread_id=thread_id, agent=agent,
+            interrupts=event.get("interrupts") or [], request_id=request_id)
+    return _hook
 
 
 @router.post("/chat/stream")
@@ -57,16 +69,17 @@ async def stream_chat(
 ) -> StreamingResponse:
     request_id = get_request_id(request)
     # Validasi SEBELUM StreamingResponse: 400/403/404 jadi JSON biasa.
-    ctrl.validate_before_stream(req, identity)
+    thread_id = ctrl.validate_before_stream(req, identity)
+    on_event = _approval_hook(request, identity, thread_id, req.agent, request_id)
 
     if not turns.enabled:  # cache nonaktif → streaming langsung (tanpa resume)
-        return _direct_stream(req, identity, ctrl, request_id)
+        return _direct_stream(req, identity, ctrl, request_id, on_event)
 
     turn_id = new_turn_id()
-    started = {**StreamStarted(turn_id=turn_id).model_dump(mode="json")}
-    await turns.start(tenant=identity.tenant, turn_id=turn_id,
-                      first_event=started,
-                      events=ctrl.stream(req, identity, request_id=request_id))
+    await turns.start(
+        tenant=identity.tenant, turn_id=turn_id,
+        first_event=StreamStarted(turn_id=turn_id).model_dump(mode="json"),
+        events=ctrl.stream(req, identity, request_id=request_id))
 
     async def tail():
         token = request_id_ctx.set(request_id)
@@ -75,6 +88,7 @@ async def stream_chat(
                     tenant=identity.tenant, turn_id=turn_id):
                 if await request.is_disconnected():
                     break
+                await on_event(event)
                 yield _sse(entry_id, event)
         except (asyncio.CancelledError, GeneratorExit):
             raise
@@ -84,9 +98,10 @@ async def stream_chat(
         finally:
             request_id_ctx.reset(token)
 
-    return StreamingResponse(tail(), media_type="text/event-stream",
-                             headers={**_SSE_HEADERS, "X-Request-ID": request_id,
-                                      "X-Turn-ID": turn_id})
+    return StreamingResponse(
+        tail(), media_type="text/event-stream",
+        headers={**_SSE_HEADERS, "X-Request-ID": request_id,
+                 "X-Turn-ID": turn_id})
 
 
 @router.get("/chat/stream/{turn_id}")
@@ -110,12 +125,14 @@ async def resume_stream(
                 break
             yield _sse(entry_id, event)
 
-    return StreamingResponse(tail(), media_type="text/event-stream",
-                             headers={**_SSE_HEADERS, "X-Turn-ID": turn_id})
+    return StreamingResponse(
+        tail(), media_type="text/event-stream",
+        headers={**_SSE_HEADERS, "X-Turn-ID": turn_id})
 
 
 def _direct_stream(req: ChatRequest, identity: ThreadIdentity,
-                   ctrl: ChatController, request_id: str) -> StreamingResponse:
+                   ctrl: ChatController, request_id: str,
+                   on_event: OnEvent) -> StreamingResponse:
     """Fallback tanpa cache: perilaku v0.4 (tak bisa resume)."""
 
     async def event_gen():
@@ -124,6 +141,7 @@ def _direct_stream(req: ChatRequest, identity: ThreadIdentity,
             async for event in ctrl.stream(req, identity, request_id=request_id):
                 if await request.is_disconnected():
                     break
+                await on_event(event)
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except (asyncio.CancelledError, GeneratorExit):
             raise
@@ -133,5 +151,6 @@ def _direct_stream(req: ChatRequest, identity: ThreadIdentity,
         finally:
             request_id_ctx.reset(token)
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream",
-                             headers={**_SSE_HEADERS, "X-Request-ID": request_id})
+    return StreamingResponse(
+        event_gen(), media_type="text/event-stream",
+        headers={**_SSE_HEADERS, "X-Request-ID": request_id})

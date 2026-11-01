@@ -180,10 +180,12 @@ class _Connection:
         self.run_task = asyncio.create_task(self._run_chat(ctrl, req))
 
     async def _run_chat(self, ctrl: ChatController, req: ChatRequest) -> None:
+        thread_id = ""
         try:
-            ctrl.validate_before_stream(req, self.identity)
+            thread_id = ctrl.validate_before_stream(req, self.identity)
             async for event in ctrl.stream(req, self.identity, request_id="ws"):
                 await self._put(event)
+                await self._record(event, thread_id, req.agent)
         except AppError as exc:
             await self._put({"type": "error", "code": exc.code,
                              "status": exc.status_code, "title": exc.title,
@@ -196,6 +198,17 @@ class _Connection:
                              "status": 500, "title": "Stream Failed",
                              "detail": f"{type(exc).__name__}: {exc}",
                              "instance": "-"})
+
+    async def _record(self, event: dict, thread_id: str, agent: str) -> None:
+        """v0.6: interrupt → approval pending (sama seperti jalur SSE)."""
+        if event.get("type") != "result" or event.get("status") != "pending_approval":
+            return
+        from app.core.approvals import record_pending_approvals
+
+        await record_pending_approvals(
+            self.ws, identity=self.identity, thread_id=thread_id,
+            agent=agent, interrupts=event.get("interrupts") or [],
+            request_id="ws")
 
     async def _start_resume(self, msg: dict) -> None:
         turn_id = str(msg.get("turn_id") or "")

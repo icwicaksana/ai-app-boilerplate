@@ -32,6 +32,13 @@ class ThreadStateResponse(BaseModel):
     created_at: str | None = None
     messages_count: int = 0
     messages: list[ThreadMessagePreview] = Field(default_factory=list)
+    # v0.6 (aditif): node berikutnya + interrupt yang menunggu keputusan.
+    next: list[str] | None = Field(
+        default=None,
+        description="Node yang akan jalan berikutnya (kosong bila selesai).")
+    interrupt_ids: list[str] | None = Field(
+        default=None,
+        description="ID interrupt yang menunggu approval (untuk dashboard).")
 
 
 class HistoryItem(BaseModel):

@@ -64,6 +64,19 @@ def get_turn_manager(request: Request) -> TurnManager:
     return manager
 
 
+def get_approval_service(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """ApprovalService (v0.6) dari pool + checkpointer lifespan."""
+    from app.core.approvals import ApprovalService
+
+    pool = getattr(request.app.state, "pool", None)
+    checkpointer = getattr(request.app.state, "checkpointer", None)
+    if pool is None or checkpointer is None:
+        raise StorageUnavailableError(
+            "Persistence belum siap (lifespan gagal/startup tak jalan).")
+    return ApprovalService(settings, pool, checkpointer)
 async def get_thread_identity(
     request: Request,
     settings: Settings = Depends(get_settings),

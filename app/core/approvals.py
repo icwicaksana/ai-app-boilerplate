@@ -1,0 +1,237 @@
+"""ApprovalService (v0.6): rekam interrupt → keputusan → resume graph.
+
+Alur produksi:
+1. Streaming berhenti karena interrupt (`result` dengan `interrupts`).
+2. Route memanggil `record_interrupts()` → baris `approvals` (pending) + audit
+   `approval_requested`.
+3. Reviewer memutuskan lewat API → `decide()`:
+   - klaim atomik (anti double-approve),
+   - **TOCTOU guard**: hash aksi saat ini harus sama dengan yang disetujui,
+   - resume graph dengan `Command(resume={"decisions": [...]})`,
+   - audit `approval_decided` (+ hasil resume).
+4. Bila resume memunculkan interrupt baru → dicatat lagi (rantai approval).
+
+Catatan v0.6: keputusan berlaku untuk SEMUA aksi dalam satu interrupt
+(mode `batched`); keputusan campuran per-aksi belum didukung.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.agents.AgentContext import AgentContext
+from app.agents.BaseChatAgent import BaseChatAgent
+from app.controllers.registry import CHAT_AGENTS
+from app.controllers.runner import Runner
+from app.core.config import Settings
+from app.core.errors import AgentNotFoundError, AppError, ForbiddenError
+from app.core.hitl import action_hash, policy_for, policy_version
+from app.core.logging import get_logger
+from app.infra import approvals as repo
+
+log = get_logger(__name__)
+
+
+class ApprovalNotFoundError(AppError):
+    def __init__(self, approval_id: int):
+        super().__init__(f"Approval {approval_id} tidak ditemukan.",
+                         status_code=404, code="APPROVAL_NOT_FOUND",
+                         title="Approval Not Found")
+
+
+class ApprovalStateError(AppError):
+    def __init__(self, status: str):
+        super().__init__(f"Approval sudah berstatus '{status}'.",
+                         status_code=409, code="APPROVAL_ALREADY_DECIDED",
+                         title="Approval Already Decided")
+
+
+class ApprovalStaleError(AppError):
+    """Aksi berubah antara persetujuan dan eksekusi (TOCTOU)."""
+
+    def __init__(self):
+        super().__init__(
+            "Aksi berubah sejak approval diminta — minta persetujuan ulang.",
+            status_code=409, code="APPROVAL_STALE", title="Approval Stale")
+
+
+class ApprovalExpiredError(AppError):
+    def __init__(self):
+        super().__init__("Approval kedaluwarsa — minta persetujuan ulang.",
+                         status_code=409, code="APPROVAL_EXPIRED",
+                         title="Approval Expired")
+
+
+class ApprovalService:
+    def __init__(self, settings: Settings, pool, checkpointer,
+                 runner: Runner | None = None):
+        self.settings = settings
+        self.pool = pool
+        self.checkpointer = checkpointer
+        self.runner = runner or Runner(durability=settings.GRAPH_DURABILITY)
+
+    # --- perekaman ---
+    async def record_interrupts(self, *, tenant: str, thread_id: str,
+                                agent: str, interrupts: list[dict[str, Any]],
+                                request_id: str = "-") -> list[dict[str, Any]]:
+        """Simpan setiap interrupt sebagai approval pending (idempotent)."""
+        out: list[dict[str, Any]] = []
+        for item in interrupts or []:
+            snapshot = item.get("value") if isinstance(item.get("value"), dict) else {}
+            actions = snapshot.get("action_requests") or []
+            tool_name = ",".join(str(a.get("name", "?")) for a in actions) or "unknown"
+            expires = 86_400
+            pol = policy_for(str(actions[0].get("name"))) if actions else None
+            if pol is not None:
+                expires = pol.expires_in_seconds
+            row = await repo.record_pending(
+                self.pool, tenant=tenant, thread_id=thread_id,
+                interrupt_id=str(item.get("id", "")), agent=agent,
+                tool_name=tool_name,
+                action_hash=action_hash(tool_name, snapshot),
+                action_snapshot=snapshot,
+                policy_version=policy_version(),
+                expires_in_seconds=expires)
+            if row:
+                out.append(row)
+                await repo.append_audit(
+                    self.pool, tenant=tenant, actor="system",
+                    action="approval_requested", subject_type="approval",
+                    subject_id=str(row["id"]),
+                    payload={"thread_id": thread_id, "agent": agent,
+                             "tool": tool_name,
+                             "policy_version": policy_version()},
+                    request_id=request_id)
+        return out
+
+    # --- pembacaan ---
+    async def list(self, *, tenant: str, status: str | None = "pending",
+                   limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        await repo.expire_stale(self.pool, tenant=tenant)
+        return await repo.list_approvals(self.pool, tenant=tenant, status=status,
+                                         limit=limit, offset=offset)
+
+    async def get(self, *, tenant: str, approval_id: int) -> dict[str, Any]:
+        await repo.expire_stale(self.pool, tenant=tenant)
+        row = await repo.get_approval(self.pool, tenant=tenant,
+                                      approval_id=approval_id)
+        if row is None:
+            raise ApprovalNotFoundError(approval_id)
+        return row
+
+    # --- keputusan ---
+    async def decide(self, *, tenant: str, actor: str, approval_id: int,
+                     decision: str, reason: str | None = None,
+                     request_id: str = "-") -> dict[str, Any]:
+        row = await self.get(tenant=tenant, approval_id=approval_id)
+        if row["status"] == "expired":
+            raise ApprovalExpiredError()
+        if row["status"] != "pending":
+            raise ApprovalStateError(row["status"])
+        if decision not in ("approve", "reject"):
+            raise AppError("decision harus 'approve' atau 'reject'.",
+                           status_code=422, code="INVALID_DECISION",
+                           title="Invalid Decision")
+
+        await self._assert_not_stale(row)
+
+        claimed = await repo.claim_decision(
+            self.pool, tenant=tenant, approval_id=approval_id,
+            decision=decision, actor=actor, reason=reason)
+        if claimed is None:  # kalah balapan / baru kedaluwarsa
+            current = await repo.get_approval(self.pool, tenant=tenant,
+                                              approval_id=approval_id)
+            if current and current["status"] == "expired":
+                raise ApprovalExpiredError()
+            raise ApprovalStateError((current or {}).get("status", "unknown"))
+
+        await repo.append_audit(
+            self.pool, tenant=tenant, actor=actor, action="approval_decided",
+            subject_type="approval", subject_id=str(approval_id),
+            payload={"decision": decision, "reason": reason,
+                     "thread_id": claimed["thread_id"],
+                     "tool": claimed["tool_name"],
+                     "action_hash": claimed["action_hash"],
+                     "policy_version": claimed["policy_version"]},
+            request_id=request_id)
+
+        if decision == "reject":
+            return {"approval_id": approval_id, "status": "rejected",
+                    "resumed": False, "result": None}
+
+        result = await self._resume(claimed, request_id=request_id)
+        return {"approval_id": approval_id, "status": "approved",
+                "resumed": True, "result": result}
+
+    # --- internal ---
+    async def _assert_not_stale(self, row: dict[str, Any]) -> None:
+        """Hash aksi saat ini harus sama dengan yang disetujui (TOCTOU)."""
+        graph = self._graph_for(str(row["agent"]), str(row["thread_id"]))
+        snapshot = await graph.aget_state(
+            {"configurable": {"thread_id": row["thread_id"]}})
+        current = [
+            {"id": getattr(i, "id", ""), "value": getattr(i, "value", None)}
+            for i in getattr(snapshot, "interrupts", ()) or ()
+        ]
+        if not current:
+            raise ApprovalStaleError()  # interrupt sudah tidak ada
+        value = next((c["value"] for c in current
+                      if str(c["id"]) == str(row["interrupt_id"])), None)
+        if value is None:
+            raise ApprovalStaleError()
+        if action_hash(str(row["tool_name"]), value) != row["action_hash"]:
+            raise ApprovalStaleError()
+
+    async def _resume(self, row: dict[str, Any], *,
+                      request_id: str) -> dict[str, Any]:
+        graph = self._graph_for(str(row["agent"]), str(row["thread_id"]))
+        decisions = [{"type": "approve"} for _ in
+                     (row["action_snapshot"].get("action_requests") or [{}])]
+        result = await self.runner.resume(
+            graph, {"decisions": decisions},
+            {"configurable": {"thread_id": row["thread_id"]}})
+        if result.get("status") == "pending_approval":
+            await self.record_interrupts(
+                tenant=row["tenant"], thread_id=str(row["thread_id"]),
+                agent=str(row["agent"]),
+                interrupts=result.get("interrupts") or [],
+                request_id=request_id)
+        return result
+
+    def _graph_for(self, agent_name: str, thread_id: str):
+        agent_cls = CHAT_AGENTS.get(agent_name)
+        if agent_cls is None:
+            raise AgentNotFoundError(agent_name)
+        ctx = AgentContext(settings=self.settings,
+                           checkpointer=self.checkpointer,
+                           runner=self.runner, session_id=thread_id)
+        agent: BaseChatAgent = agent_cls(ctx)
+        return agent.graph
+
+
+async def record_pending_approvals(app_or_request, *, identity, thread_id: str,
+                                   agent: str, interrupts: list[dict[str, Any]],
+                                   request_id: str = "-") -> list[dict[str, Any]]:
+    """Hook dari route: catat interrupt jadi approval pending (best-effort).
+
+    Dipanggil saat event `result` berstatus `pending_approval`. Tidak boleh
+    menggagalkan stream: kegagalan dicatat sebagai log, bukan exception.
+    """
+    if not interrupts:
+        return []
+    state = getattr(getattr(app_or_request, "app", None), "state", None)
+    pool = getattr(state, "pool", None)
+    checkpointer = getattr(state, "checkpointer", None)
+    if pool is None or checkpointer is None:
+        log.warning("approval tidak dicatat: persistence belum siap")
+        return []
+    from app.core.config import get_settings
+
+    svc = ApprovalService(get_settings(), pool, checkpointer)
+    try:
+        return await svc.record_interrupts(
+            tenant=identity.tenant, thread_id=thread_id, agent=agent,
+            interrupts=interrupts, request_id=request_id)
+    except Exception:
+        log.exception("gagal mencatat approval (stream tetap jalan)")
+        return []

@@ -2,6 +2,54 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.6 (2026-11-01) — HITL tool-level + approval API + audit hash-chain
+
+**Deteksi interrupt** (dari v0.4.1) kini dipakai penuh: `snapshot.interrupts`
+→ `interrupts: [{id, value, response_schema}]` + `status=pending_approval`.
+
+**Policy (`app/core/hitl.py`, ADR-22).** `HITL_POLICY` per tool:
+`amount_field` + `threshold` (default: `process_refund` > Rp 500.000),
+`allowed_decisions`, `expires_in_seconds`, dan `policy_version` (hash policy
+untuk audit/TOCTOU). Middleware resmi `HumanInTheLoopMiddleware` dipasang
+dengan `InterruptOnConfig(when=...)` — threshold dievaluasi dari argumen tool.
+
+**Tool demo** `process_refund` (stub deterministik, tanpa uang nyata) agar
+alur approval bisa diuji end-to-end.
+
+**Penyimpanan (`app/infra/approvals.py`, ADR-23/25).**
+- `approvals`: satu baris per interrupt, UNIQUE `(thread_id, interrupt_id)` →
+  resume idempoten; status `pending/approved/rejected/expired`.
+- `audit_log`: **append-only + hash chain** (`prev_hash`+`hash` = SHA-256 isi
+  kanonis), ditulis dalam transaksi dengan advisory lock per tenant;
+  `verify_chain()` mendeteksi penyuntingan/penghapusan.
+- Semua query parameterized.
+
+**API (`/approvals`, `/audit`).** `GET /approvals?status=pending`,
+`GET /approvals/{id}`, `POST /approvals/{id}/decide` (`approve|reject` +
+alasan), `GET /audit`, `GET /audit/verify`. Keputusan **memicu resume graph**
+(`Command(resume={"decisions": [...]})`), bukan hanya menandai baris.
+
+**Anti double-approve + TOCTOU.** Klaim keputusan atomik
+(`UPDATE ... WHERE status='pending' AND expires_at > now() RETURNING`) → klik
+kedua dapat 409. Sebelum eksekusi, `action_hash` dihitung ulang dari interrupt
+yang masih hidup di checkpoint; bila berbeda → `409 APPROVAL_STALE` (kelas
+serangan CVE-2026-53822: argumen berubah setelah approval).
+
+**Expiry.** `expires_at` per policy; `expire_stale()` dipanggil saat list/get;
+approval kedaluwarsa → `409 APPROVAL_EXPIRED`.
+
+**Hook streaming.** Event `result` berstatus `pending_approval` (SSE maupun WS)
+otomatis mencatat baris approval + audit `approval_requested` (best-effort:
+kegagalan DB tidak memutus stream).
+
+**State API (aditif).** `GET /threads/{id}/state` kini menyertakan `next`
+(node berikutnya) dan `interrupt_ids` (untuk dashboard approval).
+
+**Tests:** 484 unit + 43 integrasi. Baru: `test_hitl_policy.py` (threshold,
+hash aksi, hash chain), integrasi `test_hitl_live.py` (graf NYATA yang
+interrupt: record → approve → resume → selesai, reject tidak resume, stale
+409, isolasi tenant, `verify_chain`).
+
 ## v0.5 (2026-11-01) — Realtime: resumable SSE (turn-level) + WebSocket
 
 **v0.5a — Resume turn-level (ADR-20).** Streaming SSE sekarang **tahan putus**:

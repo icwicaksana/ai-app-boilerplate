@@ -79,18 +79,19 @@ def build_middleware(settings: Settings, tools: list | None = None) -> list:
     # 3. Jaring pengaman tool error → ToolMessage (agen lanjut, bukan crash).
     stack.append(ToolErrorMiddleware(on_error=_tool_error_message))
 
-    # 4. HITL (v0.6): tetap stub — hanya pasang bila enabled + terkonfigurasi.
+    # 4. HITL (v0.6): approval per tool dengan policy threshold (`when`).
     if getattr(settings, "HITL_ENABLED", False):
         try:
-            from langchain.agents.middleware import HumanInTheLoopMiddleware  # type: ignore
+            from langchain.agents.middleware import HumanInTheLoopMiddleware
 
-            from app.agents.middleware.HumanInTheLoopMiddleware import INTERRUPT_ON
+            from app.core.hitl import interrupt_on_config
 
-            if INTERRUPT_ON:
-                stack.append(HumanInTheLoopMiddleware(
-                    interrupt_on=dict.fromkeys(INTERRUPT_ON, True)))
+            interrupt_on = interrupt_on_config()
+            if interrupt_on:
+                stack.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+                log.info("HITL aktif untuk tool: %s", sorted(interrupt_on))
             else:
-                log.warning("HITL_ENABLED=true tapi INTERRUPT_ON kosong — dilewati")
+                log.warning("HITL_ENABLED=true tapi HITL_POLICY kosong — dilewati")
         except ImportError as exc:
             log.warning("HITL diminta tapi paket middleware belum tersedia: %s", exc)
     return stack
