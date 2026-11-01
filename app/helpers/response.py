@@ -118,8 +118,10 @@ def stream_success(
     output: dict[str, Any],
     status: str = "completed",
     interrupt: dict[str, Any] | None = None,
+    interrupts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return StreamResult(status=status, output=output, interrupt=interrupt).model_dump(mode="json")  # type: ignore[arg-type]
+    return StreamResult(status=status, output=output, interrupt=interrupt,  # type: ignore[arg-type]
+                        interrupts=interrupts).model_dump(mode="json")
 
 
 def stream_error(

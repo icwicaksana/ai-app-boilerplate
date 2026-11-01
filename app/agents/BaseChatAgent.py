@@ -255,6 +255,7 @@ class BaseChatAgent:
                         output=output,
                         status=event.get("status", "completed"),
                         interrupt=event.get("interrupt"),
+                        interrupts=event.get("interrupts"),
                     )
                 else:
                     if etype == "error":
@@ -288,6 +289,7 @@ class BaseChatAgent:
                 output=output,
                 status=result.get("status", "completed"),
                 interrupt=result.get("interrupt"),
+                interrupts=result.get("interrupts"),
             )
         # TANPA tulis post-turn: satu-satunya penulis memori adalah LLM via tool
         # save_memory (prompt-driven). Kode tak pernah menebak isi chat user.

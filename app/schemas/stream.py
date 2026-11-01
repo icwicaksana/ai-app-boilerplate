@@ -65,6 +65,9 @@ class StreamResult(BaseModel):
     status: JobStatus = "completed"
     output: dict[str, Any] = Field(default_factory=dict)
     interrupt: dict | None = None
+    # v0.4.1 (aditif): daftar SEMUA interrupt paralel — {id, value,
+    # response_schema}. Klien menjawab per `id` (resume map) bila >1.
+    interrupts: list[dict[str, Any]] | None = None
 
 
 class StreamError(BaseModel):

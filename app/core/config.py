@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "ai-app-boilerplate"
     API_V1_PREFIX: str = "/api/v1"
-    APP_VERSION: str = "v0.4"  # satu sumber versi (OpenAPI + health baca ini)
+    APP_VERSION: str = "v0.4.1"  # satu sumber versi (OpenAPI + health baca ini)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     # Server (entrypoint `python -m app.main` baca dari sini — .env/OS-env).
@@ -83,6 +83,11 @@ class Settings(BaseSettings):
 
     # HITL — selalu false sampai v0.6; slot untuk v0.6.
     HITL_ENABLED: bool = False
+
+    # Durability checkpoint graph: "sync" menulis checkpoint sebelum step
+    # berikutnya (wajib untuk alur HITL agar pause tak hilang saat crash),
+    # "async" lebih cepat, "exit" hanya di akhir run.
+    GRAPH_DURABILITY: Literal["sync", "async", "exit"] = "async"
 
     # Observability Phoenix
     PHOENIX_ENABLED: bool = False
@@ -210,4 +215,5 @@ def get_settings() -> Settings:
             get_settings.cache_clear()
     """
     return Settings()
+
 

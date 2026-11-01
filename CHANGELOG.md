@@ -2,6 +2,29 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.4.1 (2026-11-01) — Hotfix deteksi interrupt LangGraph
+
+**Bug (latent sejak v0.3.1):** jalur streaming (`Runner._final_result_event`)
+membaca `aget_state().values["__interrupt__"]` — field itu **tidak pernah ada**
+di `values`. Interrupt hidup di `StateSnapshot.interrupts`. Akibatnya chat/stream
+SELALU melaporkan `completed` walau graf berhenti menunggu approval; klaim "B5"
+v0.3.1 hanya lolos karena test memakai fake graph.
+
+**Perbaikan:**
+- `Runner` membaca `snapshot.interrupts` (bentuk nyata LangGraph) + helper
+  `normalize_interrupts()` → `[{id, value, response_schema}]`.
+- Kontrak wire **aditif**: `StreamResult.interrupts` (list) di samping
+  `interrupt` (nilai pertama) — klien bisa menjawab per `id` (resume map).
+- `Runner.resume()` menerima nilai tunggal **atau** map `{interrupt_id: value}`
+  dan meneruskan status/interrupt hasil resume.
+- `GRAPH_DURABILITY` (`sync|async|exit`): checkpoint "sync" tersedia untuk alur
+  HITL agar pause tak hilang saat crash; default tetap `async`.
+- `Runner._ainvoke()` fallback bila graph kustom tak menerima `durability`.
+
+**Tests:** `tests/test_interrupt_detection.py` — graf LangGraph **asli**
+(StateGraph + InMemorySaver): run/stream mendeteksi interrupt, resume via map
+id, run tanpa interrupt bersih, normalisasi bentuk. 452 unit hijau.
+
 ## v0.4 (2026-11-01) — Cache (Valkey) + Auth JWT + hardening
 
 **BREAKING (auth):** identitas TIDAK lagi dari header `X-Tenant-ID`/`X-User-ID`.

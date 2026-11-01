@@ -36,8 +36,11 @@ def _run(coro):
 
 
 class _Snap:
-    def __init__(self, values):
+    def __init__(self, values, interrupts=()):
         self.values = values
+        # Realistis (v0.4.1): interrupt hidup di snapshot.interrupts,
+        # BUKAN di snapshot.values.
+        self.interrupts = tuple(interrupts)
 
 
 class _Graph:
@@ -60,9 +63,7 @@ class _Graph:
         if self.boom_final:
             raise ConnectionError("checkpoint tak terbaca")
         values = {"messages": list(self.final_messages)}
-        if self.interrupt is not None:
-            values["__interrupt__"] = self.interrupt
-        return _Snap(values)
+        return _Snap(values, interrupts=self.interrupt or ())
 
     async def ainvoke(self, state, config=None):
         self.ainvoke_calls += 1

@@ -23,7 +23,12 @@ from app.infra.cache import CacheClient
 
 
 def get_runner() -> Runner:
-    return Runner()
+    """Runner dengan durability dari Settings (sync untuk alur HITL)."""
+    try:
+        durability = get_settings().GRAPH_DURABILITY
+    except Exception:  # config rusak → default aman
+        durability = "async"
+    return Runner(durability=durability)
 
 
 def get_request_id(request: Request) -> str:

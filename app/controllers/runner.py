@@ -37,13 +37,69 @@ def _thread_of(config: dict) -> str:
     return str((config.get("configurable") or {}).get("thread_id", "-"))
 
 
+def normalize_interrupts(raw: Any) -> list[dict[str, Any]]:
+    """Normalisasi interrupt LangGraph (Interrupt | dict | list) → list[dict].
+
+    Bentuk keluaran (kontrak wire v0.4.1, aditif):
+    `{"id": str, "value": Any, "response_schema": dict|None}`.
+    `id` WAJIB ada agar klien bisa menjawab per-interrupt (resume map).
+    """
+    if not raw:
+        return []
+    items = raw if isinstance(raw, (list, tuple)) else [raw]
+    out: list[dict[str, Any]] = []
+    for item in items:
+        value = getattr(item, "value", None)
+        if value is None and isinstance(item, dict):
+            value = item.get("value", item)
+        schema = getattr(item, "response_schema", None)
+        if schema is None and isinstance(item, dict):
+            schema = item.get("response_schema")
+        out.append({
+            "id": str(getattr(item, "id", None) or (
+                item.get("id") if isinstance(item, dict) else "") or ""),
+            "value": value,
+            "response_schema": schema if isinstance(schema, dict) else None,
+        })
+    return out
+
+
+def first_interrupt_value(interrupts: list[dict[str, Any]]) -> dict | None:
+    """Nilai interrupt pertama sebagai dict (kontrak lama `interrupt`)."""
+    if not interrupts:
+        return None
+    value = interrupts[0].get("value")
+    if isinstance(value, dict):
+        return value
+    return {"value": value}
+
+
 class Runner:
+    def __init__(self, durability: str = "async"):
+        # "sync" = checkpoint ditulis sebelum step berikutnya; wajib untuk
+        # alur yang bisa interrupt (HITL) agar pause tak hilang saat crash.
+        self.durability = durability if durability in ("sync", "async", "exit") else "async"
+
+    async def _ainvoke(self, graph, payload: Any, config: dict):
+        """ainvoke dengan durability; fallback bila graph tak mendukungnya.
+
+        Graph kustom/fake (duck-typed) bisa tidak menerima `durability` —
+        jangan sampai fitur checkpoint gagal karena itu.
+        """
+        try:
+            return await graph.ainvoke(
+                payload, config=config, durability=self.durability)
+        except TypeError as exc:
+            if "durability" not in str(exc):
+                raise
+            return await graph.ainvoke(payload, config=config)
+
     async def run(self, graph, state: dict, config: dict) -> dict[str, Any]:
         # session Phoenix = thread_id (1 thread = 1 percakapan di UI).
         # Tanpa instrumentor terinstall, session_context = no-op.
         with session_context(_thread_of(config)):
             try:
-                raw = await graph.ainvoke(state, config=config)
+                raw = await self._ainvoke(graph, state, config)
             except UpstreamAIError:
                 raise
             except (TimeoutError, asyncio.TimeoutError,
@@ -51,16 +107,17 @@ class Runner:
                 raise UpstreamAIError(
                     f"AI upstream gagal ({type(exc).__name__}): {exc}") from exc
 
-        interrupts = None
-        if isinstance(raw, dict):
-            interrupts = raw.get("__interrupt__") or raw.get("interrupt")
+        interrupts = normalize_interrupts(
+            (raw or {}).get("__interrupt__") if isinstance(raw, dict) else None)
         if interrupts:
-            payload = interrupts[0] if isinstance(interrupts, list) else interrupts
-            value = getattr(payload, "value", payload)
-            return {"status": "pending_approval", "messages": raw.get("messages", []), "interrupt": value}
+            return {"status": "pending_approval",
+                    "messages": raw.get("messages", []),
+                    "interrupt": first_interrupt_value(interrupts),
+                    "interrupts": interrupts}
 
         messages = raw.get("messages", []) if isinstance(raw, dict) else []
-        return {"status": "completed", "messages": messages, "raw": raw}
+        return {"status": "completed", "messages": messages,
+                "interrupt": None, "interrupts": None, "raw": raw}
 
     async def stream(self, graph, state: dict, config: dict) -> AsyncIterator[dict[str, Any]]:
         """Token-level (v0.1): started -> token*/thinking*/tool_* -> result | error.
@@ -139,50 +196,50 @@ class Runner:
     async def _final_result_event(self, graph, config: dict) -> dict[str, Any] | None:
         """Bangun event result dari checkpoint terakhir (tanpa eksekusi ulang).
 
-        Interrupt (`__interrupt__`/`interrupt`) diteruskan seperti `run()` —
-        tanpanya rel streaming tak pernah `pending_approval` (temuan B5).
+        Interrupt dibaca dari `snapshot.interrupts` — BUKAN dari
+        `snapshot.values`. Terbukti empiris: `aget_state().values` tidak pernah
+        memuat `__interrupt__`; interrupt hidup di `StateSnapshot.interrupts`
+        (v0.4.1). Sebelumnya jalur streaming selalu melaporkan `completed`
+        padahal graf berhenti menunggu approval.
+
         Gagal baca → None (pemanggil wajib yield `stream_error`, BUKAN result
-        kosong berisi [""]).
+        kosong).
         """
         messages: list = []
-        interrupt: dict | None = None
-        status = "completed"
+        interrupts: list[dict[str, Any]] = []
         try:
             snapshot = await graph.aget_state(config)
             values = getattr(snapshot, "values", None) or {}
             if isinstance(values, dict):
                 found = values.get("messages", [])
                 messages = list(found) if isinstance(found, list) else []
-                raw_int = values.get("__interrupt__") or values.get("interrupt")
-                if raw_int:
-                    payload = raw_int[0] if isinstance(raw_int, list) else raw_int
-                    value = getattr(payload, "value", payload)
-                    if isinstance(value, dict):
-                        interrupt = value
-                    else:
-                        try:
-                            interrupt = dict(value)
-                        except Exception:
-                            interrupt = {"value": str(value)}
-                    status = "pending_approval"
+            interrupts = normalize_interrupts(getattr(snapshot, "interrupts", ()))
         except Exception:
             log.exception("runner baca final state gagal (thread=%s)", _thread_of(config))
             return None
+        status = "pending_approval" if interrupts else "completed"
         return {"type": "result", "status": status, "messages": messages,
-                "interrupt": interrupt, "raw": {}}
+                "interrupt": first_interrupt_value(interrupts),
+                "interrupts": interrupts or None, "raw": {}}
 
-    async def resume(self, graph, resume_value: dict, config: dict) -> dict[str, Any]:
-        """Slot v1: lanjutkan graph yang terjeda via Command(resume=...).
+    async def resume(self, graph, resume_value: dict | Any, config: dict) -> dict[str, Any]:
+        """Lanjutkan graph yang terjeda: `Command(resume=...)` (v0.6).
 
-        Belum dipanggil controller mana pun (HITL off). Kontrak: raise
-        UpstreamAIError (bukan mentah) agar seragam dengan run()/stream().
+        `resume_value` boleh nilai tunggal (satu interrupt) atau map
+        `{interrupt_id: value}` bila ada beberapa interrupt paralel.
+        Kontrak: raise UpstreamAIError (bukan mentah) agar seragam.
         """
         try:
             with session_context(_thread_of(config)):
-                raw = await graph.ainvoke(Command(resume=resume_value), config=config)
+                raw = await self._ainvoke(graph, Command(resume=resume_value), config)
         except UpstreamAIError:
             raise
         except Exception as exc:
             raise UpstreamAIError(f"Resume HITL gagal: {exc}") from exc
+        interrupts = normalize_interrupts(
+            (raw or {}).get("__interrupt__") if isinstance(raw, dict) else None)
         messages = raw.get("messages", []) if isinstance(raw, dict) else []
-        return {"status": "completed", "messages": messages, "raw": raw}
+        return {"status": "pending_approval" if interrupts else "completed",
+                "messages": messages,
+                "interrupt": first_interrupt_value(interrupts),
+                "interrupts": interrupts or None, "raw": raw}
