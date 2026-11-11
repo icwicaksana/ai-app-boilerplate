@@ -28,6 +28,14 @@ $env:RELOAD='true'; .\.venv\Scripts\python.exe -m app.main   # dev (reload ON)
 .\.venv\Scripts\python.exe -m app.main                       # prod (reload OFF)
 # Host/port: $env:HOST (default 127.0.0.1; 0.0.0.0 untuk container/LAN),
 # $env:PORT (default 8000).
+
+# 5) RAG (v0.7, opsional): service embedding + worker terpisah
+cd ..\Infra
+docker compose -f docker-compose.embed.yml up -d   # Infinity BGE-M3 + reranker :7997
+cd ..\ai-app-boilerplate
+.\.venv\Scripts\python.exe -m app.workers.ingest   # proses TERPISAH (jangan lifespan!)
+# Upload: POST /api/v1/documents (multipart) -> 202 -> SSE /documents/{id}/progress
+# Tanya: POST /api/v1/jobs/rag_answer {"question": "..."} (sync + sitasi [^n])
 ```
 
 > `python -m app.main` adalah cara jalan kanonis: loop selector dipilih otomatis
@@ -114,6 +122,14 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 | `GET /api/v1/threads/{thread_id}/history?limit=&offset=` | Daftar checkpoint, terbaru dulu (v0.3). |
 | `POST /api/v1/threads/{thread_id}/fork` | Cabang baru dari 1 checkpoint: `{"checkpoint_id","agent"}` (v0.3). |
 | `DELETE /api/v1/threads/{thread_id}` | Hapus riwayat thread → `204` (profil memori TIDAK ikut terhapus) (v0.3). |
+| `POST /api/v1/documents` | Upload ingest RAG (v0.7): multipart `file` + `preset` + `ocr` → `202 {document_id, job_id}`. |
+| `GET /api/v1/documents`(+`/{id}`) | Daftar/detail dokumen + status ingest (v0.7). |
+| `GET /api/v1/documents/{id}/progress` | SSE progress ingest (v0.7): `ingest_started/progress/result/error`. |
+| `DELETE /api/v1/documents/{id}` | Hapus dokumen + chunk + vektor (v0.7). |
+| `GET /api/v1/ingestion_jobs/{id}`(+`/retry`) | Status job / reset failed-dead + override `ocr` (v0.7). |
+| `POST /api/v1/retrieval/search` | Debug retrieval tenant-bound (v0.7). |
+| `POST /api/v1/jobs/rag_answer` | Jawab 1-tembakan dari dokumen + sitasi `[^n]` + refusal eksak (v0.7). |
+| `POST /api/v1/chat/stream` (`agent=rag_chat`) | Chat ReAct + tool retrieval (v0.7). |
 
 ## Event SSE (v0.1, beku)
 
@@ -250,7 +266,8 @@ tolak start (fail-fast).
 
 * Tanpa auth penuh — identitas dari header tepercaya (JWT di v0.4).
 * Tanpa Redis/cache/rate-limit (v0.4), WebSocket (v0.5), HITL aktif (v0.6).
-* Tanpa vectorstore / RAG (v0.7) — `MemoryStore` hanya fakta kecil, bukan dokumen.
+* RAG ADA sejak v0.7 (`/documents`, worker, `rag_answer`/`rag_chat`) — butuh
+  service embed + worker terpisah (lihat Mulai cepat langkah 5).
 * Memori tanpa tool cek-dulu (dedup via injeksi + instruksi; revisit bila duplikat nyata).
 * HITL OFF: middleware + `resume.py` hanya stub.
 * Single-gateway LiteLLM (cabang direct dihapus sejak v0.2).
@@ -267,6 +284,25 @@ pip install -r requirements.txt   # termasuk paket Phoenix/OTel
 
 Mati default (`PHOENIX_ENABLED=false`): app jalan normal tanpa tracing.
 `thread_id` otomatis jadi session Phoenix (1 thread = 1 percakapan di UI).
+
+## Migrasi v0.6 → v0.7 (RAG — aditif, tanpa breaking)
+
+1. **Service baru (wajib untuk RAG):** `cd ..\Infra;
+   docker compose -f docker-compose.embed.yml up -d` (Infinity BGE-M3 +
+   reranker). Tanpa ini: `RAG_EMBED_BASE_URL` kosong = RAG nonaktif, agen
+   `rag_*` balas 503, sisanya normal.
+2. **Proses baru:** worker ingest terpisah
+   (`python -m app.workers.ingest`). Upload tanpa worker = antre selamanya
+   (`pending`).
+3. **Env baru** (lihat `.env.example` bagian v0.7): `RAG_*`, `OCR_*`,
+   `SOURCE_CONN_KEY` (digenerate `setup.ps1`), `QDRANT_*` (hanya bila
+   `RAG_BACKEND=qdrant`), `RATE_LIMIT_INGEST_PER_MIN`.
+4. **Migrasi DB otomatis** (`007_rag.sql` + `008`) saat start API/worker
+   (advisory lock, idempotent). Butuh ekstensi `pgvector` di `app-db`.
+5. **OCR Windows = install manual** (tesseract + data `ind+eng`); image Docker
+   sudah include. Tanpa binary: jalur OCR gagal JELAS (bukan hang).
+6. **Tidak berubah:** semua kontrak beku (SSE, RFC7807, thread-ID, threads,
+   approvals, registry, middleware). Endpoint + agen RAG murni aditif.
 
 ## Migrasi v0.3.1 → v0.4 (WAJIB baca — auth breaking)
 

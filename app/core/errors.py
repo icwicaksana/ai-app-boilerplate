@@ -63,6 +63,14 @@ class StorageUnavailableError(AppError):
                          title="Storage Unavailable")
 
 
+class BadRequestError(AppError):
+    """400 generik untuk input tak-valid di luar kasus spesifik."""
+
+    def __init__(self, message: str):
+        super().__init__(message, status_code=400, code="BAD_REQUEST",
+                         title="Bad Request")
+
+
 class InvalidThreadIdError(AppError):
     def __init__(self, thread_id: str = ""):
         super().__init__(
@@ -183,6 +191,96 @@ class StreamGoneError(AppError):
             f"Turn '{turn_id}' tidak tersedia (kedaluwarsa atau belum pernah ada). "
             "Mulai permintaan baru.",
             status_code=410, code="STREAM_GONE", title="Gone")
+
+
+# --- v0.7: RAG / ingest (desain beku: Docs/RAG-V07-DESIGN.md D12) ---
+
+class DocumentNotFoundError(AppError):
+    """Dokumen asing/tak ada → 404 (anti-enumerasi: tanpa bocor tenant)."""
+
+    def __init__(self, document_id: str = ""):
+        super().__init__(
+            f"Dokumen '{document_id}' tidak ditemukan.",
+            status_code=404, code="DOCUMENT_NOT_FOUND",
+            title="Document Not Found")
+
+
+class UnsupportedMediaError(AppError):
+    def __init__(self, mime: str = ""):
+        super().__init__(
+            f"Tipe berkas '{mime}' tidak didukung. Terima: PDF, DOCX, PPTX, "
+            "XLSX, Markdown, TXT.",
+            status_code=415, code="UNSUPPORTED_MEDIA",
+            title="Unsupported Media Type")
+
+
+class IngestConflictError(AppError):
+    """Bentrok idempotency ingest (payload sama sedang diproses / kunci dipakai)."""
+
+    def __init__(self, message: str = "Dokumen sama sedang diproses."):
+        super().__init__(message, status_code=409, code="INGEST_CONFLICT",
+                         title="Ingest Conflict")
+
+
+class IngestGoneError(AppError):
+    """Job ingest selesai/hilang dari retensi (410) — mulai ingest baru."""
+
+    def __init__(self, job_id: str = ""):
+        super().__init__(
+            f"Job ingest '{job_id}' tidak tersedia (selesai melewati retensi "
+            "atau belum pernah ada). Mulai ingest baru.",
+            status_code=410, code="INGEST_GONE", title="Gone")
+
+
+class EmbeddingUnavailableError(AppError):
+    """Service embedding mati. DILARANG fallback beda-model (D6) — 503 eksplisit."""
+
+    def __init__(self, message: str = "Service embedding tidak tersedia. "
+                                     "Coba lagi nanti."):
+        super().__init__(message, status_code=503,
+                         code="EMBEDDING_UNAVAILABLE",
+                         title="Embedding Unavailable")
+
+
+class OcrFailedError(AppError):
+    def __init__(self, message: str = "OCR gagal memproses dokumen."):
+        super().__init__(message, status_code=422, code="OCR_FAILED",
+                         title="OCR Failed")
+
+
+class OcrRequiredError(AppError):
+    """PDF pindai terdeteksi tapi OCR off — tawarkan, jangan diam-diam OCR (D10)."""
+
+    def __init__(self):
+        super().__init__(
+            "Dokumen ini hasil pindai (teks terekstrak minim). Ulangi dengan "
+            "ocr=on untuk memproses via OCR.",
+            status_code=409, code="OCR_REQUIRED",
+            title="OCR Required")
+
+
+class RagBackendMismatchError(AppError):
+    """Backend aktif tak cocok dengan data terindeks (D4) — reindex eksplisit."""
+
+    def __init__(self, message: str = "Backend retrieval aktif tidak cocok "
+                                     "dengan data terindeks. Jalankan reindex."):
+        super().__init__(message, status_code=503,
+                         code="RAG_BACKEND_MISMATCH",
+                         title="Backend Mismatch")
+
+
+class RerankError(AppError):
+    """Reranker gagal (timeout/koneksi/5xx/skema).
+
+    Kontrak port: `RerankerPort.rerank` me-raise INI (bukan httpx mentah)
+    untuk SEMUA kegagalan upstream — `HybridRetriever` menangkapnya menjadi
+    jalur degraded (RRF top-k + flag), bukan 500 (P0-2). TimeoutError tetap
+    didukung (legacy/adapters lain).
+    """
+
+    def __init__(self, message: str = "Reranker tidak tersedia."):
+        super().__init__(message, status_code=502, code="RERANK_FAILED",
+                         title="Rerank Failed")
 
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

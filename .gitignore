@@ -23,6 +23,8 @@ ENV/
 .coverage
 htmlcov/
 *.cover
+# tmp pytest bisa jatuh ke repo bila system-temp tak writable (sandbox)
+pytest-of-*/
 
 # OS / editor
 .DS_Store
@@ -30,6 +32,12 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+# Metadata harness agen eksternal (bukan kode proyek)
+.agent_harnesses.json
 
 # Logs & lokal
 *.log
+
+# v0.7: cache HF lokal + blob upload (repo-lokal, JANGAN commit)
+.hf-cache/
+data/

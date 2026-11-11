@@ -1,0 +1,40 @@
+# Build context minimal (temuan F7: tanpa ini context = .venv + .hf-cache +
+# data/uploads ≈ 7GB → transfer lama + daemon bisa wedge/OOM saat unpack).
+# Yang dibutuhkan image: app/, migrations/, requirements*.txt, .python-version.
+
+# --- Python / venv / cache build ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Model & artefak besar (di-mount/unduh saat runtime, bukan di image) ---
+.hf-cache/
+**/hf-cache/
+.cache/
+
+# --- Data runtime & upload (volume, bukan image) ---
+data/
+*.db
+*.sqlite3
+
+# --- Rahasia & env lokal (JANGAN masuk image) ---
+.env
+.env.*
+!.env.example
+
+# --- Repo/test/docs (tidak dipakai runtime) ---
+.git/
+.gitignore
+.agent_harnesses.json
+tests/
+Test/
+Docs/
+*.md
+!requirements*.txt

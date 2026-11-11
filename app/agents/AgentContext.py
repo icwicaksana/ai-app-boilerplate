@@ -16,6 +16,7 @@ from app.core.config import Settings
 
 if TYPE_CHECKING:  # hanya untuk type-check; hindari import cycle runtime
     from app.infra.memory import MemoryStore
+    from app.rag.ports import BoundRetriever
 
 
 @dataclass
@@ -27,3 +28,4 @@ class AgentContext:
     runner: object  # Runner asli (object agar fake di test tetap sah)
     session_id: str | None = None
     store: MemoryStore | None = None  # MemoryStore per-user (chat) atau None (pipeline/test)
+    retriever: BoundRetriever | None = None  # RAG terikat tenant (v0.7) atau None

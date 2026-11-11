@@ -12,19 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-
-def ensure_selector_loop() -> None:
-    """Paksa SelectorEventLoop (Windows): psycopg async MENOLAK Proactor.
-
-    Dipanggil eksplisit dari entrypoint `python -m app.main` — BUKAN saat
-    import (import-time side effect dihapus, temuan core #1). Nilai loop
-    programmatic `asyncio:SelectorEventLoop` VALID (uvicorn resolve ke kelas
-    loop); yang INVALID adalah flag CLI `--loop` (choices terbatas) —
-    jangan resepkan CLI flag itu di mana pun. Lifespan tetap berjaga
-    (Proactor terdeteksi → gagal cepat dengan pesan aksi).
-    """
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# Re-export (kompatibilitas impor lama: `from app.main import ...`).
+from app.infra.lifespan import ensure_selector_loop  # noqa: F401
 
 from app.api.v1.router import router as v1_router
 from app.core.config import Settings, get_settings
@@ -89,7 +78,9 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
+    # Hormati settings eksplisit create_app(settings) — krusial untuk test
+    # deterministik (lifespan tak lewat Depends).
+    settings = getattr(app.state, "settings", None) or get_settings()
     setup_logging(settings.LOG_LEVEL)
     # Jaga Proactor (Windows): pool psycopg pasti PoolTimeout di atasnya.
     # Terjadi bila server dijalankan tanpa entrypoint kanonis
@@ -142,6 +133,20 @@ async def lifespan(app: FastAPI):
                 "Setup tabel HITL (approvals/audit_log) gagal. Pastikan user DB "
                 f"punya hak CREATE. Detail: {type(exc).__name__}: {exc}"
             ) from exc
+        # v0.7: migrasi 007 RAG (documents/jobs/chunks/konektor + RLS + HNSW).
+        # Idempotent + advisory lock (aman 2 entrypoint start bersamaan).
+        try:
+            from app.infra.rag_migrate import apply_rag_migration
+
+            applied = await apply_rag_migration(pool)
+            if applied:
+                log.info("migrasi RAG 007 teraplikasi sekarang")
+        except Exception as exc:
+            raise RuntimeError(
+                "Migrasi RAG 007 gagal. Pastikan image app-db = pgvector "
+                "(lihat runbook T07: dump→volume-baru→restore) dan user DB "
+                f"punya hak CREATE EXTENSION. Detail: {type(exc).__name__}: {exc}"
+            ) from exc
         # Assignment di DALAM try (F-05): raise di antara assignment dan
         # yield tak lagi bocorkan pool (except luar menutup 1x).
         app.state.pool = pool
@@ -174,6 +179,28 @@ async def lifespan(app: FastAPI):
 
     app.state.turns = TurnManager(TurnLog(cache))
     log.info("turn log %s", "ready (valkey streams)" if cache else "NONAKTIF")
+    # v0.7: klien RAG bersama (embed/rerank/qdrant/tokenizer + validasi backend).
+    # RAG_EMBED_BASE_URL kosong = RAG nonaktif (None, bukan error); diisi tapi
+    # rusak = tolak start bila RAG_STRICT_STARTUP (default, ADR-12), atau
+    # degraded (rag=None, chat non-RAG tetap jalan) bila false (P1-10).
+    from app.infra.rag.factory import init_rag
+
+    try:
+        rag = await init_rag(settings, pool)
+    except RuntimeError:
+        if settings.RAG_STRICT_STARTUP:
+            await close_pool(pool)
+            if cache is not None:
+                await cache.close()
+            raise
+        log.warning("RAG gagal init — degraded (RAG_STRICT_STARTUP=false)")
+        rag = None
+    app.state.rag = rag
+    if rag is not None:
+        log.info("rag ready (backend=%s, embed=%s dim=%d)",
+                 settings.RAG_BACKEND, settings.RAG_EMBED_MODEL, rag.dims)
+    else:
+        log.info("rag NONAKTIF (RAG_EMBED_BASE_URL kosong)")
     # Peringatan operasional eksplisit (bukan diam-diam):
     # - auth: mode aktif + apakah benar-benar bisa melayani request.
     # - LLM lazy-by-design: proxy boleh menyusul, tapi chat akan 502.
@@ -204,6 +231,13 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown BERSIH walau generator lifespan terima exception.
         try:
+            rag = getattr(app.state, "rag", None)
+            if rag is not None:
+                await rag.aclose()
+                log.info("rag clients closed")
+        except Exception:
+            log.exception("gagal menutup klien RAG saat shutdown")
+        try:
             await app.state.turns.cancel_all()
         except Exception:
             log.exception("gagal membatalkan turn producer saat shutdown")
@@ -226,6 +260,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url="/redoc" if docs_on else None,
         openapi_url="/openapi.json" if docs_on else None,
     )
+    # Kunci settings ke instance ini (lifespan + Depends). Tanpa ini settings
+    # eksplisit test diam-diam diabaikan (temuan uji live v0.7).
+    app.state.settings = settings
+    app.dependency_overrides[get_settings] = lambda: settings
     origins = settings.cors_origins()
     if origins:
         app.add_middleware(

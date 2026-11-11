@@ -121,3 +121,24 @@ async def pool(db_url):
     await open_pool(p)
     yield p
     await close_pool(p)
+
+
+# --- v0.7: embedding service (Infinity) live ---
+
+def require_embed() -> str:
+    """Base URL service embedding, atau SKIP bila tak terjangkau."""
+    raw = (os.environ.get("TEST_EMBED_BASE_URL")
+           or os.environ.get("RAG_EMBED_BASE_URL",
+                             "http://localhost:7997")).strip()
+    try:
+        import urllib.request
+        urllib.request.urlopen(raw.rstrip("/") + "/health", timeout=3)
+    except Exception:
+        pytest.skip(f"service embedding tak terjangkau ({raw}) — "
+                    "`docker compose -f docker-compose.embed.yml up -d`")
+    return raw
+
+
+@pytest_asyncio.fixture
+async def embed_url() -> str:
+    return require_embed()

@@ -11,11 +11,14 @@ from app.core.threads import ThreadIdentity, compose_thread_id, ensure_owner
 class BaseController:
     AGENT_NAME = ""
 
-    def __init__(self, settings, checkpointer=None, runner=None, store=None):
+    def __init__(self, settings, checkpointer=None, runner=None, store=None,
+                 pool=None, rag=None):
         self.settings = settings
         self.checkpointer = checkpointer
         self.runner = runner
         self.store = store  # mentah (AsyncPostgresStore); dibungkus MemoryStore per-request
+        self.pool = pool  # pool mentah (untuk retriever RAG per-request, v0.7)
+        self.rag = rag  # RagClients lifespan / None (v0.7)
         self.log = get_logger(self.__class__.__name__)
 
     @staticmethod

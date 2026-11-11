@@ -29,8 +29,9 @@ class ChatController(BaseController):
     AGENT_NAME = "example_chat"  # default; registry = sumber kebenaran
 
     def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None,
-                 store=None):
-        super().__init__(settings, checkpointer, runner or Runner(), store=store)
+                 store=None, pool=None, rag=None):
+        super().__init__(settings, checkpointer, runner or Runner(), store=store,
+                         pool=pool, rag=rag)
 
     def _ensure_agent(self, name: str) -> None:
         if name not in CHAT_AGENTS:
@@ -45,11 +46,33 @@ class ChatController(BaseController):
         if self.store is not None:
             tenant, user, _ = parse_thread_id(thread_id)  # sudah valid (resolve dulu)
             memory = MemoryStore(self.store, tenant, user)
+        agent_cls = CHAT_AGENTS[agent_name]
+        retriever = self._retriever_for(agent_cls, thread_id)
         ctx = AgentContext(
             settings=self.settings, checkpointer=self.checkpointer,
             runner=self.runner, session_id=thread_id, store=memory,
+            retriever=retriever,
         )
-        return CHAT_AGENTS[agent_name](ctx)
+        return agent_cls(ctx)
+
+    def _retriever_for(self, agent_cls, thread_id: str):
+        """Retriever tenant-bound untuk agen NEEDS_RETRIEVER (D2, v0.7).
+
+        Tenant dari thread_id tervalidasi (= tenant JWT, via resolve dulu).
+        RAG mati → 503 jelas (bukan agen bisu).
+        """
+        from app.core.errors import EmbeddingUnavailableError
+
+        if not getattr(agent_cls, "NEEDS_RETRIEVER", False):
+            return None
+        if self.pool is None or self.rag is None:
+            raise EmbeddingUnavailableError(
+                "RAG tak tersedia (lifespan RAG gagal/nonaktif).")
+        from app.infra.rag.factory import retriever_for_tenant
+
+        tenant, _, _ = parse_thread_id(thread_id)
+        return retriever_for_tenant(self.settings, self.rag, self.pool,
+                                    tenant=tenant)
 
     async def stream(self, req: ChatRequest, identity: ThreadIdentity, *,
                      request_id: str = "-"):

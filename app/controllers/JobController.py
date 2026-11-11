@@ -29,8 +29,10 @@ log = get_logger(__name__)
 class JobController(BaseController):
     AGENT_NAME = "example_pipeline"  # default; registry = sumber kebenaran
 
-    def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None):
-        super().__init__(settings, checkpointer, runner or Runner())
+    def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None,
+                 pool=None, rag=None):
+        super().__init__(settings, checkpointer, runner or Runner(), pool=pool,
+                         rag=rag)
 
     def _ensure_agent(self, name: str) -> None:
         if name not in JOB_AGENTS:
@@ -38,11 +40,29 @@ class JobController(BaseController):
 
     def _agent_for(self, thread_id: str, agent_name: str) -> BasePipelineAgent:
         # Lihat ChatController._agent_for: session header = thread_id.
+        agent_cls = JOB_AGENTS[agent_name]
         ctx = AgentContext(
             settings=self.settings, checkpointer=self.checkpointer,
             runner=self.runner, session_id=thread_id,
+            retriever=self._retriever_for(agent_cls, thread_id),
         )
-        return JOB_AGENTS[agent_name](ctx)
+        return agent_cls(ctx)
+
+    def _retriever_for(self, agent_cls, thread_id: str):
+        """Sama seperti ChatController (D2, v0.7)."""
+        from app.core.errors import EmbeddingUnavailableError
+        from app.core.threads import parse_thread_id
+
+        if not getattr(agent_cls, "NEEDS_RETRIEVER", False):
+            return None
+        if self.pool is None or self.rag is None:
+            raise EmbeddingUnavailableError(
+                "RAG tak tersedia (lifespan RAG gagal/nonaktif).")
+        from app.infra.rag.factory import retriever_for_tenant
+
+        tenant, _, _ = parse_thread_id(thread_id)
+        return retriever_for_tenant(self.settings, self.rag, self.pool,
+                                    tenant=tenant)
 
     async def run(
         self,

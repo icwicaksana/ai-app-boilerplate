@@ -33,3 +33,18 @@ arize-phoenix-otel
 openinference-instrumentation-langchain
 openinference-instrumentation-openai
 opentelemetry-exporter-otlp
+
+# v0.7 — RAG (retrieval dual backend + ingest + konektor)
+# Pin exact tercatat di requirements.lock (prinsip #5); versi teruji:
+# qdrant-client 1.20.0, docling 2.150.0, aiomysql 0.3.2, cryptography 50.0.2,
+# pypdf 7.0.1, python-multipart 0.0.33, openpyxl 3.1.5, pymupdf 2.1,
+# pytesseract 0.3.13.
+qdrant-client       # adapter Qdrant (opt-in via RAG_BACKEND)
+docling             # parser PDF/Office (DoclingDocument; berat: bawa torch)
+aiomysql            # SourceConnector MySQL (async)
+cryptography        # Fernet envelope untuk secret konektor (SOURCE_CONN_KEY)
+pypdf               # probe murah PDF (page-count/batas sebelum parse berat)
+python-multipart    # upload file POST /documents
+openpyxl            # parser XLSX read-only (guard sel + tolak macro)
+pymupdf             # raster PDF untuk OCR + probe (tanpa poppler)
+pytesseract         # wrapper OCR Tesseract (butuh binary sistem)

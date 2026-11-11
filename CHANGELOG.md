@@ -2,6 +2,79 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.7 (2026-11-11) — RAG murni (dual backend, CPU-only)
+
+**Retrieval dual backend di balik 1 protocol (ADR-19).** `EmbeddingsPort` /
+`RerankerPort` / `VectorStorePort` + `HybridRetriever` orkestrasi tunggal +
+`BoundRetriever` (tenant factory-bound dari JWT — tanpa argumen tenant di
+`search()`). Implementasi: pgvector (default, HNSW + tsvector + RLS, di
+`app-db`) dan Qdrant (opt-in, compose profile, int8 + filter wajib). Ganti via
+`RAG_BACKEND` tanpa ubah kode agen. Hybrid: dense50 + lexical50 → RRF(60) →
+20 kandidat → rerank (query128/doc384/pair512, batas kalimat) → 5 final +
+`rerank_score_floor=0.05` (kalibrasi empiris: terkait 0.29–0.99 vs tak-terkait
+≤0.0001; chunk bawah-floor dibuang dari konteks) → `retrieval_status`
+(`ok`/`no_evidence`).
+
+**Dedicated infra embedding CPU (ADR-20).** `Infra/docker-compose.embed.yml`:
+Infinity v2 CPU + BGE-M3 + bge-reranker-v2-m3 (INT8 ONNX, API OpenAI-compatible,
+dipakai banyak app). Fallback beda-model DILARANG (down = 503 eksplisit);
+tokenizer satuan BGE-M3 via cache repo-lokal `.hf-cache` (bukan `~/.cache`).
+
+**Ingest worker durable (ADR-21).** `python -m app.workers.ingest` (proses
+terpisah, pool sendiri, Postgres-queue + lease `SKIP LOCKED` + heartbeat +
+backoff+jitter + DLQ) + endpoint `/documents/*` (202, dedup sha256,
+Idempotency-Key, rate-limit ingest, 415 sniff-MIME, tolak macro) + SSE progress
+skema sendiri (SoR Postgres) + `POST /retrieval/search` (debug) +
+reconciler `python -m app.workers.reindex --tenant --since --dry-run`.
+
+**Parser modular + OCR opt-in + XLSX.** Docling (PDF digital/DOCX/PPTX, prov
+halaman + span lintas-halaman), Markdown header-aware + tabel pipe, XLSX
+read-only (guard sel + tolak VBA), probe pypdf murah, OCR Tesseract terpisah
+(`OCREngine`, `ind+eng`, DPI-300, confidence, `low_ocr`): `auto` = tawarkan
+`OCR_REQUIRED`, `on` = kerjakan. Preset chunk beku `prose/markdown/pdf/factoid`
++ baris-tabel selalu difactoid-kan.
+
+**SourceConnector read-only (ADR-23).** Protocol tanpa method tulis +
+Postgres & MySQL (watermark `(updated_at,id)`, soft-delete, allowlist tabel,
+proyeksi kolom, transaksi READ ONLY); secret Fernet per tenant
+(`SOURCE_CONN_KEY`, generate otomatis di setup).
+
+**Agen RAG + grounding.** `rag_answer` (pipeline: retrieve → generate →
+gerbang ketat; `no_evidence` = tolak tanpa panggil LLM; angka tanpa sitasi /
+marker yatim → refusal eksak) + `rag_chat` (ReAct + tool factory-bound,
+reformulasi coreference di prompt, flag `grounded`). Sitasi `[^n]` + `chunk_id`
+stabil sha256 + chunk ter-quoting (anti-injeksi). Middleware P7: retrieval
+limit 10 + exclude dari `ClearToolUsesEdit`. Tool retrieval WAJIB
+factory-bound (M6 — contoh Docs tak-aman diperbaiki).
+
+**Eval mini Indonesia.** 8 gold QA (5 hit@3 + 3 no_evidence incl. isolasi
+silang A↔B) + jawaban LLM nyata (grounded + sitasi valid + refusal eksak).
+
+**Testing:** ±90 unit + ±40 integrasi RAG baru (contract suite ganda 18/18 di
+kedua backend; HTTP 17; live API/worker/eval) + `Test/spike_v07/live_e2e_v07.py`
+(**29 pemeriksaan, 2 fase backend, semuanya HIJAU** — upload MD/PDF/XLSX, SSE,
+dedup, 415, OCR_REQUIRED→retry, search, rag_answer grounded+refusal, rag_chat
+silang-tenant, hapus, edge 410/404, fase Qdrant penuh).
+
+**Temuan saat verifikasi image/E2E (diperbaiki):**
+- **`migrations/` tak disalin Dockerfile** → container akan gagal start
+  ("007_rag.sql tidak ditemukan"). Kini `COPY migrations` + guard test.
+- **`.dockerignore` tidak ada** → build context 2.1 GB (`.venv` 1.6 GB +
+  `.hf-cache` 0.5 GB) untuk kode 1.2 MB; transfer lambat + daemon Docker
+  wedge saat unpack. Kini context ≈ kode + lock.
+- **Cold start Infinity** (muat model 30–60 dtk) membuat `init_rag` gagal →
+  worker/API mati. Kini probe di-retry ~2 menit dengan pesan aksi jelas.
+- **aiomysql menolak `read_timeout`/`write_timeout`** (TypeError) → konektor
+  MySQL crash saat connect; kini hanya `connect_timeout`.
+- Image kini non-root (`appuser`), direktori runtime `/data/uploads` +
+  `/cache/hf` disiapkan (aman untuk volume kosong).
+- Migrasi `007_rag.sql` + `008_rag_grants.sql` (list-berurutan, advisory lock).
+
+**Deviasi sadar:** Qdrant lexical = boolean `MatchText` (tanpa BM25
+berperingkat); SSE progress = poll Postgres (ekor Valkey dipublish worker,
+dibaca nanti); MySQL = profil compose opt-in; eval = 8 gold QA fokus
+(30-QA → v1.0 `evals/`).
+
 ## v0.6.1 (2026-11-01) — Batas umur koneksi WS + E2E menyeluruh
 
 **Batas umur koneksi WebSocket (`WS_MAX_CONNECTION_SECONDS`, default 1800).**

@@ -26,6 +26,13 @@ TOOL_CALL_PER_TOOL_LIMIT = 5
 CONTEXT_TRIGGER_TOKENS = 8000
 CONTEXT_KEEP_LAST_TOOL_USES = 3
 
+# v0.7 (P7): tool retrieval boleh dipanggil lebih sering (riset multi-query)
+# dan output-nya DIKECUALIKAN dari pembersihan konteks (bukti sitasi harus
+# bertahan untuk eval + atribusi; tanpa ini ClearToolUsesEdit menghapus bukti
+# yang baru dipakai menjawab).
+RETRIEVAL_TOOL_NAMES = frozenset({"search_knowledge_base"})
+RETRIEVAL_PER_TOOL_LIMIT = 10
+
 
 def _tool_error_message(exc: Exception, request: Any) -> str:
     name = getattr(request, "tool_name", None) or getattr(request, "name", "tool")
@@ -68,12 +75,15 @@ def build_middleware(settings: Settings, tools: list | None = None) -> list:
         name = getattr(tool, "name", None)
         if not name:
             continue
+        limit = (RETRIEVAL_PER_TOOL_LIMIT if str(name) in RETRIEVAL_TOOL_NAMES
+                 else per_tool_limit)
         stack.append(ToolCallLimitMiddleware(
-            tool_name=str(name), thread_limit=per_tool_limit))
+            tool_name=str(name), thread_limit=limit))
 
     # 2. Kebersihan konteks: buang tool-call lama saat > ambang, sisakan N terakhir.
     stack.append(ContextEditingMiddleware(edits=[
-        ClearToolUsesEdit(trigger=trigger, keep=keep),
+        ClearToolUsesEdit(trigger=trigger, keep=keep,
+                          exclude_tools=sorted(RETRIEVAL_TOOL_NAMES)),
     ]))
 
     # 3. Jaring pengaman tool error → ToolMessage (agen lanjut, bukan crash).

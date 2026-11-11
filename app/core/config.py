@@ -106,6 +106,74 @@ class Settings(BaseSettings):
     PHOENIX_ENDPOINT: str = "http://localhost:6006/v1/traces"
     PHOENIX_PROJECT: str = "boilerplate-v0"
 
+    # --- v0.7: RAG (desain beku: Docs/RAG-V07-DESIGN.md) ---
+    # Backend vektor: pgvector (default, di app-db) | qdrant (opt-in).
+    # Setting DEPLOY, bukan per-request (pindah backend = reindex eksplisit).
+    RAG_BACKEND: Literal["pgvector", "qdrant"] = "pgvector"
+    # Dedicated infra embedding (compose terpisah, OpenAI-compatible).
+    RAG_EMBED_BASE_URL: str = "http://localhost:7997"
+    RAG_EMBED_MODEL: str = "BAAI/bge-m3"
+    # Pin versi embed (P1-9): kosong = JANGAN validasi versi (perilaku lama);
+    # isi = startup tolak bila chunks.embedding_version berbeda (anti campur
+    # revisi model/kuantisasi). Samakan dengan versi client embedder.
+    RAG_EMBED_VERSION: str = ""
+    # Startup ketat (P1-10): true = embed/rerank/vector gagal → tolak start
+    # (default, ADR-12); false = RAG degraded (None) + API non-RAG tetap jalan.
+    RAG_STRICT_STARTUP: bool = True
+    RAG_RERANK_BASE_URL: str = "http://localhost:7997"
+    RAG_RERANK_MODEL: str = "BAAI/bge-reranker-v2-m3"
+    # Qdrant: wajib keduanya bila RAG_BACKEND=qdrant (fail-fast, D6).
+    QDRANT_URL: str = ""
+    QDRANT_API_KEY: str = ""
+    # Batas ingest (D10): tolak 413 SEBELUM enqueue.
+    RAG_MAX_UPLOAD_BYTES: int = Field(default=20_971_520, ge=1024)
+    RAG_MAX_PAGES_PDF: int = Field(default=200, ge=1)
+    RAG_MAX_XLSX_CELLS: int = Field(default=200_000, ge=100)
+    RAG_STORAGE_DIR: str = "data/uploads"
+    # Cache HuggingFace lokal repo (tokenizer dsb). Default di repo (BUKAN ~/.cache):
+    # reproducible + ramah container (home read-only) + hindari lock-profile.
+    RAG_HF_CACHE: str = ".hf-cache"
+    # Angka pipeline hybrid (CONFIG, bukan kontrak beku — R7).
+    RAG_RRF_K: int = Field(default=60, ge=1)
+    RAG_DENSE_TOP: int = Field(default=50, ge=1, le=1000)
+    RAG_LEXICAL_TOP: int = Field(default=50, ge=1, le=1000)
+    RAG_CANDIDATE_TOP: int = Field(default=20, ge=1, le=200)
+    RAG_FINAL_TOP: int = Field(default=5, ge=1, le=50)
+    # Truncasi rerank (D5): dipotong di batas kalimat, bukan tengah kalimat.
+    RAG_QUERY_MAX_TOK: int = Field(default=128, ge=16)
+    RAG_DOC_MAX_TOK: int = Field(default=384, ge=32)
+    RAG_PAIR_MAX_TOK: int = Field(default=512, ge=64)
+    # Floor skor rerank: semua kandidat di bawah ini → retrieval_status=no_evidence
+    # → agen WAJIB menolak tanpa memanggil LLM-answer (D5). 0.0 = nonaktif.
+    RAG_RERANK_SCORE_FLOOR: float = Field(default=0.05, ge=0.0, le=1.0)
+    RAG_EMBED_TIMEOUT_MS: int = Field(default=1500, ge=100)
+    RAG_RERANK_TIMEOUT_MS: int = Field(default=2500, ge=100)
+    # RAG_ALLOW_MIXED=1 HANYA untuk re-index bertahap (D6). Default 0 = tolak start
+    # bila RAG_EMBED_* tidak cocok dengan kolom/index (anti vektor campur).
+    RAG_ALLOW_MIXED: bool = False
+    # Worker ingest (proses terpisah, pool sendiri — T11).
+    WORKER_DB_POOL_MIN: int = Field(default=2, ge=1)
+    WORKER_DB_POOL_MAX: int = Field(default=5, ge=1)
+    WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=32)
+    WORKER_POLL_SECONDS: float = Field(default=0.5, gt=0, le=60)
+    RAG_LEASE_SECONDS: int = Field(default=120, ge=10, le=3600)
+    # Timeout statement (T11): API 30s, worker 120s (bulk insert + HNSW);
+    # idle-in-transaction 30s keduanya (bunuh transaksi bocor).
+    DB_STATEMENT_TIMEOUT_S: int = Field(default=30, ge=1, le=600)
+    DB_IDLE_TXN_TIMEOUT_S: int = Field(default=30, ge=1, le=600)
+    WORKER_STATEMENT_TIMEOUT_S: int = Field(default=120, ge=1, le=3600)
+    # Kunci Fernet envelope untuk secret konektor (44ch base64). Rotasi manual.
+    SOURCE_CONN_KEY: str = ""
+    RATE_LIMIT_INGEST_PER_MIN: int = Field(default=5, ge=1, le=1000)
+    # Retrieval/search dapat bucket SENDIRI (search cepat & sering; ingest
+    # berat & jarang — berbagi bucket = E2E/UX kena 429 palsu).
+    RATE_LIMIT_RETRIEVAL_PER_MIN: int = Field(default=30, ge=1, le=1000)
+    # OCR (D10): auto = tawarkan OCR_REQUIRED bila teks <50 char/halaman.
+    OCR_MODE: Literal["auto", "on", "off"] = "auto"
+    OCR_LANGS: str = "ind+eng"
+    OCR_TIMEOUT_SECONDS: int = Field(default=60, ge=5, le=600)
+    OCR_MAX_PAGES: int = Field(default=50, ge=1)
+
     @field_validator("LOG_LEVEL", mode="before")
     @classmethod
     def _upper_level(cls, v: object) -> object:
@@ -189,6 +257,51 @@ class Settings(BaseSettings):
                 raise ValueError("ENVIRONMENT=prod mewajibkan JWT_SECRET.")
         return self
 
+    @field_validator("RAG_EMBED_BASE_URL", "RAG_RERANK_BASE_URL", "QDRANT_URL")
+    @classmethod
+    def _check_rag_urls(cls, v: str) -> str:
+        v = (v or "").strip().rstrip("/")
+        if v and not v.startswith(("http://", "https://")):
+            raise ValueError(f"URL RAG wajib http(s) (dapat {v!r}).")
+        return v
+
+    @field_validator("SOURCE_CONN_KEY")
+    @classmethod
+    def _check_source_key(cls, v: str) -> str:
+        """Kunci Fernet envelope: 44 char base64 urlsafe (Fernet.generate_key)."""
+        import re
+
+        v = (v or "").strip()
+        if v and not re.fullmatch(r"[A-Za-z0-9_-]{43}=", v):
+            raise ValueError(
+                "SOURCE_CONN_KEY wajib kunci Fernet 44 char "
+                "(dapat panjang berbeda/format salah). "
+                "Generate: python -c 'from cryptography.fernet import "
+                "Fernet; print(Fernet.generate_key().decode())'")
+        return v
+
+    @model_validator(mode="after")
+    def _check_v07_guards(self):
+        """Guard konsistensi RAG (D14): backend qdrant tanpa URL/key = error
+        config eksplisit; FINAL_TOP tak boleh melebihi CANDIDATE_TOP."""
+        if self.RAG_BACKEND == "qdrant" and not self.QDRANT_URL:
+            raise ValueError(
+                "RAG_BACKEND=qdrant mewajibkan QDRANT_URL. Isi URL + "
+                "QDRANT_API_KEY, atau kembalikan RAG_BACKEND=pgvector.")
+        if self.RAG_BACKEND == "qdrant" and not self.QDRANT_API_KEY:
+            raise ValueError(
+                "RAG_BACKEND=qdrant mewajibkan QDRANT_API_KEY (auth Qdrant "
+                "tanpa key = 401; dashboard tak boleh publik).")
+        if self.WORKER_DB_POOL_MAX < self.WORKER_DB_POOL_MIN:
+            raise ValueError(
+                f"WORKER_DB_POOL_MAX ({self.WORKER_DB_POOL_MAX}) < "
+                f"WORKER_DB_POOL_MIN ({self.WORKER_DB_POOL_MIN}) — perbaiki env.")
+        if self.RAG_FINAL_TOP > self.RAG_CANDIDATE_TOP:
+            raise ValueError(
+                f"RAG_FINAL_TOP ({self.RAG_FINAL_TOP}) > RAG_CANDIDATE_TOP "
+                f"({self.RAG_CANDIDATE_TOP}) — final tak bisa melebihi kandidat.")
+        return self
+
     @property
     def auth_configured(self) -> bool:
         """True bila mode auth aktif benar-benar bisa melayani request."""
@@ -199,6 +312,15 @@ class Settings(BaseSettings):
     @property
     def cache_enabled(self) -> bool:
         return bool(self.CACHE_URL)
+
+    @property
+    def rag_enabled(self) -> bool:
+        """True bila jalur RAG bisa dipakai (embed terkonfigurasi)."""
+        return bool(self.RAG_EMBED_BASE_URL and self.RAG_EMBED_MODEL)
+
+    @property
+    def qdrant_configured(self) -> bool:
+        return bool(self.QDRANT_URL and self.QDRANT_API_KEY)
 
     def cors_origins(self) -> list[str]:
         """Parse koma-dipisah (milik config, bukan factory app — SRP)."""

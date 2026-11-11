@@ -45,8 +45,15 @@ def normalize_conninfo(database_url: str) -> str:
     return url
 
 
-def create_pool(settings: Settings) -> AsyncConnectionPool:
-    """Buat pool TERTUTUP. Lifespan yang `open()` + `close()` (bukan pemanggil)."""
+def create_pool(settings: Settings, *,
+                min_size: int | None = None, max_size: int | None = None,
+                statement_timeout: int | None = None,
+                idle_txn_timeout: int | None = None) -> AsyncConnectionPool:
+    """Buat pool TERTUTUP. Lifespan yang `open()` + `close()` (bukan pemanggil).
+
+    Override ukuran/timeout untuk pool kedua (worker ingest): API default dari
+    `DB_POOL_*`/`DB_*TIMEOUT_*`, worker oper `WORKER_*` eksplisit (T11).
+    """
     url = normalize_conninfo(settings.DATABASE_URL)
     if not url:
         raise RuntimeError(
@@ -54,18 +61,26 @@ def create_pool(settings: Settings) -> AsyncConnectionPool:
             "Jalankan `docker compose up -d app-db` di folder Infra/, lalu isi "
             "DATABASE_URL di .env — contoh di .env.example."
         )
-    pool_min = max(1, int(settings.DB_POOL_MIN))
-    pool_max = max(pool_min, int(settings.DB_POOL_MAX))
+    pool_min = max(1, int(min_size if min_size is not None
+                          else settings.DB_POOL_MIN))
+    pool_max = max(pool_min, int(max_size if max_size is not None
+                                 else settings.DB_POOL_MAX))
     if pool_min != settings.DB_POOL_MIN or pool_max != settings.DB_POOL_MAX:
         # Jangan sembunyikan salah config (mis. MIN>MAX, nol, negatif).
         log.warning("DB_POOL di-clamp (%s,%s) → (%d,%d); perbaiki env.",
                     settings.DB_POOL_MIN, settings.DB_POOL_MAX, pool_min, pool_max)
+    stmt = (statement_timeout if statement_timeout is not None
+            else settings.DB_STATEMENT_TIMEOUT_S)
+    idle = (idle_txn_timeout if idle_txn_timeout is not None
+            else settings.DB_IDLE_TXN_TIMEOUT_S)
+    options = f"-c statement_timeout={int(stmt)}s -c idle_in_transaction_session_timeout={int(idle)}s"
     return AsyncConnectionPool(
         url,
         min_size=pool_min,
         max_size=pool_max,
         open=False,
-        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        kwargs={"autocommit": True, "prepare_threshold": 0,
+                "row_factory": dict_row, "options": options},
     )
 
 

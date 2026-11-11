@@ -72,10 +72,55 @@ async def _cache_status(request: Request, settings: Settings) -> str:
     return "ok" if await cache.ping() else "down (ping gagal)"
 
 
+async def _rag_status(request: Request, settings: Settings) -> dict[str, str]:
+    """Status RAG v0.7 (embed/rerank/vector). Aditif, tak pernah raise.
+
+    Seperti cache: komponen RAG tak membuat `/ready` 503 — chat non-RAG
+    tetap jalan saat service embedding mati (D6 fail-open runtime).
+    """
+    rag = getattr(request.app.state, "rag", None)
+    if rag is None:
+        s = ("disabled (RAG_EMBED_BASE_URL kosong)"
+             if not settings.rag_enabled
+             else "not initialized (lifespan gagal?)")
+        return {"embed": s, "rerank": s, "vector": s}
+    out: dict[str, str] = {}
+    for key, client, label in (
+            ("embed", rag.embed, f"{rag.embed.model} dim={rag.embed.dims}"),
+            ("rerank", rag.rerank, rag.rerank.model)):
+        try:
+            async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
+                ok = await client.ping()
+            out[key] = f"ok ({label})" if ok else "down (ping gagal)"
+        except TimeoutError:
+            out[key] = "down (probe timeout)"
+        except Exception as exc:
+            out[key] = f"down ({type(exc).__name__})"
+    try:
+        async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
+            if settings.RAG_BACKEND == "qdrant" and rag.qdrant is not None:
+                await rag.qdrant.get_collections()
+                out["vector"] = "qdrant ok"
+            else:
+                pool = getattr(request.app.state, "pool", None)
+                if pool is None:
+                    out["vector"] = "not initialized (pool?)"
+                else:
+                    async with pool.connection() as conn:
+                        await conn.execute("SELECT 1 FROM chunks LIMIT 1")
+                    out["vector"] = "pgvector ok"
+    except TimeoutError:
+        out["vector"] = "down (probe timeout)"
+    except Exception as exc:
+        out["vector"] = f"down ({type(exc).__name__})"
+    return out
+
+
 async def _health_body(request: Request, settings: Settings) -> dict:
     gateway = await _gateway_status(settings)
     checkpointer, store = await _persistence_status(request, settings)
     cache = await _cache_status(request, settings)
+    rag = await _rag_status(request, settings)
     ready = gateway == "ok" and checkpointer.startswith("postgres")
     # degraded bila ada komponen opsional bermasalah (cache) — tetap ready.
     degraded = cache.startswith("down") or cache.startswith("not initialized")
@@ -89,6 +134,9 @@ async def _health_body(request: Request, settings: Settings) -> dict:
             "checkpointer": checkpointer,
             "store": store,
             "cache": cache,
+            "embed": rag["embed"],
+            "rerank": rag["rerank"],
+            "vector": rag["vector"],
             "auth": f"{settings.AUTH_MODE} ({'ready' if settings.auth_configured else 'NOT CONFIGURED'})",
             "hitl": "enabled" if settings.HITL_ENABLED else "disabled",
         },

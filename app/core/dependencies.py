@@ -125,7 +125,9 @@ def get_chat_controller(
     settings: Settings = Depends(get_settings),
 ) -> ChatController:
     checkpointer, store = _persistence(request)
-    return ChatController(settings, checkpointer, get_runner(), store=store)
+    return ChatController(settings, checkpointer, get_runner(), store=store,
+                          pool=_optional_pool(request),
+                          rag=get_rag_clients(request))
 
 
 def get_job_controller(
@@ -133,7 +135,18 @@ def get_job_controller(
     settings: Settings = Depends(get_settings),
 ) -> JobController:
     checkpointer, _ = _persistence(request)
-    return JobController(settings, checkpointer, get_runner())
+    return JobController(settings, checkpointer, get_runner(),
+                         pool=_optional_pool(request),
+                         rag=get_rag_clients(request))
+
+
+def _optional_pool(request: Request):
+    """Pool bila lifespan jalan; None bila tidak (agen non-RAG tetap jalan;
+    agen NEEDS_RETRIEVER 503 jelas di controller)."""
+    try:
+        return get_pool(request)
+    except StorageUnavailableError:
+        return None
 
 
 def get_thread_controller(
@@ -145,3 +158,19 @@ def get_thread_controller(
 
     checkpointer, _ = _persistence(request)
     return ThreadController(settings, checkpointer, get_runner())
+
+
+def get_rag_clients(request: Request):
+    """Bundle klien RAG dari lifespan (None = RAG nonaktif, D6)."""
+    return getattr(request.app.state, "rag", None)
+
+
+def get_document_controller(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """Rel dokumen/ingest (v0.7)."""
+    from app.controllers.DocumentController import DocumentController
+
+    return DocumentController(settings, get_pool(request),
+                              rag_clients=get_rag_clients(request))
