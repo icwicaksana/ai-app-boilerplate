@@ -21,6 +21,9 @@ async def _purge_prefix(pool, prefix: str) -> None:
 
     Tanpa ini claim_job mengambil job basi yang blob-nya sudah tak ada.
     """
+    from conftest import purge_stale_test_jobs
+
+    await purge_stale_test_jobs(pool)  # queue GLOBAL: bersihkan tenant test
     async with pool.connection() as conn:
         await conn.execute(
             "DELETE FROM documents WHERE tenant LIKE %s", (prefix + "%",))

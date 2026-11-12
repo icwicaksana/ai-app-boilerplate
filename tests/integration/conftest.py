@@ -142,3 +142,36 @@ def require_embed() -> str:
 @pytest_asyncio.fixture
 async def embed_url() -> str:
     return require_embed()
+
+
+# --- v0.7: kebersihan queue worker (claim bersifat GLOBAL/lintas-tenant) ---
+
+# Tenant milik test (semua modul). Job non-terminal dari run yang DIBATALKAN
+# (mis. test error di tengah) akan diklaim lebih dulu oleh `claim_job` —
+# FIFO benar, tapi membuat assertion "job pertama = job saya" rapuh.
+TEST_TENANT_PREFIXES = ("it-", "live-", "e2e-", "eval-")
+
+
+async def purge_stale_test_jobs(pool, *, keep_document_id: str | None = None
+                                ) -> int:
+    """Tandai dead SEMUA job non-terminal milik tenant test.
+
+    Wajib dipanggil test yang memakai `claim_job` (queue global). Hanya
+    menyentuh tenant ber-prefix test — data tenant nyata tak pernah disentuh.
+    `keep_document_id` = dokumen milik test INI (jangan dibunuh; test lain
+    memanggil purge SETELAH membuat dokumen+job-nya sendiri).
+    """
+    clauses = " OR ".join(["tenant LIKE %s"] * len(TEST_TENANT_PREFIXES))
+    params: list = [p + "%" for p in TEST_TENANT_PREFIXES]
+    keep = ""
+    if keep_document_id:
+        keep = " AND document_id::text <> %s"
+        params.append(str(keep_document_id))
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "UPDATE ingestion_jobs SET state = 'dead',"
+            " last_error = 'TEST_CLEANUP: job basi run sebelumnya',"
+            " updated_at = now()"
+            f" WHERE state NOT IN ('done', 'dead') AND ({clauses})" + keep,
+            params)
+        return cur.rowcount or 0

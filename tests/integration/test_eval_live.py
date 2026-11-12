@@ -41,6 +41,9 @@ async def _seed_eval(pool, settings, tenant: str, docs: list):
     from app.infra.rag.infinity import InfinityEmbeddings
     from app.infra.rag.tokenizer import BgeTokenizer
     from app.workers.ingest import WorkerCtx, build_parsers, process_job
+    from conftest import purge_stale_test_jobs
+
+    await purge_stale_test_jobs(pool)  # queue global: buang job basi tenant test
 
     async with pool.connection() as conn:
         await conn.execute(

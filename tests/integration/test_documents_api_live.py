@@ -108,7 +108,11 @@ def _process_inline(db_url, embed_url, storage, tenant, document_id):
         embed = InfinityEmbeddings(embed_url, "BAAI/bge-m3", 1024,
                                    timeout_ms=120_000)
         try:
-            # Purge residu run lain (queue shared, tmp per-run).
+            # Purge residu run lain (queue shared, tmp per-run) — dokumen
+            # test INI dikecualikan (job-nya baru dibuat API).
+            from conftest import purge_stale_test_jobs
+
+            await purge_stale_test_jobs(pool, keep_document_id=document_id)
             async with pool.connection() as _c:
                 await _c.execute(
                     "DELETE FROM documents WHERE tenant LIKE 'it-doc-%%'"
