@@ -54,10 +54,29 @@ class RerankedDoc(TypedDict):
     score: float           # ordinal (bukan probabilitas) — bandingkan, jangan tafsir
 
 
+class RetrievalTrace(TypedDict):
+    """Jejak 1x retrieval: timing + hitungan + skor ringkas (v0.7.1 F1).
+
+    Tujuan: diagnosis "kenapa jawaban buruk" tanpa menebak — eval F4 dan
+    operator membaca ini, bukan log tersebar. Murah (perf_counter + len),
+    selalu dikumpulkan; konsumen memilih ekspos penuh (debug) atau ringkas.
+    """
+
+    backend: str           # backend_name store
+    timings_ms: dict[str, float]  # embed/dense/lexical/rerank/total
+    counts: dict[str, int]  # dense/lexical/candidates/ranked/final
+    top_score: float       # skor final tertinggi (rerank; RRF bila degraded)
+    floor: float           # score_floor aktif
+    status: str            # duplikat status hasil (korelasi log)
+    degraded: list[str]    # duplikat flag degraded
+    query_preview: str     # ≤120 char (korelasi, bukan isi penuh)
+
+
 class RetrievalResult(TypedDict):
     chunks: list[CitedChunk]
     status: Literal["ok", "no_evidence"]
     degraded: list[str]    # mis. ["rerank_timeout"] — aditif
+    trace: NotRequired[RetrievalTrace]  # observability (v0.7.1, aditif)
 
 
 class IndexInfo(TypedDict):

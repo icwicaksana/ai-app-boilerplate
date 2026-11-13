@@ -349,4 +349,5 @@ async def retrieval_search(
                   ("n", "doc_id", "chunk_id", "source", "page", "score",
                    "backend")} for c in cites],
         meta={"backend": out["backend"], "status": out["status"],
-              "degraded": out["degraded"]})
+              "degraded": out["degraded"],
+              "trace": out.get("trace") or {}})

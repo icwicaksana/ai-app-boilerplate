@@ -175,6 +175,14 @@ class DocumentController:
         retriever = retriever_for_tenant(
             self.settings, clients, self.pool, tenant=tenant)
         res = await retriever.search(query, k=k, filters=filters)
+        trace = res.get("trace") or {}
+        counts = trace.get("counts", {})
+        log.info("retrieval tenant=%s status=%s top=%.4f final=%d/%d "
+                 "total_ms=%.1f degraded=%s",
+                 tenant, res["status"], trace.get("top_score", 0.0),
+                 counts.get("final", 0), counts.get("candidates", 0),
+                 trace.get("timings_ms", {}).get("total", 0.0),
+                 ",".join(res["degraded"]) or "-")
         return {"matches": res["chunks"], "status": res["status"],
-                "degraded": res["degraded"],
+                "degraded": res["degraded"], "trace": trace,
                 "backend": self.settings.RAG_BACKEND}

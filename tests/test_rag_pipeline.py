@@ -213,3 +213,37 @@ async def test_rerank_korup_raise_bukan_no_evidence():
     r = _retriever(rerank=_CorruptRerank())
     with pytest.raises(ValueError, match="korup"):
         await r.search("q")
+
+
+@pytest.mark.asyncio
+async def test_trace_lengkap_jalur_ok():
+    r = _retriever()
+    res = await r.search("berapa hari retur?")
+    t = res["trace"]
+    assert t["backend"] == "fake"
+    assert set(t["timings_ms"]) == {"embed", "dense", "lexical", "rerank",
+                                    "total"}
+    assert all(v >= 0 for v in t["timings_ms"].values())
+    c = t["counts"]
+    assert c["dense"] == 50 and c["lexical"] == 50
+    assert c["candidates"] == 20 and c["final"] == 5
+    assert c["ranked"] == 20
+    assert t["top_score"] > 0 and t["floor"] == 0.05
+    assert t["status"] == "ok" and t["degraded"] == []
+    assert t["query_preview"] == "berapa hari retur?"
+
+
+@pytest.mark.asyncio
+async def test_trace_ada_saat_no_evidence_dan_degraded():
+    from app.rag.pipeline import HybridRetriever
+
+    r = _retriever(rerank=FakeRerank(scores=[0.0] * 20))
+    res = await r.search("jadwal kereta?")
+    assert res["status"] == "no_evidence"
+    assert res["trace"]["status"] == "no_evidence"
+    assert res["trace"]["counts"]["final"] == 0
+    r2 = _retriever(rerank=FakeRerank(timeout=True))
+    res2 = await r2.search("q?")
+    assert res2["degraded"] == ["rerank_unavailable"]
+    assert res2["trace"]["degraded"] == ["rerank_unavailable"]
+    assert res2["trace"]["counts"]["final"] > 0  # fallback RRF terisi

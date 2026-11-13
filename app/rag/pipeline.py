@@ -127,22 +127,53 @@ class HybridRetriever:
         k: int = 5,
         filters: dict[str, Any] | None = None,
     ) -> RetrievalResult:
+        import time as _time  # stdlib murni (arch-test OK, bukan asyncio)
+
+        t0 = _time.perf_counter()
+        timings: dict[str, float] = {}
+
+        def _trace(chunks: list, status: str, degraded: list,
+                   ranked_n: int = 0) -> RetrievalResult:
+            timings["total"] = round((_time.perf_counter() - t0) * 1000, 1)
+            top = max((c["score"] for c in chunks), default=0.0)
+            return {
+                "chunks": chunks, "status": status, "degraded": degraded,  # type: ignore[typeddict-item]
+                "trace": {
+                    "backend": getattr(self._store, "backend_name", "?"),
+                    "timings_ms": dict(timings),
+                    "counts": {"dense": len(dense), "lexical": len(lexical),
+                               "candidates": len(candidates),
+                               "ranked": ranked_n, "final": len(chunks)},
+                    "top_score": round(float(top), 4),
+                    "floor": self._score_floor,
+                    "status": status, "degraded": list(degraded),
+                    "query_preview": (query or "")[:120],
+                },
+            }
+
         # 1) Embed query (dipotong dulu: jangan buang konteks BGE-M3, P11).
         # Gagal = biarkan raise (D6: tanpa fallback beda-model).
+        t = _time.perf_counter()
         qvec = (await self._embed.embed_texts(
             [truncate_sentences(query, self._query_max_tok, self._tok)]))[0]
+        timings["embed"] = round((_time.perf_counter() - t) * 1000, 1)
         # 2) Fan-out ganda (F4: 50/50, bukan 20/20). SERIAL sengaja:
         # `asyncio.gather` butuh `import asyncio` = dilarang arch-test
         # (app/rag murni); biaya ~2x RTT store (±20–100ms PG) diterima.
+        t = _time.perf_counter()
         dense = await self._store.search_dense(
             qvec, k=self._dense_top, filters=filters)
+        timings["dense"] = round((_time.perf_counter() - t) * 1000, 1)
+        t = _time.perf_counter()
         lexical = await self._store.search_lexical(
             query, k=self._lexical_top, filters=filters)
+        timings["lexical"] = round((_time.perf_counter() - t) * 1000, 1)
         # 3) RRF → kandidat.
         candidates = rrf_fuse(dense, lexical, k=self._rrf_k,
                               top_n=self._candidate_top)
         if not candidates:
-            return {"chunks": [], "status": "no_evidence", "degraded": []}
+            timings["rerank"] = 0.0
+            return _trace([], "no_evidence", [])
         # 4) Truncasi rerank (D5): query + tiap dokumen di batas kalimat.
         q = truncate_sentences(query, self._query_max_tok, self._tok)
         docs = [truncate_sentences(c["content"], self._doc_budget(q), self._tok)
@@ -153,12 +184,14 @@ class HybridRetriever:
         # rerank 0–1 — konsumen (citations/eval) wajib cek `degraded` (F-2).
         from app.core.errors import RerankError
 
+        t = _time.perf_counter()
         try:
             ranked = await self._rerank.rerank(q, docs, top_n=len(docs))
         except (TimeoutError, RerankError):
+            timings["rerank"] = round((_time.perf_counter() - t) * 1000, 1)
             final = candidates[: min(k, self._final_top)]
-            return {"chunks": final, "status": "ok",
-                    "degraded": ["rerank_unavailable"]}
+            return _trace(final, "ok", ["rerank_unavailable"])
+        timings["rerank"] = round((_time.perf_counter() - t) * 1000, 1)
         # 6) Floor → no_evidence (D5): tolak tanpa LLM bila semua di bawah floor.
         # Urutan provider JANGAN dipercaya (sort sendiri); chunk di bawah
         # floor dibuang dari konteks final (anti-polusi sitasi, temuan F6).
@@ -186,13 +219,13 @@ class HybridRetriever:
         else:
             passed = list(ranked)
         if not passed:
-            return {"chunks": [], "status": "no_evidence", "degraded": []}
+            return _trace([], "no_evidence", [], ranked_n=len(ranked))
         final: list[CitedChunk] = []
         for r in passed[: min(k, self._final_top)]:
             c = dict(candidates[r["index"]])
             c["score"] = float(r["score"])
             final.append(c)  # type: ignore[arg-type]
-        return {"chunks": final, "status": "ok", "degraded": []}
+        return _trace(final, "ok", [], ranked_n=len(ranked))
 
     def _doc_budget(self, query: str) -> int:
         """Budget dokumen = doc_max, dikurangi query bila pair melebihi batas."""

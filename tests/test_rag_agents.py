@@ -116,6 +116,18 @@ async def test_retrieve_teruskan_k_final_top():
 
 
 @pytest.mark.asyncio
+async def test_retrieve_teruskan_trace_ke_state():
+    ag = _answer_agent(_FakeRetriever(
+        {"chunks": _chunks(), "status": "ok", "degraded": [],
+         "trace": {"backend": "pgvector", "top_score": 0.9}}))
+    out = await ag._node_retrieve({"question": "denda?"})
+    assert out["retrieval_trace"]["top_score"] == 0.9
+    fin = ag._node_finalize({**out, "draft": "Denda 2% per bulan.[^1]",
+                             "chunks": _chunks()})
+    assert fin["structured"]["trace"]["backend"] == "pgvector"
+
+
+@pytest.mark.asyncio
 async def test_generate_lewati_llm_saat_no_evidence():
     llm = _FakeLLM("tak boleh dipakai")
     ag = _answer_agent(_FakeRetriever(), llm)

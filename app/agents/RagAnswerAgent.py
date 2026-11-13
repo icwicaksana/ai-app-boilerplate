@@ -7,7 +7,7 @@ ter-quoting) → finalize (gerbang grounding).
 - Gerbang finalize KETAT (D7): kalimat berangka tanpa sitasi ATAU marker
   yatim ([^n] tanpa entri) → reply diganti refusal eksak.
 - Output: {"reply"} + data {citations, grounded, refusal, retrieval_status,
-  degraded} (pola structured v0.2).
+  degraded, trace} (pola structured v0.2).
 - Single-shot: TANPA reformulasi query (D9).
 """
 
@@ -50,6 +50,7 @@ class RagState(BaseState, total=False):
     chunks_included: list  # subset yang benar-benar masuk prompt (F-10)
     retrieval_status: str
     degraded: list
+    retrieval_trace: dict  # jejak observability (v0.7.1 F1) → output.data
     draft: str
     llm_error: bool
     final: str
@@ -91,7 +92,8 @@ class RagAnswerAgent(BasePipelineAgent):
         res = await self.retriever.search(state.get("question", ""), k=k)
         return {"chunks": res.get("chunks") or [],
                 "retrieval_status": res.get("status", "ok"),
-                "degraded": res.get("degraded") or []}
+                "degraded": res.get("degraded") or [],
+                "retrieval_trace": res.get("trace") or {}}
 
     async def _node_generate(self, state: RagState) -> dict:
         if state.get("retrieval_status") == "no_evidence" or not state.get(
@@ -156,7 +158,8 @@ class RagAnswerAgent(BasePipelineAgent):
             "refusal": refusal,
             "llm_error": bool(state.get("llm_error")),  # observabilitas (P14)
             "retrieval_status": state.get("retrieval_status", "ok"),
-            "degraded": state.get("degraded") or []}
+            "degraded": state.get("degraded") or [],
+            "trace": state.get("retrieval_trace") or {}}
         wrapped = AIMessage(content=final)
         return {"final": final, "structured": structured,
                 "messages": [wrapped]}
