@@ -85,6 +85,42 @@ async def init_rag(settings: Settings, pool,
             f"{type(last_exc).__name__}). Jalankan "
             "`docker compose -f docker-compose.embed.yml up -d` di Infra/.")
 
+    # Fallback MODEL-IDENTIK (F5b): nama wajib sama persis (fail-fast =
+    # miskonfigurasi operator); dims dibuktikan via probe. Fallback DOWN
+    # saat start = warning + lanjut tanpa fallback (primer sehat cukup).
+    fb_url = (settings.RAG_EMBED_FALLBACK_URL or "").strip()
+    if fb_url:
+        fb_model = (settings.RAG_EMBED_FALLBACK_MODEL or "").strip()
+        if fb_model != settings.RAG_EMBED_MODEL:
+            await embed.aclose()
+            await rerank.aclose()
+            raise RuntimeError(
+                f"RAG_EMBED_FALLBACK_MODEL ({fb_model!r}) != RAG_EMBED_MODEL "
+                f"({settings.RAG_EMBED_MODEL!r}) — fallback beda-model "
+                "DILARANG (D6, vektor campur). Samakan atau kosongkan URL.")
+        from app.infra.rag.infinity import FallbackEmbeddings
+
+        fb = InfinityEmbeddings(
+            fb_url, fb_model, dims=0,
+            timeout_ms=settings.RAG_EMBED_TIMEOUT_MS, transport=transport)
+        try:
+            fb_dims = await fb.probe_dims()
+        except Exception as exc:  # noqa: BLE001 - fallback opsional
+            log.warning("fallback embed down saat start (%s) — lanjut "
+                        "tanpa fallback", type(exc).__name__)
+            await fb.aclose()
+        else:
+            if fb_dims != dims:
+                await fb.aclose()
+                await embed.aclose()
+                await rerank.aclose()
+                raise RuntimeError(
+                    f"Fallback embed dims={fb_dims} != primer {dims} — "
+                    "tolak start (D6).")
+            embed = FallbackEmbeddings(embed, fb)
+            log.info("embed fallback aktif (model=%s dims=%d)", fb_model,
+                     dims)
+
     qdrant_client = None
     try:
         if settings.RAG_BACKEND == "qdrant":

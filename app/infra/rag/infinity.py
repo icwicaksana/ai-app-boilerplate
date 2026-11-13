@@ -4,11 +4,15 @@ Kontrak perilaku (beku):
 - Path v2 = `/embeddings` + `/rerank` (BUKAN `/v1/*` — 404, addendum A1.1).
 - Embed GAGAL (timeout/5xx/koneksi) → `EmbeddingUnavailableError` (D6).
   DILARANG fallback beda-model — 503 eksplisit, bukan vektor campur.
+  Pengecualian v0.7.1 (F5b): fallback MODEL-IDENTIK (nama + dims
+  divalidasi saat wiring) via `FallbackEmbeddings` — D6 dipertahankan.
 - Rerank GAGAL APAPUN → `RerankError` (timeout = builtin `TimeoutError`,
   sisanya `RerankError`); pipeline degradasi ke RRF + flag (P0-2).
 """
 
 from __future__ import annotations
+
+import logging
 
 import httpx
 
@@ -17,6 +21,7 @@ from app.core.errors import (
     RerankError,
 )
 
+log = logging.getLogger("app.infra.rag.infinity")
 
 class InfinityError(RerankError):
     """Alias kompatibel (dulu error rerank non-timeout). Pakai RerankError."""
@@ -96,6 +101,65 @@ class InfinityEmbeddings:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+class FallbackEmbeddings:
+    """`EmbeddingsPort` primer → fallback MODEL-IDENTIK (v0.7.1 F5b).
+
+    Failover per-request saat primer raise `EmbeddingUnavailableError`
+    (timeout/5xx/koneksi); keduanya gagal = raise error fallback. Recovery
+    otomatis: tiap request mencoba primer dulu (`on_fallback` reset saat
+    primer pulih). Kesamaan model DIJAMIN factory (nama + dims), bukan
+    di sini — wrapper ini hanya failover mekanis.
+    """
+
+    has_fallback = True
+
+    def __init__(self, primary: InfinityEmbeddings,
+                 fallback: InfinityEmbeddings) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._on_fallback = False
+
+    @property
+    def model(self) -> str:
+        return self._primary.model
+
+    @property
+    def dims(self) -> int:
+        return self._primary.dims
+
+    @property
+    def version(self) -> str:
+        return self._primary.version
+
+    @property
+    def on_fallback(self) -> bool:
+        return self._on_fallback
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        try:
+            vecs = await self._primary.embed_texts(texts)
+        except EmbeddingUnavailableError as exc:
+            log.warning("embed primer gagal (%s) — pakai fallback", exc)
+            vecs = await self._fallback.embed_texts(texts)
+            self._on_fallback = True
+            return vecs
+        self._on_fallback = False
+        return vecs
+
+    async def ping(self) -> bool:
+        """True bila SALAH SATU hidup (health gabungan)."""
+        if await self._primary.ping():
+            return True
+        return await self._fallback.ping()
+
+    async def probe_dims(self) -> int:
+        return await self._primary.probe_dims()
+
+    async def aclose(self) -> None:
+        await self._primary.aclose()
+        await self._fallback.aclose()
 
 
 class InfinityReranker:

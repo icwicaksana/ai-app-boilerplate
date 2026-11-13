@@ -5,6 +5,7 @@ import pytest
 
 from app.core.errors import EmbeddingUnavailableError
 from app.infra.rag.infinity import (
+    FallbackEmbeddings,
     InfinityEmbeddings,
     InfinityError,
     InfinityReranker,
@@ -97,3 +98,48 @@ async def test_rerank_error_lain_jadi_rerank_error():
         with pytest.raises(RerankError):
             await c.rerank("q", ["d"], top_n=1)
         await c.aclose()
+
+
+def _fallback_pair(primary_tr, fallback_tr):
+    p = InfinityEmbeddings("http://primer", "m", 2,
+                           transport=primary_tr)
+    f = InfinityEmbeddings("http://cadangan", "m", 2,
+                           transport=fallback_tr)
+    return FallbackEmbeddings(p, f)
+
+
+@pytest.mark.asyncio
+async def test_fallback_pakai_primer_saat_sehat():
+    w = _fallback_pair(
+        _embed_transport({"data": [{"embedding": [0.1, 0.2]}]}),
+        _embed_transport({"data": [{"embedding": [0.9, 0.9]}]}))
+    assert await w.embed_texts(["a"]) == [[0.1, 0.2]]
+    assert w.on_fallback is False and w.has_fallback is True
+    assert (w.model, w.dims) == ("m", 2)
+    await w.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fallback_gantikan_primer_mati_dan_pulih():
+    w = _fallback_pair(
+        _embed_transport(exc=httpx.ConnectError("down")),
+        _embed_transport({"data": [{"embedding": [0.9, 0.9]}]}))
+    assert await w.embed_texts(["a"]) == [[0.9, 0.9]]
+    assert w.on_fallback is True
+    await w.aclose()
+    # Primer 500 juga difailover (bukan hanya koneksi).
+    w2 = _fallback_pair(
+        _embed_transport(status=500),
+        _embed_transport({"data": [{"embedding": [0.7, 0.7]}]}))
+    assert await w2.embed_texts(["a"]) == [[0.7, 0.7]]
+    await w2.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fallback_dua_duanya_mati_raise():
+    w = _fallback_pair(
+        _embed_transport(exc=httpx.ConnectError("down")),
+        _embed_transport(status=500))
+    with pytest.raises(EmbeddingUnavailableError):
+        await w.embed_texts(["a"])
+    await w.aclose()

@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     # Stemming Sastrawi di normalize.py (v0.7.1): WAJIB sama saat index
     # (worker) dan query (pipeline) — beda = lexical miss sistematis.
     RAG_STEMMER: bool = True
+    # Fallback embedding MODEL-IDENTIK (v0.7.1 F5b): OpenAI-compatible
+    # `/embeddings` dengan MODEL SAMA (nama + dims divalidasi wiring).
+    # Kosong = tanpa fallback (perilaku v0.7: primer mati = 503).
+    RAG_EMBED_FALLBACK_URL: str = ""
+    RAG_EMBED_FALLBACK_MODEL: str = ""
     RAG_EMBED_TIMEOUT_MS: int = Field(default=1500, ge=100)
     RAG_RERANK_TIMEOUT_MS: int = Field(default=2500, ge=100)
     # RAG_ALLOW_MIXED=1 HANYA untuk re-index bertahap (D6). Default 0 = tolak start

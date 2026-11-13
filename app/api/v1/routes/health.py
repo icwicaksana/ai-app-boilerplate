@@ -85,8 +85,13 @@ async def _rag_status(request: Request, settings: Settings) -> dict[str, str]:
              else "not initialized (lifespan gagal?)")
         return {"embed": s, "rerank": s, "vector": s}
     out: dict[str, str] = {}
+    fb_suffix = (" +fallback" if getattr(rag.embed, "has_fallback", False)
+                 else "")
+    if getattr(rag.embed, "on_fallback", False):
+        fb_suffix += " ON-FALLBACK"
     for key, client, label in (
-            ("embed", rag.embed, f"{rag.embed.model} dim={rag.embed.dims}"),
+            ("embed", rag.embed,
+             f"{rag.embed.model} dim={rag.embed.dims}{fb_suffix}"),
             ("rerank", rag.rerank, rag.rerank.model)):
         try:
             async with asyncio.timeout(_DB_PROBE_TIMEOUT_SECONDS):
