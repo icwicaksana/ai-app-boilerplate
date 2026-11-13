@@ -2,6 +2,42 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.7.1 (2026-11-13) — Retrieval robustness (ukur-dulu, Opsi B)
+
+**Observabilitas (F1).** `RetrievalTrace` per-request: timing
+embed/dense/lexical/rerank/total + counts + top_score + floor + status +
+query_preview. Diekspos di meta `/retrieval/search`, `output.data`
+`rag_answer`, dan log INFO satu-baris. Tanpa dep baru.
+
+**Gold-30 (F2).** Runner `tests/integration/test_gold30_live.py`: 10
+stratum × 30 QA (faktoid/parafrase/morfologi/angka/tabel/negasi/typo/
+multi/cross/noanswer) di pgvector + qdrant. Satu-satunya gate = canary
+faktoid 5/5; sisanya diukur (tabel + JSON `Test/spike_v07/gold30_*.json`).
+
+**normalize.py + migrasi 010 (F3).** Fold + ekspansi angka-skala idempoten
++ stopword tanya/fungsi + stem Sastrawi (opt-out, `RAG_STEMMER`, wajib
+sama index+query). Sisi lexical saja (dense/rerank mentah). Temuan F3:
+kolom GENERATED `coalesce('')` tak pernah NULL → query memakai OR dua
+cabang (norm ATAU mentah, rank GREATEST) — nol regresi, tanpa backfill.
+Qdrant: payload + index `content_norm` (+best-effort koleksi lama).
+Dep: `sastrawi==1.0.1`.
+
+**Gerbang CRAG: TERTUTUP (F4).** Failure-rate 2/30 = 6,7% < 15% di
+KEDUA backend (miss sama: sinonim "komputer jinjing"↔laptop + jebakan
+AND "35 ribu"). Floor 0.05 tervalidasi (min-hit 0.066, no-evidence 6/6).
+CRAG tidak dibangun (sesuai ADR-22); 2 miss = ekspansi-kueri/OR-lexical
+(defer ke v0.8).
+
+**Fallback embed model-identik (F5b).** `FallbackEmbeddings`: failover
+per-request + recovery otomatis + flag `on_fallback` di `/health`.
+Factory tolak start bila nama/dims beda (D6); fallback down saat start
+= warning + jalan normal. Chaos live hijau (primer port-mati → 1024-dim
+nyata). Rerank tetap degradasi RRF (tanpa fallback terpisah).
+
+**Testing (final): 633 unit + 92 integrasi + 1 skip, 0 gagal** (incl. contract
+18/18 pasca-010, gold30 28/30 ×2 backend, chaos fallback, E2E v0.7 29/29
+regresi-hijau).
+
 ## v0.7 (2026-11-13) — RAG murni (dual backend, CPU-only)
 
 **Retrieval dual backend di balik 1 protocol (ADR-19).** `EmbeddingsPort` /

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "ai-app-boilerplate"
     API_V1_PREFIX: str = "/api/v1"
-    APP_VERSION: str = "v0.7"  # satu sumber versi (OpenAPI + health baca ini)
+    APP_VERSION: str = "v0.7.1"  # satu sumber versi (OpenAPI + health baca ini)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     # Server (entrypoint `python -m app.main` baca dari sini — .env/OS-env).
