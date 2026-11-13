@@ -12,6 +12,8 @@ Lapis:
   `RAG_BACKEND` mengganti INI, bukan seluruh retrieval.
 - `BoundRetriever` — hasil `RetrieverFactory.for_tenant()`; dipakai agen.
 - `SourceConnector` / `OCREngine` / `DocumentParser` — ingest (D10/D11).
+- v0.8 (Docs/RAG-V08-DESIGN.md): `GraphStore` + `EntityExtractor` +
+  `GraphRanker` — graph PG-native doc-scoped, factory-bound (D2).
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ class CitedChunk(TypedDict):
     score: float
     backend: str           # "pgvector" | "qdrant" — observability, bukan branching
     metadata: dict[str, Any]
+    kind: NotRequired[Literal["vector", "graph"]]  # v0.8 D8; absent = "vector"
+    provenance: NotRequired[list[str]]  # v0.8 D8: chunk_id per hop (graph saja)
 
 
 class ChunkIn(TypedDict, total=False):
@@ -67,10 +71,15 @@ class RetrievalTrace(TypedDict):
     timings_ms: dict[str, float]  # embed/dense/lexical/rerank/total
     counts: dict[str, int]  # dense/lexical/candidates/ranked/final
     top_score: float       # skor final tertinggi (rerank; RRF bila degraded)
-    floor: float           # score_floor aktif
+    floor: float           # score_floor aktif (= natural; kompat eval lama)
     status: str            # duplikat status hasil (korelasi log)
     degraded: list[str]    # duplikat flag degraded
     query_preview: str     # ≤120 char (korelasi, bukan isi penuh)
+    # v0.8 D11 (aditif; absent = graph nonaktif):
+    graph_timings_ms: NotRequired[dict[str, float]]  # seed/expand/verbalize
+    graph_counts: NotRequired[dict[str, int]]  # seeds/paths/kept/cap/fanout_clipped
+    seed_confidence: NotRequired[float | None]
+    floors: NotRequired[dict[str, float]]  # {"natural":…, "graph":…}
 
 
 class RetrievalResult(TypedDict):
@@ -285,4 +294,123 @@ class DocumentParser(Protocol):
     supported_mimes: frozenset[str]
 
     async def parse(self, blob: bytes, *, mime: str) -> ParsedDocument:
+        ...
+
+
+class KgEntityIn(TypedDict, total=False):
+    """Entity siap tulis (datang dari worker graph). Doc-scoped (D2)."""
+
+    name: str            # tampil ("PT Maju Jaya")
+    norm: str            # kunci dedup (lower+fold TANPA stem)
+    type: str            # tipe ontologi core / tenant:*
+    confidence: float    # 0..1
+    chunk_ord: int       # provenance → chunk
+    chunk_id: str        # format citations.chunk_id (stabil)
+
+
+class KgEdgeIn(TypedDict, total=False):
+    """Edge siap tulis. Semua kolom denormalisasi anti-JOIN (D13/G1)."""
+
+    src_norm: str
+    dst_norm: str
+    relation: str        # relasi ontologi core / tenant:* / related_to
+    confidence: float
+    layer: str           # "L1" | "L2" | "L3"
+    coref_resolved: bool
+    access_level: str    # denormalisasi dari chunk/doc (D13)
+    chunk_ord: int
+    chunk_id: str
+    chunk_row_id: str    # UUID chunks.id (G1 tanpa Seq Scan)
+
+
+class KgHit(TypedDict):
+    """Satu evidence graph → pseudo-chunk (D8)."""
+
+    chunk_id: str        # gpath stabil (sha256 sorted edge_ids + preset)
+    doc_id: str          # doc hop-1 (primer)
+    content: str         # 1–2 kalimat verbal
+    source: str          # nama file hop-1
+    page: int | None
+    score: float         # ordinal pre-RRF (akan di-RRF ulang)
+    hops: int            # 1 | 2
+    metadata: dict[str, Any]  # kind/provenance/confidence/layers/extractor
+
+
+class KgPath(TypedDict):
+    """Jalur BFS mentah untuk GraphRanker (slot skala)."""
+
+    nodes: list[str]     # norm per node
+    edges: list[int]     # id edge per hop
+    score: float
+
+
+class GraphInfo(TypedDict):
+    """Identitas graph — pemanggil validasi cocok pin ekstraktor (D4/D6)."""
+
+    extractor: str
+    extractor_version: str
+    onto_version: str
+    entity_count: int | None
+    edge_count: int | None
+
+
+class Extraction(TypedDict):
+    """Hasil ekstraksi 1 teks (EntityExtractor batch)."""
+
+    entities: list[KgEntityIn]
+    edges: list[KgEdgeIn]
+
+
+class GraphStore(Protocol):
+    """Store graph factory-bound tenant (D2) — tanpa argumen tenant."""
+
+    backend_name: str    # "pggraph"
+
+    async def upsert_subgraph(
+        self, *, doc_id: str,
+        entities: list[KgEntityIn], edges: list[KgEdgeIn],
+    ) -> tuple[int, int]:
+        """Tulis idempoten 1 dokumen (ON CONFLICT). Return (n_ent, n_edge)."""
+        ...
+
+    async def expand(
+        self, seeds: list[str], *, k: int,
+        filters: dict[str, Any] | None = None,
+        max_hops: int = 2, fanout: int = 50,
+    ) -> list[KgHit]:
+        """Seed (norm entitas query) → BFS bounded → evidence. Pre-filter
+        tenant + whitelist filter SAMA dengan VectorStore di tiap hop (D13)."""
+        ...
+
+    async def delete_subgraph(self, *, doc_id: str) -> tuple[int, int]:
+        """Hapus entitas+edge 1 dokumen (milik tenant terikat). Idempoten."""
+        ...
+
+    async def graph_info(self) -> GraphInfo:
+        """Identitas graph — pemanggil validasi cocok pin ekstraktor."""
+        ...
+
+
+class EntityExtractor(Protocol):
+    """Jasa model ekstraksi (D6: dilarang fallback beda-model)."""
+
+    @property
+    def model(self) -> str:
+        ...
+
+    @property
+    def version(self) -> str:
+        ...
+
+    async def extract(self, texts: list[str]) -> list[Extraction]:
+        """Batch WAJIB (dilarang loop sekuensial). Gagal = raise
+        TimeoutError/ExtractorError; pemanggil degradasi, bukan retry buta."""
+        ...
+
+
+class GraphRanker(Protocol):
+    """Slot ranking path (v0.8: BFSRanker; PPR nanti — tier-M)."""
+
+    async def rank(self, paths: list[KgPath], query: str) -> list[KgPath]:
+        """Urutkan path terbaik dulu (deterministik, pure function)."""
         ...

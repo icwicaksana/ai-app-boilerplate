@@ -56,11 +56,13 @@ def test_ports_expose_frozen_contracts():
 
     for name in ("EmbeddingsPort", "RerankerPort", "VectorStorePort",
                  "BoundRetriever", "SourceConnector", "OCREngine",
-                 "DocumentParser"):
+                 "DocumentParser", "GraphStore", "EntityExtractor",
+                 "GraphRanker"):
         assert hasattr(p, name), f"protocol {name} hilang dari ports.py"
     for name in ("CitedChunk", "ChunkIn", "RerankedDoc", "RetrievalResult",
                  "IndexInfo", "OCRResult", "ParsedDocument", "TableMeta",
-                 "SourceRecord"):
+                 "SourceRecord", "KgEntityIn", "KgEdgeIn", "KgHit",
+                 "GraphInfo", "Extraction"):
         assert hasattr(p, name), f"DTO {name} hilang dari ports.py"
     # BoundRetriever.search TANPA argumen tenant (D2: factory-bound).
     import inspect
@@ -72,3 +74,19 @@ def test_ports_expose_frozen_contracts():
     for meth in ("search_dense", "search_lexical"):
         ps = inspect.signature(getattr(p.VectorStorePort, meth)).parameters
         assert "tenant" not in ps and "tenant_id" not in ps
+    # v0.8 D2: GraphStore juga factory-bound (tanpa tenant per-call).
+    for meth in ("upsert_subgraph", "expand", "delete_subgraph"):
+        ps = inspect.signature(getattr(p.GraphStore, meth)).parameters
+        assert "tenant" not in ps and "tenant_id" not in ps, meth
+
+
+def test_no_llm_in_rag_package():
+    """Garis merah §4: 0 LLM call/query — app/rag tak boleh impor klien LLM."""
+    import re
+
+    hits = []
+    for path in sorted(RAG_DIR.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"\blitellm\b|\bLiteLLM\b|\bChatLiteLLM\b", text):
+            hits.append(path.name)
+    assert not hits, f"klien LLM bocor ke app/rag: {hits}"

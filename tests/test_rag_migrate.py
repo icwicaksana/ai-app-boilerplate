@@ -73,3 +73,16 @@ def test_semua_migrasi_terdaftar_valid():
     for needle in ("content_norm", "content_tsv_norm",
                    "idx_chunks_tsv_norm"):
         assert needle in joined010, f"010 kehilangan: {needle}"
+    joined011 = (MIGRATIONS_DIR / "011_kg.sql").read_text(encoding="utf-8")
+    for needle in ("kg_entities", "kg_edges", "idx_edge_seed",
+                   "idx_edge_bwd", "WITH CHECK", "GRANT",
+                   "'graph'", "chk_edges_not_self"):
+        assert needle in joined011, f"011 kehilangan: {needle}"
+    no_comment = "\n".join(
+        ln for ln in joined011.splitlines()
+        if not ln.lstrip().startswith("--"))
+    assert "CONCURRENTLY" not in no_comment
+    joined012 = (MIGRATIONS_DIR / "012_rls_with_check.sql").read_text(
+        encoding="utf-8")
+    for needle in ("ALTER POLICY", "WITH CHECK", "source_watermarks"):
+        assert needle in joined012, f"012 kehilangan: {needle}"

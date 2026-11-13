@@ -159,6 +159,36 @@ class Settings(BaseSettings):
     # RAG_ALLOW_MIXED=1 HANYA untuk re-index bertahap (D6). Default 0 = tolak start
     # bila RAG_EMBED_* tidak cocok dengan kolom/index (anti vektor campur).
     RAG_ALLOW_MIXED: bool = False
+
+    # --- v0.8: Knowledge Graph (desain beku: Docs/RAG-V08-DESIGN.md) ---
+    # Default MATI (D14): rollout aman, perilaku v0.7.1 identik bila false.
+    GRAPH_ENABLED: bool = False
+    # Pin ekstraktor (D6): model+versi; VERSION kosong = jangan validasi versi.
+    GRAPH_EXTRACTOR_MODEL: str = "fastino/gliner2.5-multi-v1"
+    GRAPH_EXTRACTOR_VERSION: str = ""
+    # Batas traversal (beku: 3 hop = tolak start).
+    GRAPH_MAX_HOPS: int = Field(default=2, ge=1, le=2)
+    GRAPH_SEED_TOP: int = Field(default=8, ge=1, le=32)
+    GRAPH_EXPAND_TOP: int = Field(default=20, ge=1, le=200)
+    GRAPH_BFS_FANOUT: int = Field(default=50, ge=1, le=500)
+    GRAPH_TIMEOUT_MS: int = Field(default=800, ge=100)
+    # Batas ekstraksi ingest.
+    GRAPH_EXTRACT_BATCH: int = Field(default=8, ge=1, le=64)
+    GRAPH_MAX_ENTITIES_PER_CHUNK: int = Field(default=12, ge=1, le=100)
+    GRAPH_MAX_EDGES_PER_DOC: int = Field(default=500, ge=1, le=10000)
+    GRAPH_MIN_CONFIDENCE: float = Field(default=0.3, ge=0.0, le=1.0)
+    GRAPH_SEED_CONFIDENCE: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Floor kandidat verbal (D12): nilai awal = warisan; final dari kalibrasi F5.
+    GRAPH_SCORE_FLOOR: float = Field(default=0.05, ge=0.0, le=1.0)
+    GRAPH_QUOTA_EDGES_PER_TENANT: int = Field(default=500000, ge=1000)
+    # L3 (satu-satunya cost center): trigger = conf_L2 < 0.5 DAN chunk sensitif.
+    GRAPH_L3_MAX_CALLS_PER_DOC: int = Field(default=20, ge=0, le=200)
+    GRAPH_L3_MAX_TOKENS_IN: int = Field(default=1500, ge=100)
+    GRAPH_L3_MAX_TOKENS_OUT: int = Field(default=500, ge=50)
+    GRAPH_L3_DAILY_QUOTA_PER_TENANT: int = Field(default=500, ge=0)
+    GRAPH_L3_RETRY_5XX: int = Field(default=1, ge=0, le=3)
+    GRAPH_L3_BREAKER_MINUTES: int = Field(default=15, ge=1, le=1440)
+    GRAPH_L3_CACHE_TTL_DAYS: int = Field(default=7, ge=1, le=365)
     # Worker ingest (proses terpisah, pool sendiri — T11).
     WORKER_DB_POOL_MIN: int = Field(default=2, ge=1)
     WORKER_DB_POOL_MAX: int = Field(default=5, ge=1)
@@ -308,6 +338,24 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"RAG_FINAL_TOP ({self.RAG_FINAL_TOP}) > RAG_CANDIDATE_TOP "
                 f"({self.RAG_CANDIDATE_TOP}) — final tak bisa melebihi kandidat.")
+        return self
+
+    @model_validator(mode="after")
+    def _check_v08_guards(self):
+        """Guard konsistensi KG (D4/D6): enabled wajib model; expand_top tak
+        boleh melebihi candidate_top; max_hops ≤ 2 (3 = tolak start)."""
+        if self.GRAPH_ENABLED and not (self.GRAPH_EXTRACTOR_MODEL or "").strip():
+            raise ValueError(
+                "GRAPH_ENABLED=true mewajibkan GRAPH_EXTRACTOR_MODEL non-kosong "
+                "(pin model ekstraktor, D6).")
+        if self.GRAPH_EXPAND_TOP > self.RAG_CANDIDATE_TOP:
+            raise ValueError(
+                f"GRAPH_EXPAND_TOP ({self.GRAPH_EXPAND_TOP}) > RAG_CANDIDATE_TOP "
+                f"({self.RAG_CANDIDATE_TOP}) — kandidat graph tak bisa melebihi pool.")
+        if self.GRAPH_MAX_HOPS > 2:
+            raise ValueError(
+                f"GRAPH_MAX_HOPS ({self.GRAPH_MAX_HOPS}) > 2 — v0.8 bounded 2-hop "
+                "(D3). Naikkan hanya bila desain direvisi + eval ulang.")
         return self
 
     @property

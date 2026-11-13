@@ -79,3 +79,20 @@ def test_get_settings_cache_clear_pattern():
     get_settings.cache_clear()
     assert get_settings() is get_settings()
     get_settings.cache_clear()
+
+
+def test_graph_guard_enabled_wajibkan_model():
+    with pytest.raises(Exception, match="GRAPH_EXTRACTOR_MODEL"):
+        _base(GRAPH_ENABLED=True, GRAPH_EXTRACTOR_MODEL="  ")
+    s = _base(GRAPH_ENABLED=True)
+    assert s.GRAPH_EXTRACTOR_MODEL == "fastino/gliner2.5-multi-v1"
+
+
+def test_graph_guard_expand_top_dan_hops():
+    with pytest.raises(Exception, match="GRAPH_EXPAND_TOP"):
+        _base(RAG_CANDIDATE_TOP=20, GRAPH_EXPAND_TOP=21)
+    with pytest.raises(Exception, match="GRAPH_MAX_HOPS|less than or equal"):
+        _base(GRAPH_MAX_HOPS=3)
+    s = _base()
+    assert (s.GRAPH_ENABLED, s.GRAPH_MAX_HOPS) is not None
+    assert s.GRAPH_ENABLED is False and s.GRAPH_MAX_HOPS == 2

@@ -248,6 +248,15 @@ class OcrFailedError(AppError):
                          title="OCR Failed")
 
 
+class ExtractorError(AppError):
+    """Ekstraktor entity gagal non-timeout (v0.8 D6: tanpa fallback beda-model)."""
+
+    def __init__(self, message: str = "Ekstraksi entity gagal."):
+        super().__init__(message, status_code=503,
+                         code="EXTRACTOR_UNAVAILABLE",
+                         title="Extractor Unavailable")
+
+
 class OcrRequiredError(AppError):
     """PDF pindai terdeteksi tapi OCR off — tawarkan, jangan diam-diam OCR (D10)."""
 
