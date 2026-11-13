@@ -2,7 +2,7 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
-## v0.7 (2026-11-11) — RAG murni (dual backend, CPU-only)
+## v0.7 (2026-11-13) — RAG murni (dual backend, CPU-only)
 
 **Retrieval dual backend di balik 1 protocol (ADR-19).** `EmbeddingsPort` /
 `RerankerPort` / `VectorStorePort` + `HybridRetriever` orkestrasi tunggal +
@@ -50,13 +50,19 @@ factory-bound (M6 — contoh Docs tak-aman diperbaiki).
 **Eval mini Indonesia.** 8 gold QA (5 hit@3 + 3 no_evidence incl. isolasi
 silang A↔B) + jawaban LLM nyata (grounded + sitasi valid + refusal eksak).
 
-**Testing:** ±90 unit + ±40 integrasi RAG baru (contract suite ganda 18/18 di
-kedua backend; HTTP 17; live API/worker/eval) + `Test/spike_v07/live_e2e_v07.py`
-(**29 pemeriksaan, 2 fase backend, semuanya HIJAU** — upload MD/PDF/XLSX, SSE,
-dedup, 415, OCR_REQUIRED→retry, search, rag_answer grounded+refusal, rag_chat
-silang-tenant, hapus, edge 410/404, fase Qdrant penuh).
+**Testing (final): 617 unit + 89 integrasi + 1 skip, 0 gagal.**
+Contract suite ganda 18/18 (pgvector+Qdrant); HTTP 17; live API/worker/eval/
+konektor (PG+MySQL); `Test/spike_v07/live_e2e_v07.py` **29 pemeriksaan,
+2 fase backend, semuanya HIJAU** — upload MD/PDF/XLSX, SSE, dedup, 415,
+OCR_REQUIRED→retry, search, rag_answer grounded+refusal, rag_chat
+silang-tenant, hapus, edge 410/404, fase Qdrant penuh. Smoke test image:
+container `healthy`, `/livez`+`/health` 200 (embed/rerank/vector/cache/db
+semua ok), impor worker OK.
 
 **Temuan saat verifikasi image/E2E (diperbaiki):**
+- **Image 11.2 GB (torch CUDA)** → install `torch==2.15.0` dari index CPU
+  resmi DULU (`2.15.0+cpu` ±200 MB, memenuhi pin lock) → image **3.7 GB**,
+  tanpa lib `nvidia-*` yang tak terpakai di server CPU-only.
 - **`migrations/` tak disalin Dockerfile** → container akan gagal start
   ("007_rag.sql tidak ditemukan"). Kini `COPY migrations` + guard test.
 - **`.dockerignore` tidak ada** → build context 2.1 GB (`.venv` 1.6 GB +
@@ -66,9 +72,12 @@ silang-tenant, hapus, edge 410/404, fase Qdrant penuh).
   worker/API mati. Kini probe di-retry ~2 menit dengan pesan aksi jelas.
 - **aiomysql menolak `read_timeout`/`write_timeout`** (TypeError) → konektor
   MySQL crash saat connect; kini hanya `connect_timeout`.
+- **Queue worker global vs test**: job basi run yang dibatalkan membuat
+  assertion claim rapuh → helper `purge_stale_test_jobs` (hanya tenant test).
 - Image kini non-root (`appuser`), direktori runtime `/data/uploads` +
   `/cache/hf` disiapkan (aman untuk volume kosong).
-- Migrasi `007_rag.sql` + `008_rag_grants.sql` (list-berurutan, advisory lock).
+- Migrasi `007_rag.sql` + `008_rag_grants.sql` + `009_rag_lease_fix.sql`
+  (state≠stage, fencing `claimed_by`, batas attempts, sweep poison-pill).
 
 **Deviasi sadar:** Qdrant lexical = boolean `MatchText` (tanpa BM25
 berperingkat); SSE progress = poll Postgres (ekor Valkey dipublish worker,

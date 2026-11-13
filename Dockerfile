@@ -14,6 +14,17 @@ WORKDIR /code
 
 # Repro reproducible: install dari LOCK (bukan requirements unpinned) —
 # semangat ADR-02 (pin exact, bump deliberate) berlaku juga untuk image.
+#
+# TORCH CPU DULU (temuan F7): docling menarik `torch` dan wheel PyPI untuk
+# Linux = build CUDA + seluruh `nvidia-*` (~6 GB) yang TIDAK terpakai di
+# server CPU-only. Index CPU resmi menyediakan `2.15.0+cpu` (~200 MB) dan
+# memenuhi pin `torch==2.15.0` di lock, sehingga sisa instalasi tak menarik
+# lib nvidia lagi. Image turun dari ~11 GB ke ~5 GB.
+ARG TORCH_VERSION=2.15.0
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    "torch==${TORCH_VERSION}"
+
 COPY requirements.lock .
 RUN pip install --no-cache-dir -r requirements.lock
 
