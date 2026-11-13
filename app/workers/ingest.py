@@ -303,6 +303,7 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
         chunk_pages,
         chunk_text,
     )
+    from app.rag.normalize import normalize_id
     from app.rag.parsers.sniff import PDF, sniff_mime
 
     settings, pool = ctx.settings, ctx.pool
@@ -447,7 +448,11 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
                     meta[key] = doc_meta[key]
             rows.append({"content": content, "vector": vec, "ord": seq,
                          "page": page, "sheet": sheet, "heading": heading,
-                         "token_count": ctx.tok.count(content), "metadata": meta})
+                         "token_count": ctx.tok.count(content),
+                         "content_norm": normalize_id(
+                             content,
+                             stem=settings.RAG_STEMMER),
+                         "metadata": meta})
         from app.infra.rag.pgvector import PgVectorStore
 
         dims = getattr(ctx.embed, "dims", 0) or len(vectors[0])

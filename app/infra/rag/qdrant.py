@@ -66,6 +66,17 @@ class QdrantStore:
 
         try:
             await self._client.get_collection(self._collection)
+            # Koleksi lama (pre-v0.7.1) belum punya index content_norm —
+            # buat best-effort (idempotent; abaikan bila sudah ada).
+            try:
+                await self._client.create_payload_index(
+                    self._collection, "content_norm",
+                    field_schema=models.TextIndexParams(
+                        type=models.TextIndexType.TEXT,
+                        tokenizer=models.TokenizerType.WORD,
+                        lowercase=True))
+            except Exception:  # noqa: BLE001 - index sudah ada / transien
+                pass
             return
         except UnexpectedResponse as exc:
             if exc.status_code != 404:
@@ -88,12 +99,13 @@ class QdrantStore:
             await self._client.create_payload_index(
                 self._collection, field,
                 field_schema=models.PayloadSchemaType.KEYWORD)
-        await self._client.create_payload_index(
-            self._collection, "content",
-            field_schema=models.TextIndexParams(
-                type=models.TextIndexType.TEXT,
-                tokenizer=models.TokenizerType.WORD,
-                lowercase=True))
+        for text_field in ("content", "content_norm"):
+            await self._client.create_payload_index(
+                self._collection, text_field,
+                field_schema=models.TextIndexParams(
+                    type=models.TextIndexType.TEXT,
+                    tokenizer=models.TokenizerType.WORD,
+                    lowercase=True))
 
     # -- VectorStorePort --
 
@@ -131,6 +143,7 @@ class QdrantStore:
                 payload={
                     "tenant": self._tenant, "document_id": doc_id,
                     "ord": ord_, "content": content,
+                    "content_norm": c.get("content_norm") or content,
                     "page": c.get("page"), "sheet": c.get("sheet"),
                     "heading": c.get("heading"),
                     "token_count": c.get("token_count") or 1,
@@ -154,17 +167,30 @@ class QdrantStore:
 
     async def search_lexical(self, query: str, *, k: int,
                              filters: dict[str, Any] | None = None,
+                             raw_query: str | None = None,
                              ) -> list[CitedChunk]:
-        filt = self._base_filter(filters)
-        filt.must.append(models.FieldCondition(
-            key="content", match=models.MatchText(text=query)))
-        points, _ = await self._client.scroll(
-            self._collection, scroll_filter=filt, limit=k * 5,
-            with_payload=True, with_vectors=False)
+        # Dual-cabang seperti PG: content_norm (baris baru) ATAU content
+        # (point lama tanpa field norm). Dua scroll + gabung client-side
+        # (lebih sederhana dari filter-DSL OR; RTT lokal ~ms).
+        raw = raw_query if raw_query is not None else query
+        seen: dict[str, Any] = {}
+        for field, text in (("content_norm", query), ("content", raw)):
+            if not (text or "").strip():
+                continue
+            filt = self._base_filter(filters)
+            filt.must.append(models.FieldCondition(
+                key=field, match=models.MatchText(text=text)))
+            points, _ = await self._client.scroll(
+                self._collection, scroll_filter=filt, limit=k * 5,
+                with_payload=True, with_vectors=False)
+            for p in points:
+                seen.setdefault(str(p.id), p)
+        ordered = sorted(
+            seen.values(),
+            key=lambda p: (str(p.payload.get("document_id", "")),
+                           int(p.payload.get("ord", 0))))
         # Urut deterministik client-side (skor boolean tak bermakna ranking).
-        points.sort(key=lambda p: (str(p.payload.get("document_id", "")),
-                                   int(p.payload.get("ord", 0))))
-        return [self._to_cited(p, score=1.0) for p in points[:k]]
+        return [self._to_cited(p, score=1.0) for p in ordered[:k]]
 
     async def delete_document(self, *, doc_id: str) -> int:
         filt = models.Filter(must=[

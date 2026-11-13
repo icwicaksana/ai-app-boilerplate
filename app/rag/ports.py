@@ -40,6 +40,7 @@ class ChunkIn(TypedDict, total=False):
     """Chunk siap index (datang dari worker ingest)."""
 
     content: str           # required (total=False + validasi di adapter)
+    content_norm: str      # lexical ternormalisasi (v0.7.1; None = mentah)
     vector: list[float]
     ord: int
     page: int | None
@@ -208,9 +209,17 @@ class VectorStorePort(Protocol):
         ...
 
     async def search_lexical(
-        self, query: str, *, k: int, filters: dict[str, Any] | None = None
+        self, query: str, *, k: int, filters: dict[str, Any] | None = None,
+        raw_query: str | None = None,
     ) -> list[CitedChunk]:
-        """Top-k lexical (tsvector PG / full-text Qdrant). Pre-filter tenant."""
+        """Top-k lexical (tsvector PG / full-text Qdrant). Pre-filter tenant.
+
+        `query` = SUDAH dinormalisasi pipeline (normalize.py); `raw_query` =
+        query mentah untuk cabang fallback baris lama (pre-010, tanpa
+        `content_norm`) — cocok NORMA ATAU MENTAH, tanpa backfill.
+        `raw_query=None` = panggil langsung (test kontrak): pakai `query`
+        untuk kedua cabang (perilaku warisan).
+        """
         ...
 
     async def delete_document(self, *, doc_id: str) -> int:

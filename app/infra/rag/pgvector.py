@@ -76,6 +76,7 @@ class PgVectorStore:
             vec = c.get("vector")
             rows.append((
                 self._tenant, doc_id, int(c.get("ord", 0)), content,
+                c.get("content_norm"),
                 c.get("token_count") or max(1, len(content.split())),
                 c.get("page"), c.get("sheet"), c.get("heading"),
                 format_vector(vec) if vec is not None else None,
@@ -90,12 +91,14 @@ class PgVectorStore:
                 cur = conn.cursor()
                 await cur.executemany(
                     "INSERT INTO chunks (tenant, document_id, ord, content,"
+                    " content_norm,"
                     " token_count, page, sheet, heading, embedding,"
                     " embedding_model, embedding_dim, embedding_version, meta)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s,"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,"
                     " %s::vector, %s, %s, %s, %s)"
                     " ON CONFLICT (document_id, ord) DO UPDATE SET"
                     " content = EXCLUDED.content,"
+                    " content_norm = EXCLUDED.content_norm,"
                     " token_count = EXCLUDED.token_count,"
                     " page = EXCLUDED.page, sheet = EXCLUDED.sheet,"
                     " heading = EXCLUDED.heading, embedding = EXCLUDED.embedding,"
@@ -132,7 +135,16 @@ class PgVectorStore:
 
     async def search_lexical(self, query: str, *, k: int,
                              filters: dict[str, Any] | None = None,
+                             raw_query: str | None = None,
                              ) -> list[CitedChunk]:
+        # Dual-cabang (v0.7.1): baris BARU cocok via tsv_norm + query
+        # ternormalisasi; baris LAMA (content_norm NULL → tsv_norm KOSONG
+        # tapi non-null!) cocok via tsv mentah + query mentah. OR = tanpa
+        # backfill, nol regresi perilaku warisan. BitmapOr memakai 2 index
+        # GIN. plainto_tsquery('') = kueri kosong = tak cocok apa pun.
+        raw = raw_query if raw_query is not None else query
+        if not (query or "").strip() and not (raw or "").strip():
+            return []
         clause, fparams = self._filter_clause(filters)
         async with self._pool.connection() as conn:
             async with conn.transaction():
@@ -142,14 +154,17 @@ class PgVectorStore:
                 cur = await conn.execute(
                     "SELECT c.id, c.document_id, c.ord, c.content, c.page,"
                     " c.sheet, c.heading, c.meta, d.title AS source,"
+                    " GREATEST(ts_rank_cd(c.content_tsv_norm,"
+                    " plainto_tsquery('simple', %s)),"
                     " ts_rank_cd(c.content_tsv,"
-                    " plainto_tsquery('simple', %s)) AS rank"
+                    " plainto_tsquery('simple', %s))) AS rank"
                     " FROM chunks c JOIN documents d ON d.id = c.document_id"
                     " WHERE c.tenant = %s"
-                    " AND c.content_tsv @@ plainto_tsquery('simple', %s)"
+                    " AND (c.content_tsv_norm @@ plainto_tsquery('simple', %s)"
+                    " OR c.content_tsv @@ plainto_tsquery('simple', %s))"
                     + clause +
                     " ORDER BY rank DESC LIMIT %s",
-                    [query, self._tenant, query, *fparams, k],
+                    [query, raw, self._tenant, query, raw, *fparams, k],
                 )
                 rows = await cur.fetchall()
         return [self._to_cited(r, score=float(r["rank"])) for r in rows]

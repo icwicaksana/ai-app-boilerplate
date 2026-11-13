@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.rag.normalize import normalize_id
 from app.rag.ports import (
     BoundRetriever,
     CitedChunk,
@@ -105,6 +106,7 @@ class HybridRetriever:
         doc_max_tok: int = 384,
         pair_max_tok: int = 512,
         score_floor: float = 0.05,  # = default config (unit jujur, F-1)
+        stem: bool = True,  # WAJIB sama dengan sisi index (RAG_STEMMER)
     ) -> None:
         self._embed = embed
         self._rerank = rerank
@@ -119,6 +121,7 @@ class HybridRetriever:
         self._doc_max_tok = doc_max_tok
         self._pair_max_tok = pair_max_tok
         self._score_floor = score_floor
+        self._stem = stem
 
     async def search(
         self,
@@ -166,7 +169,8 @@ class HybridRetriever:
         timings["dense"] = round((_time.perf_counter() - t) * 1000, 1)
         t = _time.perf_counter()
         lexical = await self._store.search_lexical(
-            query, k=self._lexical_top, filters=filters)
+            normalize_id(query, stem=self._stem),
+            k=self._lexical_top, filters=filters, raw_query=query)
         timings["lexical"] = round((_time.perf_counter() - t) * 1000, 1)
         # 3) RRF → kandidat.
         candidates = rrf_fuse(dense, lexical, k=self._rrf_k,

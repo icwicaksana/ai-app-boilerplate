@@ -44,8 +44,11 @@ class FakeStore:
         self.seen_filters.append(filters)
         return self._dense[:k]
 
-    async def search_lexical(self, query, *, k, filters=None):
+    async def search_lexical(self, query, *, k, filters=None,
+                             raw_query=None):
         self.seen_filters.append(filters)
+        self.seen_query = query
+        self.seen_raw = raw_query
         return self._lexical[:k]
 
     async def delete_document(self, *, doc_id):
@@ -235,8 +238,6 @@ async def test_trace_lengkap_jalur_ok():
 
 @pytest.mark.asyncio
 async def test_trace_ada_saat_no_evidence_dan_degraded():
-    from app.rag.pipeline import HybridRetriever
-
     r = _retriever(rerank=FakeRerank(scores=[0.0] * 20))
     res = await r.search("jadwal kereta?")
     assert res["status"] == "no_evidence"
@@ -247,3 +248,19 @@ async def test_trace_ada_saat_no_evidence_dan_degraded():
     assert res2["degraded"] == ["rerank_unavailable"]
     assert res2["trace"]["degraded"] == ["rerank_unavailable"]
     assert res2["trace"]["counts"]["final"] > 0  # fallback RRF terisi
+
+
+@pytest.mark.asyncio
+async def test_lexical_menerima_query_ternormalisasi():
+    dense = [_chunk(f"d{i}") for i in range(50)]
+    lex = [_chunk(f"d{i}") for i in range(25, 75)]
+    store = FakeStore(dense, lex)
+    r = _retriever(store=store)
+    await r.search("Berapa lama garansi laptop?")
+    # Stopword 'berapa' hilang, imbuhan di-stem — dense tak tersentuh
+    # (embed menerima query mentah; hanya lexical dinormalisasi).
+    assert store.seen_query == "lama garansi laptop"
+    assert store.seen_raw == "Berapa lama garansi laptop?"
+    r2 = _retriever(store=FakeStore(dense, lex), stem=False)
+    await r2.search("Barang diretur?")
+    assert r2._store.seen_query == "barang diretur"

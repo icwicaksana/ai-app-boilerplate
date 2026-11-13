@@ -48,3 +48,4 @@ python-multipart    # upload file POST /documents
 openpyxl            # parser XLSX read-only (guard sel + tolak macro)
 pymupdf             # raster PDF untuk OCR + probe (tanpa poppler)
 pytesseract         # wrapper OCR Tesseract (butuh binary sistem)
+Sastrawi            # stemmer Indonesia Nazief-Adriani (normalize.py, lazy)

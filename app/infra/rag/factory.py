@@ -183,4 +183,5 @@ def retriever_for_tenant(settings: Settings, clients: RagClients | None,
         query_max_tok=settings.RAG_QUERY_MAX_TOK,
         doc_max_tok=settings.RAG_DOC_MAX_TOK,
         pair_max_tok=settings.RAG_PAIR_MAX_TOK,
-        score_floor=settings.RAG_RERANK_SCORE_FLOOR)
+        score_floor=settings.RAG_RERANK_SCORE_FLOOR,
+        stem=settings.RAG_STEMMER)

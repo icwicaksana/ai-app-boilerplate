@@ -146,6 +146,9 @@ class Settings(BaseSettings):
     # Floor skor rerank: semua kandidat di bawah ini → retrieval_status=no_evidence
     # → agen WAJIB menolak tanpa memanggil LLM-answer (D5). 0.0 = nonaktif.
     RAG_RERANK_SCORE_FLOOR: float = Field(default=0.05, ge=0.0, le=1.0)
+    # Stemming Sastrawi di normalize.py (v0.7.1): WAJIB sama saat index
+    # (worker) dan query (pipeline) — beda = lexical miss sistematis.
+    RAG_STEMMER: bool = True
     RAG_EMBED_TIMEOUT_MS: int = Field(default=1500, ge=100)
     RAG_RERANK_TIMEOUT_MS: int = Field(default=2500, ge=100)
     # RAG_ALLOW_MIXED=1 HANYA untuk re-index bertahap (D6). Default 0 = tolak start

@@ -68,3 +68,8 @@ def test_semua_migrasi_terdaftar_valid():
                    "idx_jobs_claim",
                    "WHERE state IN ('parsing', 'chunking'"):
         assert needle in joined009, f"009 kehilangan: {needle}"
+    joined010 = (MIGRATIONS_DIR / "010_rag_norm_lexical.sql").read_text(
+        encoding="utf-8")
+    for needle in ("content_norm", "content_tsv_norm",
+                   "idx_chunks_tsv_norm"):
+        assert needle in joined010, f"010 kehilangan: {needle}"

@@ -183,6 +183,7 @@ rpds-py==2026.9.1
 rtree==1.4.1
 s3transfer==0.19.2
 safetensors==0.8.0
+sastrawi==1.0.1
 scipy==1.18.1
 semchunk==3.2.5
 setuptools==84.2.1
