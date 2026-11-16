@@ -62,13 +62,18 @@ def test_jwt_secret_min_length_when_set():
 def test_auth_configured_property():
     assert _s(AUTH_MODE="jwt", JWT_SECRET="").auth_configured is False
     assert _s(AUTH_MODE="jwt", JWT_SECRET=SECRET).auth_configured is True
-    assert _s(AUTH_MODE="trusted_headers",
-              AUTH_ALLOW_TRUSTED_HEADERS=True).auth_configured is True
 
 
-def test_trusted_headers_requires_explicit_flag():
+def test_mode_trusted_headers_ditolak_total():
+    """v0.8.1: mode auth trust-header DIHAPUS — bukan sekadar default mati."""
     with pytest.raises(Exception):
-        _s(AUTH_MODE="trusted_headers", AUTH_ALLOW_TRUSTED_HEADERS=False)
+        _s(AUTH_MODE="trusted_headers", AUTH_ALLOW_TRUSTED_HEADERS=True)
+
+
+def test_flag_legacy_ditolak_bahkan_tanpa_mode():
+    """AUTH_ALLOW_TRUSTED_HEADERS sudah tidak ada di Settings (extra=forbid)."""
+    with pytest.raises(Exception):
+        _s(AUTH_ALLOW_TRUSTED_HEADERS=True)
 
 
 def test_ttl_bounds():
@@ -86,15 +91,10 @@ def test_environment_literal():
 
 # --- guard prod: kombinasi tidak aman ditolak ---
 
-def test_prod_requires_jwt_mode():
+def test_prod_hanya_jwt():
+    """Prod menolak mode apa pun selain jwt (v0.8.1: hanya jwt yang ada)."""
     with pytest.raises(Exception):
-        _s(**{**PROD_OK, "AUTH_MODE": "trusted_headers",
-              "AUTH_ALLOW_TRUSTED_HEADERS": True})
-
-
-def test_prod_forbids_trusted_headers_flag():
-    with pytest.raises(Exception):
-        _s(**{**PROD_OK, "AUTH_ALLOW_TRUSTED_HEADERS": True})
+        _s(**{**PROD_OK, "AUTH_MODE": "trusted_headers"})
 
 
 def test_prod_requires_docs_disabled():

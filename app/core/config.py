@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "ai-app-boilerplate"
     API_V1_PREFIX: str = "/api/v1"
-    APP_VERSION: str = "v0.8"  # satu sumber versi (OpenAPI + health baca ini)
+    APP_VERSION: str = "v0.8.1"  # satu sumber versi (OpenAPI + health baca ini)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     # Server (entrypoint `python -m app.main` baca dari sini — .env/OS-env).
@@ -31,8 +31,7 @@ class Settings(BaseSettings):
     # "*" DITOLAK bila credentials on (kombinasi tak aman/menyesatkan).
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     CORS_ALLOW_METHODS: str = "GET,POST,DELETE,OPTIONS"
-    CORS_ALLOW_HEADERS: str = ("Content-Type,Authorization,X-Request-ID,"
-                               "X-Tenant-ID,X-User-ID")
+    CORS_ALLOW_HEADERS: str = "Content-Type,Authorization,X-Request-ID"
 
     # Postgres app-db (v0.3+): WAJIB. Tanpa fallback memory — app tolak start
     # bila kosong/tak terjangkau (fail-fast, lihat lifespan di app/main.py).
@@ -49,9 +48,10 @@ class Settings(BaseSettings):
     CACHE_SOCKET_TIMEOUT: float = Field(default=1.5, gt=0, le=30)
 
     # --- v0.4: auth JWT (ADR-16) ---
-    # jwt = Bearer token (produksi). trusted_headers = perilaku v0.3 (dev saja).
-    AUTH_MODE: Literal["jwt", "trusted_headers"] = "jwt"
-    AUTH_ALLOW_TRUSTED_HEADERS: bool = False
+    # v0.8.1: mode `trusted_headers` (v0.3, identitas dari header yang bisa
+    # dipalsukan) DIHAPUS TOTAL. Template komersial tidak boleh menyediakan
+    # jalur auth semacam itu. Satu-satunya mode: JWT Bearer.
+    AUTH_MODE: Literal["jwt"] = "jwt"
     JWT_SECRET: str = ""          # wajib di prod, min 32 char (divalidasi)
     JWT_ISSUER: str = "ai-app-boilerplate"
     ACCESS_TOKEN_TTL_SECONDS: int = Field(default=900, ge=60, le=86400)
@@ -279,16 +279,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_v04_guards(self):
         """Guard konsistensi mode auth + larangan kombinasi tak aman di prod."""
-        if self.AUTH_MODE == "trusted_headers" and not self.AUTH_ALLOW_TRUSTED_HEADERS:
-            raise ValueError(
-                "AUTH_MODE=trusted_headers butuh AUTH_ALLOW_TRUSTED_HEADERS=true "
-                "(header mudah dipalsukan — jangan dipakai di produksi).")
         if self.ENVIRONMENT == "prod":
-            if self.AUTH_MODE != "jwt":
-                raise ValueError("ENVIRONMENT=prod mewajibkan AUTH_MODE=jwt.")
-            if self.AUTH_ALLOW_TRUSTED_HEADERS:
-                raise ValueError(
-                    "ENVIRONMENT=prod melarang AUTH_ALLOW_TRUSTED_HEADERS=true.")
             if self.ENABLE_DOCS:
                 raise ValueError("ENVIRONMENT=prod mewajibkan ENABLE_DOCS=false.")
             if not self.CACHE_URL:
@@ -364,8 +355,6 @@ class Settings(BaseSettings):
     @property
     def auth_configured(self) -> bool:
         """True bila mode auth aktif benar-benar bisa melayani request."""
-        if self.AUTH_MODE == "trusted_headers":
-            return self.AUTH_ALLOW_TRUSTED_HEADERS
         return bool(self.JWT_SECRET)
 
     @property

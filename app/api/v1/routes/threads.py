@@ -2,7 +2,7 @@
 
 - `thread_id` di path mengandung `:` — FE wajib URL-encode (`%3A`).
   Contoh: /threads/toko-a%3Abudi%3Asess-7f3a/state
-- Semua endpoint butuh header X-Tenant-ID/X-User-ID (identitas tepercaya v0.3).
+- Semua endpoint butuh Bearer JWT (identitas dari klaim workspace + sub).
 """
 
 from fastapi import APIRouter, Depends, Query, Request, Response

@@ -2,6 +2,51 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+> **Glosarium istilah (sejak v0.8.1).** Entri historis v0.3–v0.8 memakai
+> istilah **`tenant`**. Sejak v0.8.1 istilah itu diganti **`workspace`**
+> dengan semantik sama. Alasan: boilerplate ini **di-fork per klien**
+> (1 deployment = 1 klien), sehingga kata "tenant" menyiratkan model
+> "satu BE melayani banyak penyewa" yang tidak dipakai. Sebagian nilai
+> tersimpan (GUC RLS `app.current_tenant`, namespace memori, prefix
+> ontologi `tenant:`, payload Qdrant) sengaja **dibekukan** sampai v0.8.2
+> karena butuh migrasi data — lihat `Docs/RENAME-V081.md`.
+
+## v0.8.1 (2026-11-16) — Rename `tenant` → `workspace` (tanpa perubahan perilaku)
+
+**Terminologi (F1–F3).** 1.806 occurrence di 121 file → `workspace`:
+identifier Python, prosa, docstring, pesan error, log, `.env.example`,
+README. Format thread `tenant:user:session` **tidak berubah** (regex `a:b:c`
+beku, ADR-07) — hanya nama konsepnya.
+
+**Skema (F4).** Migrasi `014_rename_tenant_to_workspace.sql`: kolom di 11
+tabel, constraint UNIQUE, index, 8 policy RLS (USING + WITH CHECK), body
+`claim_ingest_job`. GUC `app.current_tenant` **sengaja dibekukan** (mengganti
+GUC butuh pola dual-set dua fase; `current_setting(..., true)` gagal
+diam-diam = 0 baris, bukan error).
+
+**Keamanan — temuan gate F4.** Migrasi `015_fix_secret_enc_grant.sql`
+menutup kebocoran nyata sejak v0.7: `app_api` bisa `SELECT secret_enc`
+meski 007 menulis `REVOKE ALL (secret_enc)`. Sebabnya PostgreSQL tidak punya
+ACL negatif — `GRANT ... ON tabel` lalu `REVOKE ... (kolom)` tidak mencabut
+apa pun. Perbaikan: cabut grant tabel, beri ulang per kolom tanpa
+`secret_enc` untuk SELECT (write-only secret; baca hanya via
+`get_source_secret()` yang audited).
+
+**Auth (F5).** Mode `trusted_headers` (v0.3: identitas dari header
+`X-Tenant-ID`/`X-User-ID`) **DIHAPUS TOTAL** — header bisa dipalsukan.
+`AUTH_MODE` kini hanya `jwt`; `AUTH_ALLOW_TRUSTED_HEADERS` hilang dari
+Settings; header legacy dikeluarkan dari CORS.
+
+**Gate.** 709 unit hijau; `tests/test_frozen_contract.py` (15 assert) hijau
+sebelum dan sesudah tanpa diedit; `scripts/rename_audit.py --guard` menolak
+istilah lama masuk kembali ke `app/`. Migrasi 014 diuji: kegagalan =
+seluruh transaksi rollback, skema utuh.
+
+**Dibekukan ke v0.8.2 (butuh migrasi data + dual-read).** Namespace memori
+`"tenants"`, prefix ontologi `"tenant:"`, payload Qdrant `key="tenant"`,
+klaim JWT `tenant`, GUC `app.current_tenant`, kode error
+`CROSS_TENANT_DENIED`, OUT param `job_tenant`.
+
 ## v0.8 (2026-11-16) — Knowledge Graph PG-native (LightRAG-can)
 
 **Arsitektur (F1–F2).** Graph PG-native 2 tabel (`kg_entities`,

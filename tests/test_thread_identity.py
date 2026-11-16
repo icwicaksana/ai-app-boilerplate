@@ -28,12 +28,6 @@ def _req(headers: dict) -> Request:
     return Request(scope)
 
 
-def _trusted_settings() -> Settings:
-    """Mode trust-header EKSPLISIT (perilaku v0.3) — default v0.4 = jwt."""
-    return Settings(_env_file=None, AUTH_MODE="trusted_headers",
-                    AUTH_ALLOW_TRUSTED_HEADERS=True)
-
-
 def test_parse_valid_lowercase_canon():
     assert parse_thread_id("Toko-A:Budi:Sess-7F3A") == ("toko-a", "budi", "sess-7f3a")
 
@@ -93,18 +87,15 @@ def test_resolve_compose_and_continue():
 
 
 @pytest.mark.asyncio
-async def test_identity_from_headers_trusted_mode():
-    """Mode trust-header (dev): kanon + error 400 (perilaku v0.3 dipertahankan)."""
-    s = _trusted_settings()
-    ident = await get_thread_identity(
-        _req({"X-Tenant-ID": "Toko-A", "X-User-ID": "Budi"}), settings=s, cache=None)
-    assert ident == ThreadIdentity(workspace="toko-a", user="budi")
-    with pytest.raises(InvalidIdentityError) as ei:
-        await get_thread_identity(_req({}), settings=s, cache=None)
-    assert ei.value.status_code == 400 and ei.value.code == "INVALID_IDENTITY"
-    with pytest.raises(InvalidIdentityError):
-        await get_thread_identity(
-            _req({"X-Tenant-ID": "to", "X-User-ID": "budi"}), settings=s, cache=None)
+async def test_mode_trust_header_dihapus():
+    """v0.8.1: mode `trusted_headers` DIHAPUS TOTAL.
+
+    Header X-Tenant-ID / X-User-ID tidak lagi jalur identitas: Settings
+    menolak mode itu, dan tanpa Bearer token identitas tak pernah dibentuk.
+    """
+    with pytest.raises(Exception):
+        Settings(_env_file=None, AUTH_MODE="trusted_headers",
+                 AUTH_ALLOW_TRUSTED_HEADERS=True)
 
 
 @pytest.mark.asyncio

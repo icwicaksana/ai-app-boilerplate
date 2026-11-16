@@ -19,6 +19,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Guard hanya memeriksa KODE PRODUKSI. Migrasi 007-015 dan test yang menguji
+# mode yang sudah dihapus sah menyebut istilah lama (itu catatan sejarah /
+# bukti penghapusan), jadi tidak termasuk.
+GUARD_DIRS = ("app",)
 SCAN_DIRS = ("app", "tests", "migrations", "scripts")
 SCAN_SUFFIXES = {".py", ".sql", ".ps1", ".yml", ".yaml", ".sh"}
 
@@ -40,14 +44,21 @@ BUCKETS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 # String yang DIBEKUKAN sampai v0.8.2 (lihat Docs/RENAME-V081.md §3 Tier C).
+# Setiap entri di sini adalah keputusan sadar, bukan kelalaian — dan guard
+# tetap menangkap pemakaian BARU di luar daftar ini.
 FROZEN_ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("guc", re.compile(r"app\.current_tenant")),
     ("namespace_memori", re.compile(r"""["']tenants["']""")),
-    ("prefix_kg", re.compile(r'TENANT_PREFIX\s*=\s*"tenant:"')),
+    ("prefix_ontologi", re.compile(
+        r'WORKSPACE_EXT_PREFIX\s*=\s*"tenant:"')),
+    ("komentar_prefix", re.compile(r'# "tenant:" sampai ada migrasi')),
+    ("nama_berkas_migrasi", re.compile(
+        r"014_rename_tenant_to_workspace\.sql")),
     ("payload_qdrant", re.compile(r'key="tenant"')),
     ("kode_error", re.compile(r"CROSS_TENANT_DENIED")),
     ("out_param_fn", re.compile(r"job_tenant")),
     ("format_thread", re.compile(r"tenant:user:session")),
+    ("doc_penghapusan", re.compile(r"jalur `trusted_headers`")),
 )
 
 
@@ -108,18 +119,25 @@ def report(per_bucket: Counter, per_file: dict[str, Counter]) -> int:
 
 
 def guard(per_bucket: Counter, detail: dict[str, list[str]]) -> int:
-    """Exit 1 bila ada occurrence NON-frozen di area terlarang."""
+    """Exit 1 bila ada occurrence NON-frozen di kode produksi (app/)."""
     offenders: list[str] = []
     for b, lines in detail.items():
         for ln in lines:
-            if not is_frozen(ln):
-                offenders.append(f"[{b}] {ln}")
+            path = ln.split(":", 1)[0]
+            if not path.startswith(tuple(d + "/" for d in GUARD_DIRS)):
+                continue
+            if is_frozen(ln):
+                continue
+            # Catatan penghapusan mode legacy sah disebut di docstring.
+            if "dihapus" in ln or "DIHAPUS" in ln:
+                continue
+            offenders.append(f"[{b}] {ln}")
     if not offenders:
-        print("OK: tidak ada istilah 'tenant' non-frozen di area kode.")
+        print("OK: tidak ada istilah 'tenant' non-frozen di kode produksi.")
         return 0
-    print(f"GAGAL: {len(offenders)} occurrence non-frozen.\n")
+    print(f"GAGAL: {len(offenders)} occurrence non-frozen di app/.\n")
     for ln in offenders[:40]:
-        print("  " + ln)
+        print("  " + ln.encode("ascii", "replace").decode("ascii"))
     if len(offenders) > 40:
         print(f"  ... dan {len(offenders) - 40} lainnya")
     return 1

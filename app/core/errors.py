@@ -106,8 +106,8 @@ class CrossWorkspaceError(AppError):
 class InvalidIdentityError(AppError):
     def __init__(self, detail: str):
         super().__init__(
-            f"Identitas request tak valid ({detail}). Kirim header "
-            "X-Tenant-ID (3–32 char: huruf kecil/angka/dash) + X-User-ID "
+            f"Identitas request tak valid ({detail}). Periksa klaim JWT: "
+            "workspace (3–32 char: huruf kecil/angka/dash) dan sub "
             "(1–64 char: huruf kecil/angka/dash/underscore).",
             status_code=400,
             code="INVALID_IDENTITY",

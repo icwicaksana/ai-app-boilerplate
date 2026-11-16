@@ -2,7 +2,7 @@
 
 - Format: `^[a-z0-9-]{3,32}:[a-z0-9-_]{1,64}:[a-z0-9-]{4,64}$`.
 - Normalisasi: lowercase dulu, baru validasi (header `Toko-A` → `toko-a`).
-- v0.3: workspace/user dari header tepercaya (`X-Tenant-ID`/`X-User-ID`). v0.4 dari JWT.
+- v0.3: dari header tepercaya (dihapus v0.8.1). v0.4+: dari klaim JWT.
 - Format lama (`thr-xxx`, `run-xxx`, uuid polos) DITOLAK 400 — tanpa pengecualian.
 
 Satu-satunya tempat parse/susun thread-ID. Controller/route dilarang regex sendiri.

@@ -20,7 +20,6 @@ from app.core.config import Settings
 from app.core.errors import (
     AuthNotConfiguredError,
     ForbiddenError,
-    InvalidIdentityError,
     InvalidTokenError,
     TokenExpiredError,
     UnauthenticatedError,
@@ -94,9 +93,6 @@ def _claims_to_identity(claims: TokenClaims) -> ThreadIdentity:
 async def resolve_claims(request: Request, settings: Settings,
                          cache: CacheClient | None) -> TokenClaims:
     """Decode + cek denylist. Raise 401/503 (dipakai juga oleh /auth/me)."""
-    if settings.AUTH_MODE != "jwt":
-        raise UnauthenticatedError(
-            "Server berjalan mode trust-header (AUTH_MODE=trusted_headers).")
     if not settings.JWT_SECRET:
         raise AuthNotConfiguredError()
     token = _bearer_token(request)
@@ -113,16 +109,11 @@ async def resolve_claims(request: Request, settings: Settings,
 
 async def resolve_identity(request: Request, settings: Settings,
                            cache: CacheClient | None) -> ThreadIdentity:
-    """Identitas pemanggil menurut AUTH_MODE. Raise AppError (401/403/503)."""
-    if settings.AUTH_MODE == "trusted_headers":
-        if not settings.AUTH_ALLOW_TRUSTED_HEADERS:
-            raise AuthNotConfiguredError()
-        try:
-            workspace = canon_segment(request.headers.get("X-Tenant-ID"), "workspace")
-            user = canon_segment(request.headers.get("X-User-ID"), "user")
-        except Exception as exc:
-            raise InvalidIdentityError(str(exc)) from exc
-        return ThreadIdentity(workspace=workspace, user=user)
+    """Identitas pemanggil dari klaim JWT. Raise AppError (401/403/503).
+
+    v0.8.1: jalur `trusted_headers` (identitas dari header X-Tenant-ID /
+    X-User-ID) DIHAPUS TOTAL — header bisa dipalsukan siapa pun.
+    """
     claims = await resolve_claims(request, settings, cache)
     return _claims_to_identity(claims)
 

@@ -202,12 +202,9 @@ async def lifespan(app: FastAPI):
     else:
         log.info("rag NONAKTIF (RAG_EMBED_BASE_URL kosong)")
     # Peringatan operasional eksplisit (bukan diam-diam):
-    # - auth: mode aktif + apakah benar-benar bisa melayani request.
+    # - auth: apakah benar-benar bisa melayani request (v0.8.1: hanya JWT).
     # - LLM lazy-by-design: proxy boleh menyusul, tapi chat akan 502.
-    if settings.AUTH_MODE == "trusted_headers":
-        log.warning("AUTH_MODE=trusted_headers — header X-Tenant-ID/X-User-ID "
-                    "DIPERCAYA tanpa verifikasi. Dev/staging SAJA.")
-    elif not settings.auth_configured:
+    if not settings.auth_configured:
         log.warning("AUTH_MODE=jwt tapi JWT_SECRET kosong — endpoint butuh "
                     "identitas akan menolak (503 AUTH_NOT_CONFIGURED). "
                     "Isi JWT_SECRET (min 32 char) di .env.")

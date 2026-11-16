@@ -13,7 +13,7 @@ class ChatRequest(BaseModel):
         default=None,
         description=(
             "Format beku v0.3: 'tenant:user:session' (contoh 'toko-a:budi:sess-7f3a2c1e'). "
-            "Kosong = server susun dari header X-Tenant-ID/X-User-ID. "
+            "Kosong = server susun dari identitas JWT (klaim workspace+sub). "
             "Wajib milik pemanggil; format lama (thr-xxx) ditolak 400."
         ),
         examples=["toko-a:budi:sess-7f3a2c1e"],

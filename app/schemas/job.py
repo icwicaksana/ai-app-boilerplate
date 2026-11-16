@@ -14,7 +14,7 @@ class JobRequest(BaseModel):
         default=None,
         description=(
             "Format beku v0.3: 'tenant:user:session'. Kosong = server susun dari "
-            "header X-Tenant-ID/X-User-ID. Wajib milik pemanggil (403 bila asing)."
+            "identitas JWT. Wajib milik pemanggil (403 bila asing)."
         ),
     )
     payload: dict[str, Any] = Field(
