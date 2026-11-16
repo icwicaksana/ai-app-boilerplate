@@ -261,6 +261,16 @@ def retriever_for_tenant(settings: Settings, clients: RagClients | None,
         store = PgVectorStore(
             pool, tenant=tenant, model=settings.RAG_EMBED_MODEL,
             dim=clients.dims)
+    graph = None
+    if settings.GRAPH_ENABLED:
+        from app.infra.rag.pg_graph import PgGraphStore
+
+        ext = clients.extractor
+        graph = PgGraphStore(
+            pool, tenant=tenant,
+            model=ext.model if ext is not None else "",
+            version=ext.version if ext is not None else "",
+            timeout_ms=settings.GRAPH_TIMEOUT_MS)
     return HybridRetriever(
         embed=clients.embed, rerank=clients.rerank, store=store,
         tok=clients.tok, dense_top=settings.RAG_DENSE_TOP,
@@ -271,4 +281,10 @@ def retriever_for_tenant(settings: Settings, clients: RagClients | None,
         doc_max_tok=settings.RAG_DOC_MAX_TOK,
         pair_max_tok=settings.RAG_PAIR_MAX_TOK,
         score_floor=settings.RAG_RERANK_SCORE_FLOOR,
-        stem=settings.RAG_STEMMER)
+        stem=settings.RAG_STEMMER, graph=graph,
+        graph_seed_top=settings.GRAPH_SEED_TOP,
+        graph_expand_top=settings.GRAPH_EXPAND_TOP,
+        graph_max_hops=settings.GRAPH_MAX_HOPS,
+        graph_fanout=settings.GRAPH_BFS_FANOUT,
+        graph_score_floor=settings.GRAPH_SCORE_FLOOR,
+        graph_seed_confidence=settings.GRAPH_SEED_CONFIDENCE)

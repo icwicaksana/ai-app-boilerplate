@@ -47,7 +47,8 @@ def build_citations(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for i, c in enumerate(chunks, start=1):
         meta = c.get("metadata") or {}
-        out.append({
+        kind = c.get("kind") or "vector"
+        entry: dict[str, Any] = {
             "n": i,
             "doc_id": c.get("doc_id", ""),
             "chunk_id": c.get("chunk_id", ""),
@@ -58,7 +59,16 @@ def build_citations(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "headers": meta.get("headers", []),
             "score": float(c.get("score", 0.0)),
             "backend": c.get("backend", ""),
-        })
+        }
+        if kind == "graph":
+            # D8: provenance + identitas pendukung (G1 memakai ini).
+            entry["kind"] = "graph"
+            entry["provenance"] = list(c.get("provenance")
+                                       or meta.get("provenance") or [])
+            entry["confidence"] = meta.get("confidence")
+            entry["extractor"] = meta.get("extractor")
+            entry["relations"] = meta.get("relations", [])
+        out.append(entry)
     return out
 
 
@@ -95,5 +105,11 @@ def render_sources(citations: list[dict[str, Any]]) -> str:
         elif c.get("sheet"):
             loc += f" (sheet {c['sheet']})"
         short = str(c.get("chunk_id") or "")[:8]
-        lines.append(f"[^{c['n']}] {loc} · {short}")
+        line = f"[^{c['n']}] {loc} · {short}"
+        if c.get("kind") == "graph":
+            # (+N bukti): provenance hop-2 dst = bukti tambahan.
+            extra = max(0, len(c.get("provenance") or []) - 1)
+            if extra:
+                line += f" (+{extra} bukti)"
+        lines.append(line)
     return "\n".join(lines)

@@ -68,6 +68,64 @@ def unsupported_numbers(reply: str, cited_contents: list[str]) -> list[str]:
     return sorted(set(numbers_in(clean)) - have)
 
 
+# -- v0.8 graph (G1–G3; G4–G6 = included-only/sanitasi/floor, sudah ada) --
+
+def check_graph_provenance(included: list[dict],
+                           retrieval_ids: set[str]) -> list[str]:
+    """G1: tiap provenance hop graph wajib ada di retrieval-set (D8).
+
+    Return masalah (kosong = utuh). Provenance kosong = pseudo-chunk cacat.
+    """
+    problems: list[str] = []
+    for c in included:
+        if (c.get("kind") or "vector") != "graph":
+            continue
+        prov = list((c.get("provenance")
+                     or (c.get("metadata") or {}).get("provenance") or []))
+        if not prov:
+            problems.append(f"sitasi graph tanpa provenance: {c.get('chunk_id', '')[:8]}")
+            continue
+        missing = [p for p in prov if p not in retrieval_ids]
+        if missing:
+            problems.append(
+                f"provenance graph di luar retrieval-set: {missing[0][:8]}…")
+    return problems
+
+
+def expand_graph_support(cited: dict, by_id: dict[str, dict]) -> list[str]:
+    """G2: konten pendukung = verbal + isi TIAP chunk provenance.
+
+    Menutup lubang angka-hop-campur: angka hanya sah bila muncul di union ini.
+    """
+    out = [str(cited.get("content", ""))]
+    prov = list((cited.get("provenance")
+                 or (cited.get("metadata") or {}).get("provenance") or []))
+    for pid in prov:
+        hit = by_id.get(pid)
+        if hit is not None:
+            out.append(str(hit.get("content", "")))
+    return out
+
+
+def weak_graph_singleton(cited: dict, *, threshold: float = 0.7) -> bool:
+    """G3: True bila pendukung-tunggal lemah (1 hop + L2/L3 + conf rendah).
+
+    Klaim numerik yang HANYA didukung chunk semacam ini → pemanggil refusal.
+    L1 (deterministik) tak pernah lemah; multi-hop tak pernah singleton.
+    """
+    if (cited.get("kind") or "vector") != "graph":
+        return False
+    meta = cited.get("metadata") or {}
+    prov = list(cited.get("provenance") or meta.get("provenance") or [])
+    if len(prov) != 1:
+        return False
+    layers = meta.get("layers") or []
+    if layers and all(layer == "L1" for layer in layers):
+        return False
+    conf = meta.get("confidence")
+    return conf is None or float(conf) < threshold
+
+
 def sanitize_untrusted(text: str, *, limit: int = 0) -> str:
     """Netralkan delimiter quoting (F-13).
 

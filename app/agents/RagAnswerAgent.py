@@ -27,8 +27,12 @@ from app.rag.grounding import (
     REFUSAL_ID,
     build_context,
     check_attribution,
+    check_graph_provenance,
+    expand_graph_support,
     is_refusal,
+    numbers_in,
     unsupported_numbers,
+    weak_graph_singleton,
 )
 
 log = get_logger(__name__)
@@ -126,18 +130,50 @@ class RagAnswerAgent(BasePipelineAgent):
 
     def _node_finalize(self, state: RagState) -> dict:
         chunks = state.get("chunks_included") or state.get("chunks") or []
+        retrieval = state.get("chunks") or []
         citations = C.build_citations(chunks)
         draft = state.get("draft", "") or ""
         problems = check_attribution(draft)
         problems += C.validate_markers(draft, citations)
+        # G1: provenance graph utuh dalam retrieval-set.
+        problems += check_graph_provenance(
+            chunks, {c.get("chunk_id", "") for c in retrieval})
         # Angka wajib didukung chunk tersitasi (F-8; blok Sumber diabaikan).
         body = draft.split("\nSumber:")[0]
         used = {n for n in C.extract_markers(body)}
-        cited_contents = [chunks[i - 1]["content"] for i in used
-                          if 1 <= i <= len(chunks)]
+        by_id = {c.get("chunk_id", ""): c for c in retrieval}
+        cited_contents: list[str] = []
+        weak_singletons: list[str] = []
+        for i in used:
+            if not 1 <= i <= len(chunks):
+                continue
+            c = chunks[i - 1]
+            if (c.get("kind") or "vector") == "graph":
+                # G2: union verbal + isi provenance (anti angka-hop-campur).
+                cited_contents += expand_graph_support(c, by_id)
+                if weak_graph_singleton(c):
+                    weak_singletons.append(c.get("chunk_id", ""))
+            else:
+                cited_contents.append(c.get("content", ""))
         missing_nums = unsupported_numbers(body, cited_contents)
         if missing_nums:
             problems += [f"angka tak didukung bukti: {', '.join(missing_nums[:5])}"]
+        # G3: angka yang HANYA didukung singleton lemah → refusal.
+        if weak_singletons and numbers_in(body):
+            weak_ids = set(weak_singletons)
+            strong: list[str] = []
+            for i in used:
+                if not 1 <= i <= len(chunks):
+                    continue
+                c = chunks[i - 1]
+                if c.get("chunk_id") in weak_ids:
+                    continue
+                if (c.get("kind") or "vector") == "graph":
+                    strong += expand_graph_support(c, by_id)
+                else:
+                    strong.append(c.get("content", ""))
+            if unsupported_numbers(body, strong):
+                problems += ["angka hanya didukung bukti graph lemah"]
         if problems:
             log.warning("rag_answer grounding gagal (%d masalah) → refusal",
                         len(problems))
