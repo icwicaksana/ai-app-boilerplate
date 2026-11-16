@@ -8,7 +8,7 @@ from app.rag.grounding import (
     expand_graph_support,
     weak_graph_singleton,
 )
-from app.rag.kg_seed import seed_candidates
+from app.rag.kg_seed import seed_candidates, seed_candidates_weighted
 from app.rag.pipeline import HybridRetriever, rrf_fuse
 
 
@@ -102,7 +102,10 @@ def test_seed_prioritas_dan_alias():
 
 def test_seed_lowercase_token_dan_batas_fullquery():
     out = seed_candidates("komputer jinjing")
-    assert "komputer" in out and "jinjing" in out  # lowercase ter-cover
+    assert "komputer jinjing" in out  # bigram (alias multi-kata)
+    assert "komputer" in out and "jinjing" in out
+    w = dict(seed_candidates_weighted("komputer jinjing"))
+    assert w["komputer jinjing"] == 0.8 > w["komputer"] == 0.6
     long_q = "kata " * 20 + "ekor?"
     out_long = seed_candidates(long_q)
     assert all(len(s.split()) <= 8 for s in out_long)  # full-query ditolak
@@ -135,7 +138,7 @@ async def test_pipeline_graph_masuk_dan_trace():
     ids = [c["chunk_id"] for c in res["chunks"]]
     assert {"g1", "g2", "g3"} <= set(ids)  # cap default 6
     assert res["trace"]["graph_counts"]["kept"] == 3
-    assert res["trace"]["seed_confidence"] == 1.0
+    assert res["trace"]["seed_confidence"] == 0.9  # caps-tier match
     assert res["trace"]["floors"] == {"natural": 0.05, "graph": 0.05}
     assert g.calls[0]["filters"] is None
     assert g.calls[0]["max_hops"] == 1  # hemat: hop-1 cukup (≥3 path)

@@ -98,7 +98,8 @@ class GlierExtractor:
             raise
         except Exception as exc:
             raise ExtractorError(f"GLiNER gagal: {exc}") from exc
-        return [self._to_extraction(e, r) for e, r in zip(ent_all, rel_all)]
+        return [self._to_extraction(e, r, t)
+                for e, r, t in zip(ent_all, rel_all, texts)]
 
     def _run_batch(self, model, texts, labels_e, labels_r):
         ent = model.batch_extract_entities(
@@ -110,12 +111,19 @@ class GlierExtractor:
         return ent, rel
 
     @staticmethod
-    def _to_extraction(ent_res: dict, rel_res: dict) -> dict:
+    def _to_extraction(ent_res: dict, rel_res: dict, text: str = "") -> dict:
         """Petakan format BoundaryExtractor (terverifikasi probe F4):
 
         - entities: {"entities": {label: [{text, confidence}]}}
         - relations: {"relation_extraction":
           {label: [{head: {text}, tail: {text}, confidence}]}}
+
+        Filter ko-okurensi kalimat (pelajaran F5 run 2): edge L2 DITOLAK
+        kecuali kedua endpoint muncul dalam 1 kalimat yang sama. Model
+        zero-shot menghalusinasi pasangan lintas-kalimat pada confidence
+        TINGGI (0.58–0.62, tak terpisah threshold) — satu-satunya pemisah
+        jujur adalah ko-okurensi. Relasi lintas-kalimat sejati (coref) =
+        tier-M (butuh coref resolver).
         """
         entities: dict[str, dict] = {}
         grouped = ent_res.get("entities") or {}
@@ -178,4 +186,25 @@ class GlierExtractor:
                         "confidence": e["confidence"], "chunk_ord": 0,
                         "chunk_id": "",
                     }
+        if text:
+            edges = GlierExtractor._sentence_filter(edges, entities, text)
         return {"entities": list(entities.values()), "edges": edges}
+
+    @staticmethod
+    def _sentence_filter(edges: list[dict], entities: dict,
+                         text: str) -> list[dict]:
+        """Tolak edge yang endpoint-nya tak se-kalimat (anti-halusinasi)."""
+        import re
+
+        sents = [normalize_entity(s) for s in
+                 re.split(r"[.!?\n]+", text or "")]
+        sents = [s for s in sents if s]
+        names = {norm: normalize_entity(e.get("name") or norm)
+                 for norm, e in entities.items()}
+        kept: list[dict] = []
+        for e in edges:
+            s = names.get(e["src_norm"], e["src_norm"])
+            o = names.get(e["dst_norm"], e["dst_norm"])
+            if any(s in sent and o in sent for sent in sents):
+                kept.append(e)
+        return kept

@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.rag.kg_seed import seed_candidates
+from app.rag.kg_seed import seed_candidates_weighted
 from app.rag.normalize import normalize_id
 from app.rag.ports import (
     BoundRetriever,
@@ -224,10 +224,13 @@ class HybridRetriever:
         graph_cuts: list[CitedChunk] = []
         if self._graph is not None:
             t = _time.perf_counter()
-            cands = seed_candidates(
+            weighted = seed_candidates_weighted(
                 query, self._graph_aliases)[:self._graph_seed_top]
+            cands = [n for n, _ in weighted]
+            weights = dict(weighted)
             # Resolve via adapter (alias tenant + keberadaan entity, F4):
-            # confidence REAL = match/request (bukan biner).
+            # confidence REAL = bobot-tier tertinggi yang match (pelajaran
+            # F5 run 1: rasio match/request kolaps oleh recall-net token).
             try:
                 matched = await self._graph.resolve_seeds(cands)
             except Exception:
@@ -236,7 +239,8 @@ class HybridRetriever:
             g_timings["seed"] = round((_time.perf_counter() - t) * 1000, 1)
             g_counts["seeds"] = len(cands)
             g_counts["seeds_matched"] = len(matched)
-            g_seed_conf = (len(matched) / len(cands)) if cands else 0.0
+            g_seed_conf = max([weights.get(m, 0.0) for m in matched],
+                              default=0.0)
             if matched and g_seed_conf >= self._graph_seed_confidence:
                 # Cap adaptif: sepakat-KUAT (top-1 sama + overlap top-5 ≥40%)
                 # → cap kecil; else cap besar (QA-F3: tanpa sinyal pra-rerank

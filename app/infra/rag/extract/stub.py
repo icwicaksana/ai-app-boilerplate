@@ -12,11 +12,15 @@ import re
 from app.rag.normalize import normalize_entity
 from app.rag.ports import Extraction
 
+_SEG = r"([^.\n]+?)"
 _PATTERNS = (
     # "X dipasok Y" ⟺ "Y memasok X" (bukan dipakai_di — semantik relasi!).
-    (re.compile(r"(.+?)\s+dipasok\s+(.+?)(?:\.|$)"), "memasok", True),
-    (re.compile(r"(.+?)\s+memasok\s+(.+?)(?:\.|$)"), "memasok", False),
-    (re.compile(r"(.+?)\s+berlokasi di\s+(.+?)(?:\.|$)"), "berlokasi_di", False),
+    (re.compile(_SEG + r"\s+dipasok\s+" + _SEG + r"(?:\.|$)"), "memasok",
+     True),
+    (re.compile(_SEG + r"\s+memasok\s+" + _SEG + r"(?:\.|$)"), "memasok",
+     False),
+    (re.compile(_SEG + r"\s+berlokasi di\s+" + _SEG + r"(?:\.|$)"),
+     "berlokasi_di", False),
 )
 _CAP_RE = re.compile(r"\b[A-ZÀ-Ž][\w'.-]*(?:\s+[A-ZÀ-Ž][\w'.-]*){0,4}")
 

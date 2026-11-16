@@ -342,6 +342,7 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
     entities: dict[tuple[str, str], dict] = {}
     edges: list[dict] = []
     force_fit = 0
+    skipped = 0
     for i in range(0, len(rows), batch):
         chunk_batch = rows[i:i + batch]
         # HTTP murni — TANPA koneksi DB terbuka (T11).
@@ -355,6 +356,12 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
                 name = (e.get("name") or "").strip()
                 if not name:
                     continue
+                norm = normalize_entity(name)  # sumber tunggal (D2)
+                # Guard span-rusak (pelajaran F5 run 3): norm kalimat =
+                # sampah ekstraktor → buang + hitung, bukan tulis.
+                if not norm or any(c in norm for c in ".!?"):
+                    skipped += 1
+                    continue
                 try:
                     etype = validate_node_type(e.get("type") or "")
                 except ValueError:
@@ -363,7 +370,6 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
                 conf = e.get("confidence")
                 if conf is not None and float(conf) < min_conf:
                     continue
-                norm = normalize_entity(name)  # sumber tunggal (D2)
                 entities[(doc_id, norm)] = {
                     "name": name, "norm": norm, "type": etype,
                     "confidence": conf if conf is not None else 1.0,
@@ -383,6 +389,10 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
                 dst = normalize_entity(e.get("dst_norm") or "")
                 if not src or not dst or src == dst:
                     continue
+                if any(c in src for c in ".!?") or any(
+                        c in dst for c in ".!?"):
+                    skipped += 1  # endpoint kalimat = sampah (F5 run 3)
+                    continue
                 edges.append({
                     "src_norm": src, "dst_norm": dst, "relation": rel,
                     "confidence": conf if conf is not None else 1.0,
@@ -400,7 +410,7 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
     # mustahil karena validasi adapter — definisi tunggal, bukan n_ent|n_edge).
     return {"graph_status": "ok" if n_ent else "empty",
             "graph_entities": n_ent, "graph_edges": n_edge,
-            "graph_force_fit": force_fit,
+            "graph_force_fit": force_fit, "graph_skipped": skipped,
             "graph_extractor": f"{extractor.model}@{extractor.version}",
             "graph_onto": ONTO_VERSION}
 

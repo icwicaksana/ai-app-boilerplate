@@ -25,6 +25,25 @@ async def test_l1_pola_dan_factoid():
                for r in res for e in r["edges"])
 
 
+@pytest.mark.asyncio
+async def test_l1_tak_lintas_kalimat_chunk_sebaris():
+    """Regresi F5 run 3: chunk 1-baris multi-kalimat → span intra-kalimat."""
+    ext = L1RulesExtractor()
+    chunk = ("PT Sumber Rasa memasok Kopi Arabika. Kopi Arabika dipakai di "
+             "Menu Susu. Gula Aren dipakai di Menu Teh. PT Tiga Rasa "
+             "memasok Teh Melati.")
+    res = (await ext.extract([chunk]))[0]
+    for e in res["edges"]:
+        assert "." not in e["src_norm"] and "." not in e["dst_norm"]
+        assert len(e["src_norm"]) <= 80 and len(e["dst_norm"]) <= 80
+    pairs = {(e["src_norm"], e["relation"], e["dst_norm"])
+             for e in res["edges"]}
+    assert ("pt tiga rasa", "memasok", "teh melati") in pairs
+    assert ("pt sumber rasa", "memasok", "kopi arabika") in pairs
+    # Monster run 3 (span multi-kalimat) wajib hilang: tepat 4 edge bersih.
+    assert len(pairs) == 4
+
+
 class _L2:
     model = "l2-fake"
     version = "v9"
@@ -81,6 +100,28 @@ async def test_layered_skip_l2_baris_tabel():
     await ext.extract(["[S] a: 1 | b: 2 | c: 3"])
     assert ext.last_stats["skipped_l2"] == 1
     assert _L2.calls == 0
+
+
+def test_l2_sentence_filter_tolak_lintas_kalimat():
+    from app.infra.rag.extract.gliner import GlierExtractor
+
+    text = "PT Sumber Rasa memasok Kopi Arabika.\nPT Tiga Rasa memasok Teh."
+    ent = {"entities": {
+        "organisasi": [{"text": "PT Sumber Rasa", "confidence": 0.9},
+                       {"text": "PT Tiga Rasa", "confidence": 0.9}],
+        "produk": [{"text": "Kopi Arabika", "confidence": 0.9},
+                   {"text": "Teh", "confidence": 0.9}]}}
+    rel = {"relation_extraction": {
+        "memasok": [
+            {"head": {"text": "PT Sumber Rasa"}, "tail": {"text": "Kopi Arabika"},
+             "confidence": 0.58},
+            {"head": {"text": "PT Sumber Rasa"}, "tail": {"text": "Teh"},
+             "confidence": 0.58},
+        ]}}
+    out = GlierExtractor._to_extraction(ent, rel, text)
+    got = {(e["src_norm"], e["dst_norm"]) for e in out["edges"]}
+    assert ("pt sumber rasa", "kopi arabika") in got
+    assert ("pt sumber rasa", "teh") not in got  # lintas kalimat → tolak
 
 
 @pytest.mark.asyncio

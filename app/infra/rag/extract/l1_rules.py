@@ -14,22 +14,31 @@ from app.rag.normalize import normalize_entity
 from app.rag.ports import Extraction
 
 # (pola, relasi, balik_subjek_objek)
+# Span entity = [^.\n] (TAK PERNAH lintas kalimat — pelajaran F5 run 3:
+# `.+?` menelan 4 kalimat + kepotong tengah kata → "pt sumbe").
+_SEG = r"([^.\n]+?)"
 _PATTERNS = (
-    (re.compile(r"(.+?)\s+dipasok\s+(.+?)(?:\.|$)"), "memasok", True),
-    (re.compile(r"(.+?)\s+memasok\s+(.+?)(?:\.|$)"), "memasok", False),
-    (re.compile(r"(.+?)\s+dipakai di\s+(.+?)(?:\.|$)"), "dipakai_di", False),
-    (re.compile(r"(.+?)\s+berlokasi di\s+(.+?)(?:\.|$)"), "berlokasi_di",
+    (re.compile(_SEG + r"\s+dipasok\s+" + _SEG + r"(?:\.|$)"), "memasok",
+     True),
+    (re.compile(_SEG + r"\s+memasok\s+" + _SEG + r"(?:\.|$)"), "memasok",
      False),
-    (re.compile(r"(.+?)\s+adalah bagian dari\s+(.+?)(?:\.|$)"), "bagian_dari",
-     False),
-    (re.compile(r"(.+?)\s+bekerja sebagai\s+(.+?)(?:\.|$)"),
+    (re.compile(_SEG + r"\s+dipakai di\s+" + _SEG + r"(?:\.|$)"),
+     "dipakai_di", False),
+    (re.compile(_SEG + r"\s+berlokasi di\s+" + _SEG + r"(?:\.|$)"),
+     "berlokasi_di", False),
+    (re.compile(_SEG + r"\s+adalah bagian dari\s+" + _SEG + r"(?:\.|$)"),
+     "bagian_dari", False),
+    (re.compile(_SEG + r"\s+bekerja sebagai\s+" + _SEG + r"(?:\.|$)"),
      "bekerja_sebagai", False),
-    (re.compile(r"(.+?)\s+menerbitkan\s+(.+?)(?:\.|$)"), "menerbitkan", False),
-    (re.compile(r"(.+?)\s+berlaku sejak\s+(.+?)(?:\.|$)"), "berlaku_sejak",
-     False),
-    (re.compile(r"(.+?)\s+berlaku sampai\s+(.+?)(?:\.|$)"), "berlaku_sampai",
-     False),
+    (re.compile(_SEG + r"\s+menerbitkan\s+" + _SEG + r"(?:\.|$)"),
+     "menerbitkan", False),
+    (re.compile(_SEG + r"\s+berlaku sejak\s+" + _SEG + r"(?:\.|$)"),
+     "berlaku_sejak", False),
+    (re.compile(_SEG + r"\s+berlaku sampai\s+" + _SEG + r"(?:\.|$)"),
+     "berlaku_sampai", False),
 )
+
+_MAX_SPAN = 80  # span lebih panjang = bukan entity (tolak, bukan potong)
 
 # Baris factoid tabel: "[X] h1: v1 | h2: v2" (lihat table_to_factoid).
 _CELL_RE = re.compile(r"([^:|\[\]]+?)\s*:\s*([^|]+)")
@@ -39,7 +48,9 @@ _BRACKET_RE = re.compile(r"\[[^\]]*\]")
 def _clean(name: str) -> str:
     name = _BRACKET_RE.sub(" ", name or "")
     name = re.sub(r"\s+", " ", name).strip().strip(".,;:").strip()
-    return name[:128]
+    if len(name) > _MAX_SPAN or not name:
+        return ""
+    return name
 
 
 class L1RulesExtractor:
