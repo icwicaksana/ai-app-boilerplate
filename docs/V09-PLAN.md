@@ -20,6 +20,7 @@ setiap fork klien mewarisi rencana ini dan bisa menelusuri alasan keputusan.
 | K7 | Rekursi subagent **ditolak** | Tidak ada kebutuhan terbukti; audit & biaya sulit diprediksi |
 | K8 | Skill `scripts/` tidak dieksekusi | Butuh sandbox executor → v1.0 |
 | K9 | **Filter stream berbasis TAG, bukan kedalaman** | Diukur: di dalam `create_agent`, model graph ROOT berjalan di namespace `model:<uuid>` (depth 1) — SAMA dengan child di `tools:<uuid>`. Kedalaman tidak membedakan induk/anak. `parent_ids` (root=2, child=5) hanya heuristik internal LangGraph. Maka penandaan eksplisit wajib, dan `make_subagent_tool()` jadi satu-satunya jalur sah. |
+| K10 | **Guard binding di FACTORY, bukan di agen** | D11 menetapkan degradasi tanpa retriever itu disengaja (RAG mati → chat tetap jalan). Karena itu agen tidak boleh melempar. Yang harus membedakan adalah **jalur wiring**: chat boleh degraded, resume-approval dan fork **tidak**. Percobaan menaruh raise di `BaseChatAgent` menggagalkan `test_chat_degradasi_tanpa_retriever` dan sudah di-revert. |
 
 ---
 
@@ -60,7 +61,7 @@ setiap fork klien mewarisi rencana ini dan bisa menelusuri alasan keputusan.
 | F0-3 | `name=self.AGENT_NAME` di `create_agent` | event punya `name` |
 | F0-4 | `disable_streaming=True` untuk LLM subagent | `on_chat_model_stream` = 0 |
 | F0-5 | `app/agents/factory.py` dipakai 3 jalur | `bound_tools` identik di ketiganya |
-| F0-6 | `AgentContext.__post_init__` raise | resume tanpa retriever → error, bukan `[]` |
+| F0-6 | **Factory dengan mode eksplisit** (`allow_degraded`) | jalur resume/fork tidak boleh degraded → error, bukan `bound_tools=[]` |
 | F0-7 | `durability="sync"` jalur chat | interrupt tidak hilang |
 
 **Gate:** seluruh unit hijau + tes regresi kebocoran lulus + `bound_tools` konsisten.

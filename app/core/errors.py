@@ -103,6 +103,24 @@ class CrossWorkspaceError(AppError):
         )
 
 
+class AgentBindingError(AppError):
+    """Binding agent hilang (retriever/store) — kesalahan WIRING, bukan input.
+
+    v0.9: dulu jalur resume-approval dan fork-thread membangun AgentContext
+    tanpa retriever, sehingga agen membangun graph dengan skema tool BERBEDA
+    dari graph yang di-interrupt (`bound_tools=[]`) — tanpa satu pun error.
+    Sekarang berisik.
+    """
+
+    def __init__(self, detail: str):
+        super().__init__(
+            detail,
+            status_code=500,
+            code="AGENT_BINDING_MISSING",
+            title="Internal Error",
+        )
+
+
 class InvalidIdentityError(AppError):
     def __init__(self, detail: str):
         super().__init__(
