@@ -83,7 +83,7 @@ async def _rag_status(request: Request, settings: Settings) -> dict[str, str]:
         s = ("disabled (RAG_EMBED_BASE_URL kosong)"
              if not settings.rag_enabled
              else "not initialized (lifespan gagal?)")
-        return {"embed": s, "rerank": s, "vector": s}
+        return {"embed": s, "rerank": s, "vector": s, "graph": s}
     out: dict[str, str] = {}
     fb_suffix = (" +fallback" if getattr(rag.embed, "has_fallback", False)
                  else "")
@@ -118,6 +118,14 @@ async def _rag_status(request: Request, settings: Settings) -> dict[str, str]:
         out["vector"] = "down (probe timeout)"
     except Exception as exc:
         out["vector"] = f"down ({type(exc).__name__})"
+    # v0.8: tanpa I/O (murah) — fail-open seperti komponen RAG lain.
+    ext = getattr(rag, "extractor", None)
+    if ext is None:
+        out["graph"] = ("disabled (GRAPH_ENABLED=false)"
+                        if not settings.GRAPH_ENABLED
+                        else "not initialized (lifespan gagal?)")
+    else:
+        out["graph"] = f"ok ({ext.model}@{ext.version})"
     return out
 
 
@@ -142,6 +150,7 @@ async def _health_body(request: Request, settings: Settings) -> dict:
             "embed": rag["embed"],
             "rerank": rag["rerank"],
             "vector": rag["vector"],
+            "graph": rag["graph"],
             "auth": f"{settings.AUTH_MODE} ({'ready' if settings.auth_configured else 'NOT CONFIGURED'})",
             "hitl": "enabled" if settings.HITL_ENABLED else "disabled",
         },

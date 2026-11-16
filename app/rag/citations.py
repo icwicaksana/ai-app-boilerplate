@@ -27,6 +27,16 @@ def chunk_id(doc_id: str, seq: int | str,
     return hashlib.sha256(raw).hexdigest()[:32]
 
 
+def gpath_id(edge_ids: list[int], preset_version: str = "gv1") -> str:
+    """ID pseudo-chunk graph stabil (v0.8 D8).
+
+    `sorted(edge_ids)` = invarian urutan BFS; `preset_version` = versi
+    template verbalize (ganti template = ID baru, pola `chunk_id`).
+    """
+    raw = f"gpath:{','.join(str(i) for i in sorted(edge_ids))}:{preset_version}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
 def extract_markers(reply: str) -> list[int]:
     """Nomor sitasi yang dirujuk di teks jawaban, urut kemunculan."""
     return [int(m.group(1)) for m in _MARKER_RE.finditer(reply or "")]

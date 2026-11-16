@@ -21,12 +21,17 @@ from app.rag.pipeline import HybridRetriever
 class RagClients:
     """Bundle klien bersama (1 per proses). Dibangun `init_rag()`."""
 
-    def __init__(self, *, embed, rerank, tok, qdrant, dims: int) -> None:
+    def __init__(self, *, embed, rerank, tok, qdrant, dims: int,
+                 extractor=None) -> None:
         self.embed = embed
         self.rerank = rerank
         self.tok = tok
         self.qdrant = qdrant  # AsyncQdrantClient | None
         self.dims = dims
+        # EntityExtractor | None (jasa model tenant-agnostik, pola embed).
+        # GraphStore TIDAK di sini: tenant-bound, dibangun per-request
+        # di retriever_for_tenant (pola VectorStore, D2).
+        self.extractor = extractor
 
     async def aclose(self) -> None:
         if self.embed is not None:
@@ -35,6 +40,8 @@ class RagClients:
             await self.rerank.aclose()
         if self.qdrant is not None:
             await self.qdrant.close()
+        if self.extractor is not None and hasattr(self.extractor, "aclose"):
+            await self.extractor.aclose()
 
 
 async def init_rag(settings: Settings, pool,
@@ -162,8 +169,52 @@ async def init_rag(settings: Settings, pool,
 
     tok = BgeTokenizer(settings.RAG_EMBED_MODEL,
                        cache_dir=settings.RAG_HF_CACHE)
+    try:
+        extractor = _build_extractor(settings)
+    except Exception:
+        # Gagal D6 ekstraktor = tutup SEMUA seperti backend gagal (P0 F2).
+        if qdrant_client is not None:
+            await qdrant_client.close()
+        await embed.aclose()
+        await rerank.aclose()
+        raise
     return RagClients(embed=embed, rerank=rerank, tok=tok,
-                      qdrant=qdrant_client, dims=dims)
+                      qdrant=qdrant_client, dims=dims,
+                      extractor=extractor)
+
+
+# Model masa depan yang DIKENAL tapi belum diimplementasi (bedakan error).
+_KNOWN_FUTURE_EXTRACTORS = frozenset({"fastino/gliner2.5-multi-v1"})
+
+
+def _build_extractor(settings: Settings):
+    """Pilih EntityExtractor dari pin (D6). None bila GRAPH_ENABLED=false.
+
+    F2: hanya `stub-deterministik`. F4 menambah L1/L2/L3 nyata.
+    Pin tak dikenal = RuntimeError aksi (dilarang fallback beda-model diam-diam).
+    """
+    if not settings.GRAPH_ENABLED:
+        return None
+    want_model = (settings.GRAPH_EXTRACTOR_MODEL or "").strip()
+    want_ver = (settings.GRAPH_EXTRACTOR_VERSION or "").strip()
+    if want_model == "stub-deterministik":
+        from app.infra.rag.extract.stub import StubExtractor
+
+        ext = StubExtractor()
+    elif want_model in _KNOWN_FUTURE_EXTRACTORS:
+        raise RuntimeError(
+            f"GRAPH_EXTRACTOR_MODEL={want_model!r} dikenal tapi BELUM tersedia"
+            " (ekstraktor nyata = v0.8 F4). Untuk F2 pakai "
+            "'stub-deterministik'.")
+    else:
+        raise RuntimeError(
+            f"GRAPH_EXTRACTOR_MODEL={want_model!r} tak dikenal "
+            "(v0.8 F2: hanya 'stub-deterministik'; L1/L2/L3 nyata di F4).")
+    if want_ver and ext.version != want_ver:
+        raise RuntimeError(
+            f"GRAPH_EXTRACTOR_VERSION pin={want_ver!r} != ekstraktor "
+            f"{ext.version!r} (D6). Samakan atau kosongkan pin.")
+    return ext
 
 
 async def _validate_pg_triples(settings: Settings, pool, dims: int) -> None:

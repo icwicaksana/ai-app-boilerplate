@@ -40,4 +40,6 @@ Thumbs.db
 
 # v0.7: cache HF lokal + blob upload (repo-lokal, JANGAN commit)
 .hf-cache/
+.test-blobs/
+.pytest-tmp/
 data/

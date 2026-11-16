@@ -113,7 +113,7 @@ class DocumentController:
         return job
 
     async def delete(self, *, tenant: str, document_id: str) -> bool:
-        """Tombstone + hapus chunks PG + vektor Qdrant + blob. False = tak ada."""
+        """Tombstone + hapus chunks PG + vektor Qdrant + graph + blob. False = tak ada."""
         doc = await repo.get_document(self.pool, tenant=tenant,
                                       document_id=document_id)
         if doc is None:
@@ -133,6 +133,11 @@ class DocumentController:
                 collection_name(self.rag.dims, self.settings.RAG_EMBED_MODEL),
                 tenant=tenant)
             n_q = await q.delete_document(doc_id=document_id)
+        # SELALU coba graph (D10, pola P1-7) — flag bisa mati di tengah umur.
+        from app.infra.rag.pg_graph import PgGraphStore
+
+        g = PgGraphStore(self.pool, tenant=tenant)
+        n_g_ent, n_g_edge = await g.delete_subgraph(doc_id=document_id)
         await repo.tombstone_document(self.pool, tenant=tenant,
                                       document_id=document_id)
         await repo.cancel_jobs_for_document(
@@ -141,7 +146,8 @@ class DocumentController:
             self._storage_path(tenant, document_id).unlink(missing_ok=True)
         except OSError as exc:
             log.warning("blob %s gagal dihapus: %s", document_id, exc)
-        log.info("dokumen %s dihapus (pg=%d qdrant=%d)", document_id, n_pg, n_q)
+        log.info("dokumen %s dihapus (pg=%d qdrant=%d graph=%d/%d)",
+                 document_id, n_pg, n_q, n_g_ent, n_g_edge)
         return True
 
     # -- baca --

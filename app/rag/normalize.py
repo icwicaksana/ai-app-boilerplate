@@ -94,3 +94,19 @@ def normalize_id(text: str, *, stem: bool = True) -> str:
         stemmer = _get_stemmer()
         tokens = [stemmer.stem(t) for t in tokens]
     return " ".join(tokens)
+
+
+def normalize_entity(text: str) -> str:
+    """Norm nama entity graph: lower+fold+rapikan SAJA (v0.8 D2).
+
+    BEDA dari `normalize_id`: TANPA stopword removal (nama boleh mengandung
+    kata fungsi: "Bank Danamon"), TANPA stemming (stem merusak nama khas),
+    TANPA ekspansi angka. Invariant: worker (tulis) dan adapter (baca)
+    WAJIB memanggil fungsi yang sama persis — beda = seed miss sistematis.
+    Selalu return str (tak pernah raise).
+    """
+    if not text:
+        return ""
+    folded = unicodedata.normalize("NFKD", text).encode(
+        "ascii", "ignore").decode("ascii").lower()
+    return " ".join(folded.split())

@@ -127,6 +127,7 @@ class WorkerCtx:
     cache: object | None
     parsers: dict
     ocr: object
+    extractor: object | None = None  # v0.8: EntityExtractor | None
 
 
 def build_parsers(settings) -> tuple[dict, object]:
@@ -169,7 +170,8 @@ async def build_ctx(settings, pool, *, worker_id: str) -> WorkerCtx:
     return WorkerCtx(settings=settings, pool=pool, worker_id=worker_id,
                      embed=clients.embed, tok=clients.tok,
                      qdrant=clients.qdrant, cache=cache,
-                     parsers=parsers, ocr=ocr)
+                     parsers=parsers, ocr=ocr,
+                     extractor=clients.extractor)
 
 
 # ---------------------------------------------------------------- progress tail
@@ -291,6 +293,113 @@ async def process_job(ctx: WorkerCtx, job: dict) -> str:
             await hb_task
         except asyncio.CancelledError:
             pass
+
+
+async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
+                          doc_id: str, rows: list, stage_fn) -> dict:
+    """Stage `graph(95)` v0.8 (D10): ekstrak → tulis subgraph. Return meta.
+
+    HTTP ekstraksi TANPA koneksi DB terbuka (T11); tulis via adapter (1 txn).
+    GRAPH_ENABLED=false / extractor None = skip (`graph_status: disabled`).
+    0 entitas dari dokumen valid = sukses parsial (`empty`), BUKAN gagal.
+    TimeoutError ekstraktor = propagate → retry mesin existing.
+    """
+    from app.infra.rag.pg_graph import PgGraphStore
+    from app.rag.normalize import normalize_entity
+    from app.rag.ontology import (
+        ESCAPE_RELATION,
+        ONTO_VERSION,
+        validate_node_type,
+        validate_relation,
+    )
+
+    settings, pool = ctx.settings, ctx.pool
+    extractor = getattr(ctx, "extractor", None)
+    if not settings.GRAPH_ENABLED or extractor is None:
+        # Flag MATI tapi graph lama bisa ada (flag mati tengah umur / retry
+        # re-ingest): hapus agar tak basi (anti-stale, pola delete P1-7).
+        from app.infra.rag.pg_graph import PgGraphStore
+
+        g = PgGraphStore(pool, tenant=tenant)
+        await g.delete_subgraph(doc_id=doc_id)
+        return {"graph_status": "disabled"}
+    await stage_fn("graph", 95)
+    # chunk_row_id: id fisik chunks (G1 tanpa Seq Scan); ord → str(UUID).
+    row_ids: dict[int, str] = {}
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT id, ord FROM chunks WHERE tenant = %s AND document_id = %s",
+            (tenant, doc_id))
+        for r in await cur.fetchall():
+            row_ids[int(r["ord"])] = str(r["id"])
+    max_ent = settings.GRAPH_MAX_ENTITIES_PER_CHUNK
+    max_edge = settings.GRAPH_MAX_EDGES_PER_DOC
+    min_conf = settings.GRAPH_MIN_CONFIDENCE
+    batch = max(1, settings.GRAPH_EXTRACT_BATCH)
+    entities: dict[tuple[str, str], dict] = {}
+    edges: list[dict] = []
+    force_fit = 0
+    for i in range(0, len(rows), batch):
+        chunk_batch = rows[i:i + batch]
+        # HTTP murni — TANPA koneksi DB terbuka (T11).
+        results = await extractor.extract([r["content"] for r in chunk_batch])
+        for row, res in zip(chunk_batch, results):
+            meta = row.get("metadata") or {}
+            acl = meta.get("access_level") or "public"
+            cid = meta.get("_chunk_id") or ""
+            ord_ = int(row.get("ord", 0))
+            for e in (res.get("entities") or [])[:max_ent]:
+                name = (e.get("name") or "").strip()
+                if not name:
+                    continue
+                try:
+                    etype = validate_node_type(e.get("type") or "")
+                except ValueError:
+                    etype = "lain"
+                    force_fit += 1
+                conf = e.get("confidence")
+                if conf is not None and float(conf) < min_conf:
+                    continue
+                norm = normalize_entity(name)  # sumber tunggal (D2)
+                entities[(doc_id, norm)] = {
+                    "name": name, "norm": norm, "type": etype,
+                    "confidence": conf if conf is not None else 1.0,
+                    "chunk_ord": ord_, "chunk_id": cid}
+            for e in res.get("edges") or []:
+                if len(edges) >= max_edge:
+                    break
+                try:
+                    rel = validate_relation(e.get("relation") or "")
+                except ValueError:
+                    rel = ESCAPE_RELATION
+                    force_fit += 1
+                conf = e.get("confidence")
+                if conf is not None and float(conf) < min_conf:
+                    continue
+                src = normalize_entity(e.get("src_norm") or "")
+                dst = normalize_entity(e.get("dst_norm") or "")
+                if not src or not dst or src == dst:
+                    continue
+                edges.append({
+                    "src_norm": src, "dst_norm": dst, "relation": rel,
+                    "confidence": conf if conf is not None else 1.0,
+                    "layer": e.get("layer") or "L2",
+                    "coref_resolved": bool(e.get("coref_resolved", True)),
+                    "access_level": e.get("access_level") or acl,
+                    "chunk_ord": ord_, "chunk_id": cid,
+                    "chunk_row_id": row_ids.get(ord_)})
+    store = PgGraphStore(pool, tenant=tenant, model=extractor.model,
+                         version=extractor.version,
+                         timeout_ms=settings.GRAPH_TIMEOUT_MS)
+    n_ent, n_edge = await store.upsert_subgraph(
+        doc_id=doc_id, entities=list(entities.values()), edges=edges)
+    # GRAPH_EMPTY = 0 ENTITAS (dokumen valid tanpa entity; edge tanpa entity
+    # mustahil karena validasi adapter — definisi tunggal, bukan n_ent|n_edge).
+    return {"graph_status": "ok" if n_ent else "empty",
+            "graph_entities": n_ent, "graph_edges": n_edge,
+            "graph_force_fit": force_fit,
+            "graph_extractor": f"{extractor.model}@{extractor.version}",
+            "graph_onto": ONTO_VERSION}
 
 
 async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
@@ -479,6 +588,10 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
                 r["metadata"]["_source"] = doc["title"]
             await q.upsert_chunks(doc_id=doc_id, chunks=rows)
 
+        graph_meta = await _run_graph_stage(
+            ctx, tenant=tenant, job_id=job_id, doc_id=doc_id, rows=rows,
+            stage_fn=_stage)
+
         finished = await repo.finish_job(pool, job_id=job_id, tenant=tenant,
                                          document_id=doc_id)
         if not finished:
@@ -493,12 +606,17 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
                     collection_name(dims, settings.RAG_EMBED_MODEL),
                     tenant=tenant)
                 await q2.delete_document(doc_id=doc_id)
+            if graph_meta.get("graph_status") not in (None, "disabled"):
+                from app.infra.rag.pg_graph import PgGraphStore
+
+                g2 = PgGraphStore(pool, tenant=tenant)
+                await g2.delete_subgraph(doc_id=doc_id)
             log.info("job %s: dokumen dihapus saat indexing → dibersihkan",
                      job_id)
             return "dead"
         await repo.set_document_status(
             pool, tenant=tenant, document_id=doc_id, status="ready",
-            meta_patch={"chunks": len(rows), **parsed_meta})
+            meta_patch={"chunks": len(rows), **parsed_meta, **graph_meta})
         await publish(ctx, tenant, job_id, "ingest_result", "done", 100)
         log.info("job %s done (%s, %d chunk)", job_id, doc_id, len(rows))
         return "done"

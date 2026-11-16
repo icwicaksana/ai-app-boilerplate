@@ -159,3 +159,67 @@ async def test_init_rag_fallback_down_tetap_lanjut_tanpa_wrapper(
         assert clients.dims == 4
     finally:
         await clients.aclose()
+
+
+class _FakePool2:
+    def connection(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, *a, **k):
+        return self
+
+    async def fetchall(self):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_init_rag_extractor_stub_saat_enabled(monkeypatch):
+    from app.infra.rag.extract.stub import StubExtractor
+
+    monkeypatch.setattr("app.infra.rag.factory.BgeTokenizer",
+                        lambda *a, **k: _FakeTok())
+    s = _settings(RAG_EMBED_BASE_URL="http://primer",
+                  RAG_EMBED_MODEL="BAAI/bge-m3",
+                  RAG_RERANK_BASE_URL="http://primer",
+                  GRAPH_ENABLED=True,
+                  GRAPH_EXTRACTOR_MODEL="stub-deterministik")
+    clients = await init_rag(s, pool=_FakePool2(),
+                             transport=_ok_transport())
+    try:
+        assert isinstance(clients.extractor, StubExtractor)
+    finally:
+        await clients.aclose()
+
+
+@pytest.mark.asyncio
+async def test_init_rag_tanpa_extractor_saat_disabled(monkeypatch):
+    monkeypatch.setattr("app.infra.rag.factory.BgeTokenizer",
+                        lambda *a, **k: _FakeTok())
+    s = _settings(RAG_EMBED_BASE_URL="http://primer",
+                  RAG_EMBED_MODEL="BAAI/bge-m3",
+                  RAG_RERANK_BASE_URL="http://primer")
+    clients = await init_rag(s, pool=_FakePool2(),
+                             transport=_ok_transport())
+    try:
+        assert clients.extractor is None
+    finally:
+        await clients.aclose()
+
+
+@pytest.mark.asyncio
+async def test_init_rag_tolak_extractor_tak_dikenal(monkeypatch):
+    monkeypatch.setattr("app.infra.rag.factory.BgeTokenizer",
+                        lambda *a, **k: _FakeTok())
+    s = _settings(RAG_EMBED_BASE_URL="http://primer",
+                  RAG_EMBED_MODEL="BAAI/bge-m3",
+                  RAG_RERANK_BASE_URL="http://primer",
+                  GRAPH_ENABLED=True,
+                  GRAPH_EXTRACTOR_MODEL="model-asing")
+    with pytest.raises(RuntimeError, match="tak dikenal"):
+        await init_rag(s, pool=_FakePool2(), transport=_ok_transport())
