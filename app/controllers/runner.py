@@ -20,6 +20,7 @@ from langgraph.types import Command
 from app.agents.utils.MessageUtils import split_chunk_text
 from app.core.errors import UpstreamAIError
 from app.core.logging import get_logger
+from app.core.stream_policy import StreamPolicy
 from app.helpers.response import (
     stream_error,
     stream_started,
@@ -79,6 +80,9 @@ class Runner:
         # "sync" = checkpoint ditulis sebelum step berikutnya; wajib untuk
         # alur yang bisa interrupt (HITL) agar pause tak hilang saat crash.
         self.durability = durability if durability in ("sync", "async", "exit") else "async"
+        # v0.9: hanya run ROOT yang boleh memancarkan event ke klien.
+        # Lihat app/core/stream_policy.py untuk alasan lengkapnya.
+        self.policy = StreamPolicy()
 
     async def _ainvoke(self, graph, payload: Any, config: dict):
         """ainvoke dengan durability; fallback bila graph tak mendukungnya.
@@ -148,6 +152,11 @@ class Runner:
         with session_context(_thread_of(config)):
             try:
                 async for event in astream_events(state, config=config, version="v2"):
+                    # v0.9: saring SEBELUM dipetakan. Event dari run
+                    # bersarang (subagent, klasifikasi internal) tidak boleh
+                    # pernah menjadi token SSE.
+                    if not self.policy.accept(event):
+                        continue
                     for out in self._map_stream_event(event):
                         yield out
             except (asyncio.CancelledError, GeneratorExit):
