@@ -32,7 +32,7 @@ from app.rag.ports import (
     KgEntityIn,
     KgHit,
 )
-from app.rag.verbalize import verbalize_path
+from app.rag.verbalize import VERBALIZE_VERSION, verbalize_path
 
 # Filter metadata v0.8 graph: access_level saja (kolom edge, tanpa JOIN).
 GRAPH_FILTER_KEYS = frozenset({"access_level"})
@@ -43,7 +43,6 @@ _MAX_NODES = 50
 _HOP2_DISCOUNT = 0.7
 _DEFAULT_CONF = 0.5
 _INSERT_CHUNK_ROWS = 500  # multi-row VALUES di-chunk (limit 65535 param PG)
-VERBALIZE_VERSION = "gv1"  # ganti template verbalize = bump ini (pola chunk_id)
 
 
 class PgGraphStore:
@@ -194,6 +193,54 @@ class PgGraphStore:
                     (self._tenant, doc_id))
                 return (cur.rowcount or 0), n_edge
 
+    async def upsert_aliases(self, aliases: dict[str, str]) -> int:
+        """Tulis alias tenant. Norm dinormalisasi ulang (sumber tunggal)."""
+        pairs = [(normalize_entity(a), normalize_entity(c))
+                 for a, c in (aliases or {}).items()]
+        pairs = [(a, c) for a, c in pairs if a and c and a != c]
+        if not pairs:
+            return 0
+        async with self._pool.connection() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_tenant', %s, true)",
+                    (self._tenant,))
+                vals = ",".join(["(%s,%s,%s)"] * len(pairs))
+                flat = [v for a, c in pairs for v in (self._tenant, a, c)]
+                await conn.execute(
+                    "INSERT INTO kg_aliases (tenant, alias_norm,"
+                    " canonical_norm) VALUES " + vals +
+                    " ON CONFLICT (tenant, alias_norm) DO UPDATE SET"
+                    " canonical_norm = EXCLUDED.canonical_norm",
+                    flat)
+        return len(pairs)
+
+    async def resolve_seeds(self, seeds: list[str]) -> list[str]:
+        """Norm → kanonis via alias → filter yang match entity. Stabil."""
+        norms = sorted({n for s in seeds or []
+                        if (n := normalize_entity(s))})
+        if not norms:
+            return []
+        async with self._pool.connection() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_tenant', %s, true)",
+                    (self._tenant,))
+                cur = await conn.execute(
+                    "SELECT alias_norm, canonical_norm FROM kg_aliases"
+                    " WHERE tenant = %s AND alias_norm = ANY(%s)",
+                    (self._tenant, norms))
+                alias = {r["alias_norm"]: r["canonical_norm"]
+                         for r in await cur.fetchall()}
+                canon = sorted({alias.get(n, n) for n in norms})
+                cur = await conn.execute(
+                    "SELECT DISTINCT norm FROM kg_entities"
+                    " WHERE tenant = %s AND norm = ANY(%s)"
+                    " AND onto_version = %s",
+                    (self._tenant, canon, self._onto))
+                matched = {r["norm"] for r in await cur.fetchall()}
+        return [n for n in canon if n in matched]
+
     async def graph_info(self) -> GraphInfo:
         async with self._pool.connection() as conn:
             async with conn.transaction():
@@ -238,8 +285,8 @@ class PgGraphStore:
             raise ValueError(f"expand max_hops wajib 1..2 (dapat {max_hops})")
         if not 1 <= int(fanout) <= 500:
             raise ValueError(f"expand fanout wajib 1..500 (dapat {fanout})")
-        norms = sorted({n for s in seeds or []
-                        if (n := normalize_entity(s))})[:_MAX_SEEDS]
+        norms = await self.resolve_seeds(seeds or [])
+        norms = norms[:_MAX_SEEDS]
         if not norms:
             return []
         access_sql, access_params = self._access_clause(filters)
@@ -265,7 +312,11 @@ class PgGraphStore:
                     titles = await self._fetch_titles(
                         conn, {e["document_id"] for p in paths
                                for e in p["edges"]})
-                    return self._to_hits(paths, names, titles, k=k)
+                    contents = await self._fetch_contents(
+                        conn, {e["chunk_row_id"] for p in paths
+                               for e in p["edges"]
+                               if e.get("chunk_row_id")})
+                    return self._to_hits(paths, names, titles, contents, k=k)
         except pg_errors.QueryCanceled as exc:
             raise TimeoutError("expand graph timeout") from exc
 
@@ -398,8 +449,18 @@ class PgGraphStore:
             (self._tenant, list(doc_ids)))
         return {str(r["id"]): r["title"] for r in await cur.fetchall()}
 
+    async def _fetch_contents(self, conn, row_ids: set) -> dict[str, str]:
+        """Isi chunk provenance per chunk_row_id (G2 union lengkap, 1 query)."""
+        if not row_ids:
+            return {}
+        cur = await conn.execute(
+            "SELECT id, content FROM chunks WHERE tenant = %s AND id = ANY(%s)",
+            (self._tenant, list(row_ids)))
+        return {str(r["id"]): r["content"] for r in await cur.fetchall()}
+
     def _to_hits(self, paths: list[dict], names: dict[str, str],
-                 titles: dict[str, str], *, k: int) -> list[KgHit]:
+                 titles: dict[str, str], contents: dict[str, str],
+                 *, k: int) -> list[KgHit]:
         from app.rag.citations import gpath_id
 
         hits: list[KgHit] = []
@@ -423,6 +484,10 @@ class PgGraphStore:
                 "metadata": {
                     "kind": "graph",
                     "provenance": [e["chunk_id"] for e in p["edges"]],
+                    "provenance_contents": [
+                        contents.get(str(e["chunk_row_id"]), "")
+                        if e.get("chunk_row_id") else ""
+                        for e in p["edges"]],
                     "doc_ids": [str(e["document_id"]) for e in p["edges"]],
                     "chunk_row_ids": [
                         str(e["chunk_row_id"]) if e.get("chunk_row_id")

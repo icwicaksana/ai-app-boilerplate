@@ -135,9 +135,8 @@ class RagAnswerAgent(BasePipelineAgent):
         draft = state.get("draft", "") or ""
         problems = check_attribution(draft)
         problems += C.validate_markers(draft, citations)
-        # G1: provenance graph utuh dalam retrieval-set.
-        problems += check_graph_provenance(
-            chunks, {c.get("chunk_id", "") for c in retrieval})
+        # G1 struktural: provenance utuh terlampir (tenant by construction).
+        problems += check_graph_provenance(chunks)
         # Angka wajib didukung chunk tersitasi (F-8; blok Sumber diabaikan).
         body = draft.split("\nSumber:")[0]
         used = {n for n in C.extract_markers(body)}

@@ -49,3 +49,7 @@ openpyxl            # parser XLSX read-only (guard sel + tolak macro)
 pymupdf             # raster PDF untuk OCR + probe (tanpa poppler)
 pytesseract         # wrapper OCR Tesseract (butuh binary sistem)
 Sastrawi            # stemmer Indonesia Nazief-Adriani (normalize.py, lazy)
+
+# v0.8 — KG (ekstraksi entity/relasi CPU; model di .hf-cache terpisah)
+# Pin exact tercatat di requirements.lock; versi teruji: gliner2 2.1.0.
+gliner2[local]       # L2 zero-shot joint entity+relation (CPU, Apache-2.0)

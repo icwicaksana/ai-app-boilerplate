@@ -324,6 +324,9 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
         await g.delete_subgraph(doc_id=doc_id)
         return {"graph_status": "disabled"}
     await stage_fn("graph", 95)
+    if getattr(ctx, "cache", None) is not None and hasattr(
+            extractor, "set_cache"):
+        extractor.set_cache(ctx.cache)  # L3 cache Valkey (TTL hari)
     # chunk_row_id: id fisik chunks (G1 tanpa Seq Scan); ord → str(UUID).
     row_ids: dict[int, str] = {}
     async with pool.connection() as conn:

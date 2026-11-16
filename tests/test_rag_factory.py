@@ -223,3 +223,24 @@ async def test_init_rag_tolak_extractor_tak_dikenal(monkeypatch):
                   GRAPH_EXTRACTOR_MODEL="model-asing")
     with pytest.raises(RuntimeError, match="tak dikenal"):
         await init_rag(s, pool=_FakePool2(), transport=_ok_transport())
+
+
+@pytest.mark.asyncio
+async def test_init_rag_layered_tanpa_l3(monkeypatch):
+    from app.infra.rag.extract.layered import LayeredExtractor
+
+    monkeypatch.setattr("app.infra.rag.factory.BgeTokenizer",
+                        lambda *a, **k: _FakeTok())
+    s = _settings(RAG_EMBED_BASE_URL="http://primer",
+                  RAG_EMBED_MODEL="BAAI/bge-m3",
+                  RAG_RERANK_BASE_URL="http://primer",
+                  GRAPH_ENABLED=True,
+                  GRAPH_EXTRACTOR_MODEL="fastino/gliner2.5-multi-v1",
+                  GRAPH_L3_MODEL="")  # L3 mati
+    clients = await init_rag(s, pool=_FakePool2(),
+                             transport=_ok_transport())
+    try:
+        assert isinstance(clients.extractor, LayeredExtractor)
+        assert clients.extractor.model == "fastino/gliner2.5-multi-v1"
+    finally:
+        await clients.aclose()

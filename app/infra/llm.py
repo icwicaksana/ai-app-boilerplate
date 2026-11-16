@@ -22,10 +22,12 @@ from app.core.config import Settings
 from app.core.errors import UpstreamAIError
 
 
-def get_llm(settings: Settings, session_id: str | None = None):
+def get_llm(settings: Settings, session_id: str | None = None,
+            model: str | None = None):
     """Kembalikan chat model LangGraph via gateway.
 
     session_id: diisi thread_id oleh controller (1 sesi stabil per percakapan).
+    model: override nama model (v0.8 L3); None = LITELLM_MODEL.
     Instance LLM murah dibentuk per build; GRAPH dibangun per request (ADR-11)
     — jangan cache graph bila header spend per-thread masih menempel di LLM.
 
@@ -33,7 +35,8 @@ def get_llm(settings: Settings, session_id: str | None = None):
     """
     if not settings.LITELLM_API_KEY:
         raise UpstreamAIError("LITELLM_API_KEY kosong. Isi .env dulu (lihat .env.example).")
-    if not settings.LITELLM_MODEL:
+    want = (model or settings.LITELLM_MODEL or "").strip()
+    if not want:
         raise UpstreamAIError("LITELLM_MODEL kosong. Isi .env dulu (lihat .env.example).")
     project = settings.LITELLM_PROJECT_TAG.strip() or settings.PROJECT_NAME
     spend_meta: dict = {"project_id": project}
@@ -50,7 +53,7 @@ def get_llm(settings: Settings, session_id: str | None = None):
     # otherwise ditolak SDK dengan "LLM Provider NOT provided"). Nama model dikirim
     # verbatim agar cocok dengan model_name di proxy (jangan tambah prefix sendiri).
     return ChatLiteLLM(
-        model=settings.LITELLM_MODEL.strip(),
+        model=want,
         custom_llm_provider="openai",
         api_key=settings.LITELLM_API_KEY,
         base_url=settings.LITELLM_BASE_URL.rstrip("/"),

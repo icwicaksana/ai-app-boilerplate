@@ -70,34 +70,47 @@ def unsupported_numbers(reply: str, cited_contents: list[str]) -> list[str]:
 
 # -- v0.8 graph (G1–G3; G4–G6 = included-only/sanitasi/floor, sudah ada) --
 
-def check_graph_provenance(included: list[dict],
-                           retrieval_ids: set[str]) -> list[str]:
-    """G1: tiap provenance hop graph wajib ada di retrieval-set (D8).
+def check_graph_provenance(included: list[dict]) -> list[str]:
+    """G1 struktural (redefinisi QA-F3): tiap sitasi graph wajib membawa
+    provenance utuh — chunk_id + chunk_row_id + isi per hop.
 
-    Return masalah (kosong = utuh). Provenance kosong = pseudo-chunk cacat.
+    Tenant dijamin by construction (adapter tenant-bound); keberadaan baris
+    dijamin FK `chunk_row_id` saat tulis. TIDAK membandingkan dengan final
+    top-5 (itu over-refusal sistematis — provenance jarang masuk top-5).
     """
     problems: list[str] = []
     for c in included:
         if (c.get("kind") or "vector") != "graph":
             continue
-        prov = list((c.get("provenance")
-                     or (c.get("metadata") or {}).get("provenance") or []))
+        meta = c.get("metadata") or {}
+        prov = list(c.get("provenance") or meta.get("provenance") or [])
         if not prov:
-            problems.append(f"sitasi graph tanpa provenance: {c.get('chunk_id', '')[:8]}")
-            continue
-        missing = [p for p in prov if p not in retrieval_ids]
-        if missing:
             problems.append(
-                f"provenance graph di luar retrieval-set: {missing[0][:8]}…")
+                f"sitasi graph tanpa provenance: {c.get('chunk_id', '')[:8]}")
+            continue
+        rids = list(meta.get("chunk_row_ids") or [])
+        texts = list(meta.get("provenance_contents") or [])
+        if len(rids) != len(prov) or any(not r for r in rids):
+            problems.append(
+                f"provenance graph tanpa chunk_row_id: {c.get('chunk_id', '')[:8]}")
+        elif len(texts) != len(prov) or any(not t for t in texts):
+            problems.append(
+                f"isi provenance graph hilang: {c.get('chunk_id', '')[:8]}")
     return problems
 
 
 def expand_graph_support(cited: dict, by_id: dict[str, dict]) -> list[str]:
     """G2: konten pendukung = verbal + isi TIAP chunk provenance.
 
-    Menutup lubang angka-hop-campur: angka hanya sah bila muncul di union ini.
+    Sumber utama = `provenance_contents` terlampir adapter (lengkap, 1 query
+    saat expand); fallback `by_id` (final top-5) bila lampiran absen.
+    Menutup lubang angka-hop-campur: angka sah bila muncul di union ini.
     """
     out = [str(cited.get("content", ""))]
+    meta = cited.get("metadata") or {}
+    attached = list(meta.get("provenance_contents") or [])
+    if attached and all(attached):
+        return out + [str(t) for t in attached]
     prov = list((cited.get("provenance")
                  or (cited.get("metadata") or {}).get("provenance") or []))
     for pid in prov:

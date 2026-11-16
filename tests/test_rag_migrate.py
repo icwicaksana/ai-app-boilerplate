@@ -86,3 +86,7 @@ def test_semua_migrasi_terdaftar_valid():
         encoding="utf-8")
     for needle in ("ALTER POLICY", "WITH CHECK", "source_watermarks"):
         assert needle in joined012, f"012 kehilangan: {needle}"
+    joined013 = (MIGRATIONS_DIR / "013_kg_alias.sql").read_text(
+        encoding="utf-8")
+    for needle in ("kg_aliases", "canonical_norm", "WITH CHECK", "GRANT"):
+        assert needle in joined013, f"013 kehilangan: {needle}"

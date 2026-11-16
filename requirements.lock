@@ -1,6 +1,6 @@
 # LOCK (pip freeze dari .venv). Regenerasi (UTF-8!):
-#   uv pip freeze --python .\.venv\Scripts\python.exe | Out-File -Encoding utf8NoBOM requirements.lock
-# LALU terapkan marker platform: pywin32 -> `; sys_platform == 'win32'` (Windows-only).
+#   uv pip freeze --python .venv/Scripts/python.exe, tulis UTF-8 tanpa BOM via python
+# LALU terapkan marker platform: pywin32 (Windows-only).
 accelerate==1.15.0
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.5
@@ -46,6 +46,7 @@ filetype==1.2.0
 flatbuffers==25.12.19
 frozenlist==1.8.0
 fsspec==2026.9.0
+gliner2==2.1.0
 googleapis-common-protos==1.75.5
 grpcio==1.84.0
 h11==0.16.0
@@ -131,6 +132,7 @@ ormsgpack==1.12.2
 packaging==26.3
 pandas==3.1.1
 parso==0.8.7
+peft==0.21.3
 pillow==13.0.0
 platformdirs==4.13.0
 pluggy==1.7.0

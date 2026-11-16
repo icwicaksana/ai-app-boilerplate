@@ -36,6 +36,10 @@ _WS_RE = re.compile(r"\s+")
 _BAD_RE = re.compile(r"[<>]{2,}")  # blokir marker <<< >>>
 _REL_SAFE_RE = re.compile(r"[^a-z0-9_:]")
 
+# Versi template verbalize (SATU sumber; gpath + adapter impor dari sini).
+# Ganti template = bump (pola chunk_id/preset_version).
+VERBALIZE_VERSION = "gv1"
+
 MAX_TRIPLES = 2
 MAX_LABEL = 160  # per label; lebih = potong (hemat budget pair rerank)
 

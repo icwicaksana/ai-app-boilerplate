@@ -382,6 +382,18 @@ class GraphStore(Protocol):
         tenant + whitelist filter SAMA dengan VectorStore di tiap hop (D13)."""
         ...
 
+    async def resolve_seeds(self, seeds: list[str]) -> list[str]:
+        """Norm seed → norm kanonis (alias tenant + keberadaan entity).
+
+        Return subset yang MATCH entity (sesudah alias). Pipeline memakai
+        rasio match/request sebagai `seed_confidence` REAL (F4).
+        """
+        ...
+
+    async def upsert_aliases(self, aliases: dict[str, str]) -> int:
+        """Tulis alias tenant (alias_norm → canonical_norm). Return jumlah."""
+        ...
+
     async def delete_subgraph(self, *, doc_id: str) -> tuple[int, int]:
         """Hapus entitas+edge 1 dokumen (milik tenant terikat). Idempoten."""
         ...

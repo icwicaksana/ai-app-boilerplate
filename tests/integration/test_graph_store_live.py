@@ -33,6 +33,8 @@ async def stores(db_url, tag):
         async with pool.connection() as conn:
             for t in tenants.values():
                 await conn.execute(
+                    "DELETE FROM kg_aliases WHERE tenant = %s", (t,))
+                await conn.execute(
                     "DELETE FROM kg_edges WHERE tenant = %s", (t,))
                 await conn.execute(
                     "DELETE FROM kg_entities WHERE tenant = %s", (t,))
@@ -179,6 +181,24 @@ async def test_dedup_intra_batch_last_wins(stores):
     assert (n_ent, n_edge) == (2, 1)
     info = await stores["a"].graph_info()
     assert (info["entity_count"], info["edge_count"]) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_alias_dan_resolve_seeds(stores):
+    pool = stores["pool"]
+    t = stores["a"]._tenant
+    doc = await _doc(pool, t, "alias.md")
+    await stores["a"].upsert_subgraph(
+        doc_id=doc, entities=[_ent("Laptop"), _ent("Toko")],
+        edges=[_edge("Toko", "Laptop", rel="memasok")])
+    assert await stores["a"].upsert_aliases(
+        {"komputer jinjing": "laptop", "  ": "x", "a": "a"}) == 1
+    assert await stores["a"].resolve_seeds(
+        ["komputer jinjing", "toko", "tak-ada"]) == ["laptop", "toko"]
+    hits = await stores["a"].expand(["komputer jinjing"], k=5)
+    assert hits and "Laptop" in hits[0]["content"]
+    # Alias tenant lain tak terlihat.
+    assert await stores["b"].resolve_seeds(["komputer jinjing"]) == []
 
 
 @pytest.mark.asyncio

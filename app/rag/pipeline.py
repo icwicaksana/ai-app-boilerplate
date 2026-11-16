@@ -226,29 +226,45 @@ class HybridRetriever:
             t = _time.perf_counter()
             cands = seed_candidates(
                 query, self._graph_aliases)[:self._graph_seed_top]
+            # Resolve via adapter (alias tenant + keberadaan entity, F4):
+            # confidence REAL = match/request (bukan biner).
+            try:
+                matched = await self._graph.resolve_seeds(cands)
+            except Exception:
+                matched = []
+                g_degraded.append("graph_unavailable")
             g_timings["seed"] = round((_time.perf_counter() - t) * 1000, 1)
             g_counts["seeds"] = len(cands)
-            if cands:
+            g_counts["seeds_matched"] = len(matched)
+            g_seed_conf = (len(matched) / len(cands)) if cands else 0.0
+            if matched and g_seed_conf >= self._graph_seed_confidence:
+                # Cap adaptif: sepakat-KUAT (top-1 sama + overlap top-5 ≥40%)
+                # → cap kecil; else cap besar (QA-F3: tanpa sinyal pra-rerank
+                # yang jujur selain kesepakatan 2 cabang).
+                d5 = {c["chunk_id"] for c in dense[:5]}
+                l5 = {c["chunk_id"] for c in lexical[:5]}
                 agree = (dense and lexical
-                         and dense[0]["chunk_id"] == lexical[0]["chunk_id"])
+                         and dense[0]["chunk_id"] == lexical[0]["chunk_id"]
+                         and len(d5 & l5) / max(1, len(d5 | l5)) >= 0.4)
                 cap = (self._graph_cap_agree if agree
                        else self._graph_cap_default)
                 g_counts["cap"] = cap
                 # Strip filter non-access untuk cabang graph (keputusan
                 # QA-F2/D13: graph hanya paham access_level).
                 gf = ({"access_level": filters["access_level"]}
-                      if filters and "access_level" in filters else None)
+                      if filters and filters.get("access_level") is not None
+                      else None)
                 t = _time.perf_counter()
                 try:
                     hits = await self._graph.expand(
-                        cands, k=self._graph_expand_top, filters=gf,
+                        matched, k=self._graph_expand_top, filters=gf,
                         max_hops=1, fanout=self._graph_fanout)
                     hop1 = [h for h in hits if h["hops"] <= 1]
                     if (len(hop1) < 3 and self._graph_max_hops >= 2
                             and hits):
                         # Hop-2 hanya bila hop-1 kurus (hemat 1 RTT bila cukup).
                         more = await self._graph.expand(
-                            cands, k=self._graph_expand_top, filters=gf,
+                            matched, k=self._graph_expand_top, filters=gf,
                             max_hops=2, fanout=self._graph_fanout)
                         seen = {h["chunk_id"] for h in hits}
                         hits = hits + [h for h in more
@@ -262,11 +278,10 @@ class HybridRetriever:
                     g_timings["expand"] = round(
                         (_time.perf_counter() - t) * 1000, 1)
                 g_counts["paths"] = len(hits)
-                # Confidence biner jujur: expand mengembalikan hit → seed kena
-                # (1.0), else 0.0 = graph kosong normal, BUKAN degraded.
-                g_seed_conf = 1.0 if hits else 0.0
                 t = _time.perf_counter()
-                if g_seed_conf >= self._graph_seed_confidence and hits:
+                # NOTE: "verbalize" di sini = copy-dict; verbalize_path asli
+                # jalan di DALAM expand adapter (trace expand mencakupnya).
+                if hits:
                     backend = getattr(self._graph, "backend_name", "pggraph")
                     for h in sorted(hits, key=lambda x: -x["score"])[:cap]:
                         meta = dict(h.get("metadata") or {})
@@ -304,8 +319,13 @@ class HybridRetriever:
             ranked = await self._rerank.rerank(q, docs, top_n=len(docs))
         except (TimeoutError, RerankError):
             timings["rerank"] = round((_time.perf_counter() - t) * 1000, 1)
+            # Floor SKIP eksplisit (keputusan QA-F3): skor RRF (~0.016) tak
+            # sebanding floor skala-rerank 0–1; terapkan floor = musnahkan
+            # semua. Penanda trace agar eval F5 reproduksibel.
             final = candidates[: min(k, self._final_top)]
-            return _trace(final, "ok", ["rerank_unavailable"])
+            res = _trace(final, "ok", ["rerank_unavailable"])
+            res["trace"]["floor_skipped"] = True
+            return res
         timings["rerank"] = round((_time.perf_counter() - t) * 1000, 1)
         # 6) Floor → no_evidence (D5): tolak tanpa LLM bila semua di bawah floor.
         # Urutan provider JANGAN dipercaya (sort sendiri); chunk di bawah

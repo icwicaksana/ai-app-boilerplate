@@ -27,12 +27,16 @@ def chunk_id(doc_id: str, seq: int | str,
     return hashlib.sha256(raw).hexdigest()[:32]
 
 
-def gpath_id(edge_ids: list[int], preset_version: str = "gv1") -> str:
+def gpath_id(edge_ids: list[int], preset_version: str | None = None) -> str:
     """ID pseudo-chunk graph stabil (v0.8 D8).
 
-    `sorted(edge_ids)` = invarian urutan BFS; `preset_version` = versi
-    template verbalize (ganti template = ID baru, pola `chunk_id`).
+    `sorted(edge_ids)` = invarian urutan BFS; default versi = template
+    verbalize aktif (SATU sumber di `verbalize.VERBALIZE_VERSION`).
     """
+    if preset_version is None:
+        from app.rag.verbalize import VERBALIZE_VERSION
+
+        preset_version = VERBALIZE_VERSION
     raw = f"gpath:{','.join(str(i) for i in sorted(edge_ids))}:{preset_version}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
@@ -68,6 +72,7 @@ def build_citations(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry["confidence"] = meta.get("confidence")
             entry["extractor"] = meta.get("extractor")
             entry["relations"] = meta.get("relations", [])
+            entry["layers"] = meta.get("layers", [])  # G3 exemption L1
         out.append(entry)
     return out
 

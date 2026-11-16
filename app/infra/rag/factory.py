@@ -190,7 +190,7 @@ _KNOWN_FUTURE_EXTRACTORS = frozenset({"fastino/gliner2.5-multi-v1"})
 def _build_extractor(settings: Settings):
     """Pilih EntityExtractor dari pin (D6). None bila GRAPH_ENABLED=false.
 
-    F2: hanya `stub-deterministik`. F4 menambah L1/L2/L3 nyata.
+    F4: `stub-deterministik` | `fastino/gliner2.5-multi-v1` (layered L1+L2[+L3]).
     Pin tak dikenal = RuntimeError aksi (dilarang fallback beda-model diam-diam).
     """
     if not settings.GRAPH_ENABLED:
@@ -201,6 +201,29 @@ def _build_extractor(settings: Settings):
         from app.infra.rag.extract.stub import StubExtractor
 
         ext = StubExtractor()
+    elif want_model == "fastino/gliner2.5-multi-v1":
+        from app.infra.rag.extract.gliner import GlierExtractor
+        from app.infra.rag.extract.l1_rules import L1RulesExtractor
+        from app.infra.rag.extract.layered import LayeredExtractor
+
+        l3 = None
+        l3_model = (settings.GRAPH_L3_MODEL or "").strip()
+        if l3_model:
+            from app.infra.llm import get_llm
+            from app.infra.rag.extract.llm_l3 import LlmExtractor
+
+            l3 = LlmExtractor(
+                get_llm(settings, model=l3_model), model=l3_model,
+                version=(settings.GRAPH_L3_VERSION or "").strip() or "v1",
+                max_tokens_in=settings.GRAPH_L3_MAX_TOKENS_IN,
+                daily_quota=settings.GRAPH_L3_DAILY_QUOTA_PER_TENANT,
+                breaker_minutes=settings.GRAPH_L3_BREAKER_MINUTES,
+                cache_ttl_days=settings.GRAPH_L3_CACHE_TTL_DAYS)
+        ext = LayeredExtractor(
+            L1RulesExtractor(),
+            GlierExtractor(model=want_model,
+                           cache_dir=settings.RAG_HF_CACHE),
+            l3, l3_max_calls=settings.GRAPH_L3_MAX_CALLS_PER_DOC)
     elif want_model in _KNOWN_FUTURE_EXTRACTORS:
         raise RuntimeError(
             f"GRAPH_EXTRACTOR_MODEL={want_model!r} dikenal tapi BELUM tersedia"
@@ -209,7 +232,7 @@ def _build_extractor(settings: Settings):
     else:
         raise RuntimeError(
             f"GRAPH_EXTRACTOR_MODEL={want_model!r} tak dikenal "
-            "(v0.8 F2: hanya 'stub-deterministik'; L1/L2/L3 nyata di F4).")
+            "(v0.8: 'stub-deterministik' | 'fastino/gliner2.5-multi-v1').")
     if want_ver and ext.version != want_ver:
         raise RuntimeError(
             f"GRAPH_EXTRACTOR_VERSION pin={want_ver!r} != ekstraktor "

@@ -181,7 +181,10 @@ class Settings(BaseSettings):
     # Floor kandidat verbal (D12): nilai awal = warisan; final dari kalibrasi F5.
     GRAPH_SCORE_FLOOR: float = Field(default=0.05, ge=0.0, le=1.0)
     GRAPH_QUOTA_EDGES_PER_TENANT: int = Field(default=500000, ge=1000)
-    # L3 (satu-satunya cost center): trigger = conf_L2 < 0.5 DAN chunk sensitif.
+    # L3 (satu-satunya cost center): trigger = L2 menyerah (0 edge ATAU
+    # semua edge < 0.5) DAN chunk sensitif (hasil spike F4: 2/12).
+    GRAPH_L3_MODEL: str = ""  # kosong = L3 MATI (hemat total; F5 ablation)
+    GRAPH_L3_VERSION: str = ""
     GRAPH_L3_MAX_CALLS_PER_DOC: int = Field(default=20, ge=0, le=200)
     GRAPH_L3_MAX_TOKENS_IN: int = Field(default=1500, ge=100)
     GRAPH_L3_MAX_TOKENS_OUT: int = Field(default=500, ge=50)
