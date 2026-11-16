@@ -33,6 +33,23 @@ def get_runner() -> Runner:
     return Runner(durability=durability)
 
 
+def get_chat_runner() -> Runner:
+    """Runner untuk jalur CHAT STREAMING — selalu `sync` (v0.9 K4).
+
+    Kenapa dipisah: `Runner.stream()` membaca checkpoint terakhir lewat
+    `aget_state` untuk menyusun event `result`. Dengan durability `async`,
+    penulisan checkpoint tidak ditunggu, sehingga pembacaan itu bisa
+    mengembalikan snapshot SEBELUM node terakhir — `reply` tertinggal satu
+    langkah, dan yang lebih berbahaya `interrupts` bisa kosong sehingga
+    status `pending_approval` terlihat `completed`. Kelas bug ini sudah
+    pernah menggigit di v0.4.1.
+
+    `sync` hanya di sini: jalur non-streaming (job, resume) tidak membaca
+    state tepat setelah menulis, jadi tidak perlu membayar biayanya.
+    """
+    return Runner(durability="sync")
+
+
 def get_request_id(request: Request) -> str:
     """Satu sumber request_id: state middleware → echo header → generate.
 
@@ -127,7 +144,7 @@ def get_chat_controller(
     settings: Settings = Depends(get_settings),
 ) -> ChatController:
     checkpointer, store = _persistence(request)
-    return ChatController(settings, checkpointer, get_runner(), store=store,
+    return ChatController(settings, checkpointer, get_chat_runner(), store=store,
                           pool=_optional_pool(request),
                           rag=get_rag_clients(request))
 

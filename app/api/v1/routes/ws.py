@@ -92,11 +92,11 @@ async def ws_chat(websocket: WebSocket) -> None:
 
 def _controller_for(ws: WebSocket, settings: Settings) -> ChatController:
     """Bangun controller dari app.state (tanpa dependency injection manual)."""
-    from app.core.dependencies import get_runner
+    from app.core.dependencies import get_chat_runner
 
     state = ws.app.state
     return ChatController(settings, getattr(state, "checkpointer", None),
-                          get_runner(), store=getattr(state, "store", None))
+                          get_chat_runner(), store=getattr(state, "store", None))
 
 
 class _Connection:

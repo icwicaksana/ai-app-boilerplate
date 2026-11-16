@@ -77,6 +77,15 @@ class BaseChatAgent:
         self.runner = ctx.runner  # inject dari controller — jangan bikin Runner() di sini
         self.memory = getattr(ctx, "store", None)  # MemoryStore per-user / None
         self.graph = self.build(ctx.session_id)
+        # v0.9 F0-3: pastikan graph SELALU bernama, termasuk agen yang
+        # meng-override build() dengan StateGraph sendiri (mis. HitlDemoAgent).
+        # Tanpa ini nama default "LangGraph" membuat StreamPolicy tidak bisa
+        # membedakan run per agen saat subagent ditambahkan.
+        if getattr(self.graph, "name", None) in (None, "", "LangGraph"):
+            try:
+                self.graph.name = self.AGENT_NAME
+            except Exception:  # graph beku/read-only: jangan gagalkan boot
+                log.warning("graph %s tidak bisa diberi nama", self.AGENT_NAME)
 
     # --- build: prompt + tools + middleware (jalan 1x saat init) ---
     def build(self, session_id: str | None = None):
@@ -102,6 +111,10 @@ class BaseChatAgent:
             "tools": tools,
             "system_prompt": system_prompt,
             "checkpointer": self.checkpointer,
+            # v0.9 F0-3: nama graph = identitas agen. Tanpa ini semua graph
+            # bernama "LangGraph" dan StreamPolicy tidak bisa membedakan
+            # run mana milik siapa saat subagent ditambahkan.
+            "name": self.AGENT_NAME,
         }
         if middleware:
             kwargs["middleware"] = middleware

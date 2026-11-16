@@ -16,7 +16,7 @@ from app.controllers.runner import Runner
 from app.core.config import Settings
 from app.core.errors import AgentNotFoundError, AppError, UpstreamAIError
 from app.core.logging import get_logger
-from app.core.threads import ThreadIdentity, parse_thread_id
+from app.core.threads import ThreadIdentity
 from app.helpers.response import stream_error
 from app.infra.memory import MemoryStore
 from app.schemas.chat import ChatRequest
@@ -41,38 +41,23 @@ class ChatController(BaseController):
         # Agent dirakit per eksekusi (bukan di __init__) agar session header
         # x-opencode-session = thread_id. Objek controller sendiri sudah per-request,
         # jadi tidak ada biaya tambahan dibanding sebelumnya.
-        # MemoryStore dibungkus per-request (namespace terkunci ke user thread ini).
-        memory = None
-        if self.store is not None:
-            workspace, user, _ = parse_thread_id(thread_id)  # sudah valid (resolve dulu)
-            memory = MemoryStore(self.store, workspace, user)
         agent_cls = CHAT_AGENTS[agent_name]
-        retriever = self._retriever_for(agent_cls, thread_id)
-        ctx = AgentContext(
-            settings=self.settings, checkpointer=self.checkpointer,
-            runner=self.runner, session_id=thread_id, store=memory,
-            retriever=retriever,
-        )
-        return agent_cls(ctx)
+        return agent_cls(self._context_for(agent_cls, thread_id))
 
-    def _retriever_for(self, agent_cls, thread_id: str):
-        """Retriever workspace-bound untuk agen NEEDS_RETRIEVER (D2, v0.7).
+    def _context_for(self, agent_cls, thread_id: str):
+        """v0.9 F0-5: SATU factory untuk semua jalur (chat/resume/fork).
 
-        Workspace dari thread_id tervalidasi (= workspace JWT, via resolve dulu).
-        RAG mati → 503 jelas (bukan agen bisu).
+        `raise_embedding` mempertahankan perilaku v0.7 (D11): agen ber-RAG
+        saat RAG mati -> 503 jelas, bukan agen bisu.
         """
-        from app.core.errors import EmbeddingUnavailableError
+        from app.agents.factory import build_agent_context
 
-        if not getattr(agent_cls, "NEEDS_RETRIEVER", False):
-            return None
-        if self.pool is None or self.rag is None:
-            raise EmbeddingUnavailableError(
-                "RAG tak tersedia (lifespan RAG gagal/nonaktif).")
-        from app.infra.rag.factory import retriever_for_workspace
-
-        workspace, _, _ = parse_thread_id(thread_id)
-        return retriever_for_workspace(self.settings, self.rag, self.pool,
-                                    workspace=workspace)
+        return build_agent_context(
+            settings=self.settings, checkpointer=self.checkpointer,
+            runner=self.runner, session_id=thread_id,
+            store=self.store, pool=self.pool, rag=self.rag,
+            agent_cls=agent_cls, missing_retriever="raise_embedding",
+        )
 
     async def stream(self, req: ChatRequest, identity: ThreadIdentity, *,
                      request_id: str = "-"):
