@@ -98,7 +98,7 @@ def test_cross_workspace_thread_yields_terminal_403():
                       thread_id="toko-B:andi:sess-1")
     events = _collect_chat(ctrl, req)
     assert len(events) == 1 and events[0]["type"] == "error"
-    assert events[0]["code"] == "CROSS_TENANT_DENIED"
+    assert events[0]["code"] == "CROSS_WORKSPACE_DENIED"
     assert events[0]["status"] == 403
 
 

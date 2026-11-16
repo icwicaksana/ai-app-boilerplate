@@ -91,7 +91,7 @@ def test_state_cross_user_403_before_404():
     c = _client(_seeded())
     res = c.get(f"/api/v1/threads/{TID}/state", headers=_hdr(user="ani"))
     assert res.status_code == 403
-    assert res.json()["code"] == "CROSS_TENANT_DENIED"
+    assert res.json()["code"] == "CROSS_WORKSPACE_DENIED"
 
 
 def test_state_ok_hides_profile_and_counts_conversational():

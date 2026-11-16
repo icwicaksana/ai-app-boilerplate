@@ -108,7 +108,7 @@ def test_cross_workspace_thread_denied_with_real_token(client, creds, db_url):
     other = f"toko-lain:{username}:sess-{uuid.uuid4().hex[:8]}"
     res = client.get(f"/api/v1/threads/{other}/state", headers=h)
     assert res.status_code == 403
-    assert res.json()["code"] == "CROSS_TENANT_DENIED"
+    assert res.json()["code"] == "CROSS_WORKSPACE_DENIED"
 
 
 def test_refresh_rotation_and_logout_live(client, creds, db_url):

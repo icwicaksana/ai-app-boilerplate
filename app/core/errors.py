@@ -98,7 +98,7 @@ class CrossWorkspaceError(AppError):
         super().__init__(
             "Thread milik workspace lain — akses ditolak.",
             status_code=403,
-            code="CROSS_TENANT_DENIED",
+            code="CROSS_WORKSPACE_DENIED",
             title="Forbidden",
         )
 

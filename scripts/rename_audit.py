@@ -54,10 +54,13 @@ FROZEN_ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("komentar_prefix", re.compile(r'# "tenant:" sampai ada migrasi')),
     ("nama_berkas_migrasi", re.compile(
         r"014_rename_tenant_to_workspace\.sql")),
-    ("kode_error", re.compile(r"CROSS_TENANT_DENIED")),
     ("out_param_fn", re.compile(r"job_tenant")),
     ("format_thread", re.compile(r"tenant:user:session")),
     ("doc_penghapusan", re.compile(r"jalur `trusted_headers`")),
+    # v0.8.2 dual-read: literal lama hidup HANYA di satu baris definisi
+    # per modul. Guard tetap menangkap pemakaian baru di luar itu.
+    ("legacy_claim_def", re.compile(
+        r'LEGACY_CLAIM_WORKSPACE\s*=\s*"tenant"')),
 )
 
 

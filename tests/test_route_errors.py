@@ -41,7 +41,7 @@ def test_chat_cross_workspace_returns_json_403():
               "thread_id": "toko-b:budi:sess-1", "input": "hi"},
     )
     assert res.status_code == 403
-    assert res.json()["code"] == "CROSS_TENANT_DENIED"
+    assert res.json()["code"] == "CROSS_WORKSPACE_DENIED"
 
 
 def test_missing_token_returns_401():
