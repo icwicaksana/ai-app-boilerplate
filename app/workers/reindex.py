@@ -77,7 +77,7 @@ async def reindex_workspace(pool, qdrant_client, collection: str, *,
 
     # 2) Sisi Qdrant: semua point workspace (scroll paginal).
     filt = models.Filter(must=[models.FieldCondition(
-        key="tenant", match=models.MatchValue(value=workspace))])
+        key="workspace", match=models.MatchValue(value=workspace))])
     q_ids: set[str] = set()
     offset = None
     while True:
