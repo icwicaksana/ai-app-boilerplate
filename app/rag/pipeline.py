@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.rag.kg_seed import seed_candidates_weighted
+from app.rag.kg_seed import preseed_aliases, seed_candidates_weighted
 from app.rag.normalize import normalize_id
 from app.rag.ports import (
     BoundRetriever,
@@ -129,7 +129,7 @@ class HybridRetriever:
         graph_fanout: int = 50,
         graph_cap_agree: int = 2,  # dense+lex top-1 sepakat → cap kecil
         graph_cap_default: int = 6,  # tidak sepakat → cap besar
-        graph_score_floor: float = 0.05,  # kalibrasi final F5
+        graph_score_floor: float = 0.10,  # = default config (kalibrasi F5)
         graph_seed_confidence: float = 0.5,  # di bawah ini → graph-off
         graph_aliases: dict[str, str] | None = None,
     ) -> None:
@@ -222,10 +222,23 @@ class HybridRetriever:
         # 3) v0.8 graph: seed → expand → pseudo-chunk (opsional; gagal →
         # graph_unavailable + lanjut vector, TIDAK PERNAH 500 — D11).
         graph_cuts: list[CitedChunk] = []
+        g_matched: list[str] = []
         if self._graph is not None:
             t = _time.perf_counter()
             weighted = seed_candidates_weighted(
-                query, self._graph_aliases)[:self._graph_seed_top]
+                query, self._graph_aliases)
+            # Preseed alias (F5 run 4): cocok verbatim dulu (bobot quote),
+            # lalu kandidat generik; potong seed_top SETELAH gabung.
+            try:
+                _aliases = await self._graph.list_aliases()
+            except Exception:
+                _aliases = {}
+                g_degraded.append("graph_unavailable")
+            pre = [(c, 1.0) for c in preseed_aliases(query, _aliases)]
+            seen_pre = {c for c, _ in pre}
+            weighted = pre + [(n, w) for n, w in weighted
+                              if n not in seen_pre]
+            weighted = weighted[:self._graph_seed_top]
             cands = [n for n, _ in weighted]
             weights = dict(weighted)
             # Resolve via adapter (alias tenant + keberadaan entity, F4):
@@ -239,6 +252,7 @@ class HybridRetriever:
             g_timings["seed"] = round((_time.perf_counter() - t) * 1000, 1)
             g_counts["seeds"] = len(cands)
             g_counts["seeds_matched"] = len(matched)
+            g_matched = list(matched)
             g_seed_conf = max([weights.get(m, 0.0) for m in matched],
                               default=0.0)
             if matched and g_seed_conf >= self._graph_seed_confidence:
@@ -309,7 +323,12 @@ class HybridRetriever:
             timings["rerank"] = 0.0
             return _trace([], "no_evidence", [])
         # 4) Truncasi rerank (D5): query + tiap dokumen di batas kalimat.
-        q = truncate_sentences(query, self._query_max_tok, self._tok)
+        # Perluasan query rerank-only (F5 run 5): seed kanonis (hasil alias)
+        # ditempel ke query agar cross-encoder melihat jembatan leksikal
+        # ("komputer jinjing" → "laptop thinkpad"); tanpa ini sinonim
+        # modal-fail di floor. Retrieval (embed/lexical) TAK tersentuh.
+        q_raw = query + (" " + " ".join(g_matched[:5]) if g_matched else "")
+        q = truncate_sentences(q_raw, self._query_max_tok, self._tok)
         docs = [truncate_sentences(c["content"], self._doc_budget(q), self._tok)
                 for c in candidates]
         # 5) Rerank batch. Gagal APAPUN (timeout/koneksi/5xx/skema) →
@@ -354,9 +373,9 @@ class HybridRetriever:
                              f"({n} kandidat dikirim)")
         ranked = sorted(ranked, key=lambda r: r["score"], reverse=True)
         # Floor ganda v0.8 (D12): natural vs verbal (distribusi skor beda).
-        # graph_score_floor ≤ 0 = ikut floor natural (kalibrasi F5 final).
-        gfloor = (self._graph_score_floor
-                  if self._graph_score_floor > 0.0 else self._score_floor)
+        # graph_score_floor = 0.0 berarti TANPA floor untuk graph (bukan ikut
+        # natural — pelajaran F5 run 6: fallback merusak ablasi kalibrasi).
+        gfloor = self._graph_score_floor
 
         def _floor_for(idx: int) -> float:
             c = candidates[idx]

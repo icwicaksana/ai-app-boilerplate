@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     GRAPH_MIN_CONFIDENCE: float = Field(default=0.3, ge=0.0, le=1.0)
     GRAPH_SEED_CONFIDENCE: float = Field(default=0.5, ge=0.0, le=1.0)
     # Floor kandidat verbal (D12): nilai awal = warisan; final dari kalibrasi F5.
-    GRAPH_SCORE_FLOOR: float = Field(default=0.05, ge=0.0, le=1.0)
+    GRAPH_SCORE_FLOOR: float = Field(default=0.10, ge=0.0, le=1.0)
     GRAPH_QUOTA_EDGES_PER_TENANT: int = Field(default=500000, ge=1000)
     # L3 (satu-satunya cost center): trigger = L2 menyerah (0 edge ATAU
     # semua edge < 0.5) DAN chunk sensitif (hasil spike F4: 2/12).

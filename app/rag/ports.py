@@ -394,6 +394,15 @@ class GraphStore(Protocol):
         """Tulis alias tenant (alias_norm → canonical_norm). Return jumlah."""
         ...
 
+    async def list_aliases(self) -> dict[str, str]:
+        """Seluruh alias tenant (tabel kecil; pipeline cache per-request).
+
+        Dipakai seed preseed: substring-match query (longest-first) agar
+        alias multi-kata ("komputer jinjing", "ess") selalu terjangkau
+        tanpa tergantung cutoff seed_top (pelajaran F5 run 4).
+        """
+        ...
+
     async def delete_subgraph(self, *, doc_id: str) -> tuple[int, int]:
         """Hapus entitas+edge 1 dokumen (milik tenant terikat). Idempoten."""
         ...

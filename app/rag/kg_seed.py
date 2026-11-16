@@ -28,6 +28,21 @@ W_FULLQUERY = 0.7
 W_TOKEN = 0.6
 
 
+def preseed_aliases(query: str, aliases: dict[str, str]) -> list[str]:
+    """Canonical dari alias yang muncul verbatim di query (longest-first).
+
+    Menjamin alias multi-kata terjangkau tanpa tergantung cutoff seed_top.
+    """
+    qn = normalize_entity(query or "")
+    out: list[str] = []
+    for alias in sorted(aliases or {}, key=len, reverse=True):
+        if alias and alias in qn:
+            canon = aliases[alias]
+            if canon not in out:
+                out.append(canon)
+    return out
+
+
 def seed_candidates_weighted(
         query: str, aliases: dict[str, str] | None = None,
 ) -> list[tuple[str, float]]:

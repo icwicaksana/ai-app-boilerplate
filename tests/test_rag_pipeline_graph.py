@@ -8,7 +8,11 @@ from app.rag.grounding import (
     expand_graph_support,
     weak_graph_singleton,
 )
-from app.rag.kg_seed import seed_candidates, seed_candidates_weighted
+from app.rag.kg_seed import (
+    preseed_aliases,
+    seed_candidates,
+    seed_candidates_weighted,
+)
 from app.rag.pipeline import HybridRetriever, rrf_fuse
 
 
@@ -79,6 +83,9 @@ class _Graph:
             return list(self._matched)
         return list(seeds)
 
+    async def list_aliases(self):
+        return {}
+
     async def upsert_aliases(self, aliases):
         return len(aliases)
 
@@ -139,7 +146,7 @@ async def test_pipeline_graph_masuk_dan_trace():
     assert {"g1", "g2", "g3"} <= set(ids)  # cap default 6
     assert res["trace"]["graph_counts"]["kept"] == 3
     assert res["trace"]["seed_confidence"] == 0.9  # caps-tier match
-    assert res["trace"]["floors"] == {"natural": 0.05, "graph": 0.05}
+    assert res["trace"]["floors"] == {"natural": 0.05, "graph": 0.10}
     assert g.calls[0]["filters"] is None
     assert g.calls[0]["max_hops"] == 1  # hemat: hop-1 cukup (≥3 path)
 
@@ -289,6 +296,54 @@ def test_finalize_g3_refusal_singleton_lemah():
     out3 = agent._node_finalize(state3)
     assert out3["structured"]["refusal"] is False  # L1 exempt
     assert out3["structured"]["citations"][0]["kind"] == "graph"
+
+
+def test_preseed_alias_longest_first():
+    al = {"komputer jinjing": "laptop thinkpad", "ess": "menu es kopi susu"}
+    assert preseed_aliases("Komputer jinjing dipakai di mana?",
+                           al) == ["laptop thinkpad"]
+    assert preseed_aliases("siapa memasok bahan ess?", al) == [
+        "menu es kopi susu"]
+    assert preseed_aliases("teks tanpa alias", al) == []
+    assert preseed_aliases("q", {}) == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_preseed_masuk_expand():
+    class _GAlias(_Graph):
+        async def list_aliases(self):
+            return {"ess": "menu es kopi susu"}
+
+        async def resolve_seeds(self, seeds):
+            return [s for s in seeds if s == "menu es kopi susu"]
+
+    g = _GAlias([_hit("g1")])
+    r = _retriever([_c("a")], [_c("b")], [0.9] * 10, graph=g)
+    res = await r.search("siapa memasok bahan ess?")
+    assert g.calls and g.calls[0]["seeds"] == ["menu es kopi susu"]
+    assert res["trace"]["seed_confidence"] == 1.0
+    assert res["trace"]["graph_counts"]["kept"] == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rerank_query_expanded():
+    seen: dict = {}
+
+    class _RecRerank:
+        async def rerank(self, q, docs, top_n=None):
+            seen["q"] = q
+            return [{"index": i, "score": 0.9} for i in range(len(docs))]
+
+    r = HybridRetriever(embed=_Embed(), rerank=_RecRerank(),
+                        store=_Store([_c("a")], [_c("b")]), tok=_Tok(),
+                        graph=_Graph([_hit("g1")]))
+    await r.search("Kopi Arabika?")
+    # Seed kanonis tertempel di query rerank (jembatan leksikal).
+    assert "kopi arabika" in seen["q"].lower()
+    r2 = HybridRetriever(embed=_Embed(), rerank=_RecRerank(),
+                         store=_Store([_c("a")], [_c("b")]), tok=_Tok())
+    await r2.search("Kopi Arabika?")
+    assert seen["q"] == "Kopi Arabika?"  # tanpa graph: verbatim
 
 
 def test_g1_provenance_struktural():

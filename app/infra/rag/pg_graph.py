@@ -215,6 +215,19 @@ class PgGraphStore:
                     flat)
         return len(pairs)
 
+    async def list_aliases(self) -> dict[str, str]:
+        async with self._pool.connection() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT set_config('app.current_tenant', %s, true)",
+                    (self._tenant,))
+                cur = await conn.execute(
+                    "SELECT alias_norm, canonical_norm FROM kg_aliases"
+                    " WHERE tenant = %s",
+                    (self._tenant,))
+                return {r["alias_norm"]: r["canonical_norm"]
+                        for r in await cur.fetchall()}
+
     async def resolve_seeds(self, seeds: list[str]) -> list[str]:
         """Norm → kanonis via alias → filter yang match entity. Stabil."""
         norms = sorted({n for s in seeds or []

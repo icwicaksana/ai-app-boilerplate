@@ -76,7 +76,7 @@ def test_ports_expose_frozen_contracts():
         assert "tenant" not in ps and "tenant_id" not in ps
     # v0.8 D2: GraphStore juga factory-bound (tanpa tenant per-call).
     for meth in ("upsert_subgraph", "expand", "delete_subgraph",
-                 "resolve_seeds", "upsert_aliases"):
+                 "resolve_seeds", "upsert_aliases", "list_aliases"):
         ps = inspect.signature(getattr(p.GraphStore, meth)).parameters
         assert "tenant" not in ps and "tenant_id" not in ps, meth
 

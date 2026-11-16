@@ -287,13 +287,15 @@ async def test_graph_gold_runner(backend, db_url, embed_url, tag):
                 gchunks = [c for c in res["chunks"]
                            if (c.get("kind") or "") == "graph"]
                 g1 = check_graph_provenance(gchunks)
+                tm = res["trace"]["timings_ms"]
                 rows.append({
                     "q": q, "stratum": stratum, "hit": hit,
                     "graph_used": gused, "g1_ok": not g1,
                     "status": res["status"],
                     "got": [c["source"] for c in res["chunks"]],
                     "top": res["trace"]["top_score"],
-                    "ms": res["trace"]["timings_ms"]["total"],
+                    "ms": tm["total"], "rerank_ms": tm.get("rerank", 0.0),
+                    "gt_ms": (res["trace"].get("graph_timings_ms") or {}),
                     "degraded": res["degraded"], "note": note})
             all_rows[cell] = rows
     finally:
