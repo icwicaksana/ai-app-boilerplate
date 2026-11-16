@@ -2,6 +2,29 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.8 (2026-11-16) — Knowledge Graph PG-native (LightRAG-can)
+
+**Arsitektur (F1–F2).** Graph PG-native 2 tabel (`kg_entities`,
+`kg_edges`, migrasi 011) + alias (013) + RLS WITH CHECK (012):
+BFS bounded iteratif (BUKAN recursive CTE), factory-bound tenant (D2),
+filter `access_level` kolom (D13), stage worker `graph(95)` + anti-stale,
+hapus dua-sisi, health `graph`. Protokol `GraphStore`/`EntityExtractor`.
+
+**Retrieval (F3).** Seed prioritas + preseed alias + confidence
+bobot-tier → BFS adaptif (cap 2/6, hop-2 bila kurus) → RRF 3-way
+(2-way identik bila graph mati) → floor ganda (natural 0.05, graph
+0.10 kalibrasi) → sitasi `(+N bukti)` + grounding G1–G6 (provenance
+struktural, union angka, singleton-lemah → refusal).
+
+**Ekstraktor (F4).** L1 aturan-ID (span intra-kalimat) + L2 GLiNER2.5
+(CPU, threshold 0.3 + filter ko-okurensi kalimat) + L3 LLM budgeted
+(trigger ketat, cache/breaker/kuota; default MATI). Spike: cold 16s,
+warm ~530ms/teks, trigger 2/12. Dep: `gliner2==2.1.0`.
+
+**Eval (F5).** Gold-graph 28 QA + praregistrasi + 6 sel ablation × 2
+backend. Run 7 resmi: FULL 27/28 dua backend (B0 16/28), bridge 8/8,
+alias 4/4, FPR=0, graph 14–31ms (budget 800ms). Kill K1–K4 tak terpicu.
+
 ## v0.7.1 (2026-11-13) — Retrieval robustness (ukur-dulu, Opsi B)
 
 **Observabilitas (F1).** `RetrievalTrace` per-request: timing
