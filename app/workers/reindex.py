@@ -44,7 +44,7 @@ async def reindex_workspace(pool, qdrant_client, collection: str, *,
         async with conn.transaction():
             # SET LOCAL: benar di bawah RLS FORCED maupun superuser (K2).
             await conn.execute(
-                "SELECT set_config('app.current_tenant', %s, true)",
+                "SELECT set_config('app.current_workspace', %s, true)",
                 (workspace,))
             params: list = [workspace]
             filt = ""

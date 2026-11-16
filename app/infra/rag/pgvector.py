@@ -2,7 +2,7 @@
 
 Aturan keras (D2):
 - Instance DIBANGUN sudah terikat workspace (factory). Semua SQL memakai
-  `WHERE workspace = $1` eksplisit + `SET LOCAL app.current_tenant` (RLS lapis 3).
+  `WHERE workspace = $1` eksplisit + `SET LOCAL app.current_workspace` (RLS lapis 3).
 - Vektor dikirim sebagai string `'[..]'::vector` (tanpa dep `pgvector-python`;
   kita tak pernah membaca embedding kembali — hanya content/metadata/skor).
 - `SET LOCAL` hanya dalam `conn.transaction()` eksplisit (pool autocommit!).
@@ -86,7 +86,7 @@ class PgVectorStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 cur = conn.cursor()
                 await cur.executemany(
@@ -117,7 +117,7 @@ class PgVectorStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 await conn.execute(f"SET LOCAL hnsw.ef_search = {int(self._ef_search)}")
                 cur = await conn.execute(
@@ -149,7 +149,7 @@ class PgVectorStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 cur = await conn.execute(
                     "SELECT c.id, c.document_id, c.ord, c.content, c.page,"
@@ -173,7 +173,7 @@ class PgVectorStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 cur = await conn.execute(
                     "DELETE FROM chunks WHERE workspace = %s AND document_id = %s",
@@ -185,7 +185,7 @@ class PgVectorStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM chunks WHERE workspace = %s",

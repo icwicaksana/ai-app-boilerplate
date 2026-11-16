@@ -1,7 +1,7 @@
 """Memori jangka panjang per user (v0.3): profil + fakta lintas thread.
 
 - Backend: `AsyncPostgresStore` mentah dari lifespan (pool bersama).
-- Namespace TERKUNCI per instance: `("tenants", t, "users", u)` — pemanggil tak
+- Namespace TERKUNCI per instance: `("workspaces", t, "users", u)` — pemanggil tak
   bisa salah alamat ke user lain (isolasi struktural, bukan filter manual).
 - Key: `"profile"` (dict, merge per patch) + `"fact:<12hex>"` (fakta satuan,
   value `{"text": ..., "ts": ...}`).
@@ -337,7 +337,7 @@ def filter_facts_for_prompt(facts: list[str]) -> tuple[list[str], int]:
 
 
 def namespace_for(workspace: str, user: str) -> tuple[str, str, str, str]:
-    """Namespace kanonis (BEKU): `("tenants", t, "users", u)`.
+    """Namespace kanonis (BEKU): `("workspaces", t, "users", u)`.
 
     Menolak kosong/None (defense-in-depth bila validasi header lolos).
     Lowercase defensif: namespace Postgres case-sensitive.
@@ -346,7 +346,7 @@ def namespace_for(workspace: str, user: str) -> tuple[str, str, str, str]:
         raise ValueError("namespace butuh workspace+user tak kosong.")
     t = canon_segment(workspace, "workspace")
     u = canon_segment(user, "user")
-    return ("tenants", t, "users", u)
+    return ("workspaces", t, "users", u)
 
 
 # Lock per-namespace: serialkan tulis profil/fakta (read-modify-write) dalam

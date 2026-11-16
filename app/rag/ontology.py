@@ -23,10 +23,13 @@ RELATIONS = frozenset({
 })
 
 ESCAPE_RELATION = "related_to"
-# Nilai prefix DIBEKUKAN sampai v0.8.2: ia tersimpan di kg_entities.type dan
-# kg_edges.relation. Simbol boleh bernama workspace, tapi on-disk tetap
-# "tenant:" sampai ada migrasi data + bump versi ontologi.
-WORKSPACE_EXT_PREFIX = "tenant:"
+# v0.8.2: prefix kanonis = "workspace:". Data lama tetap TERBACA lewat
+# LEGACY_EXT_PREFIXES sampai backfill selesai; tulis selalu kanonis lewat
+# canonical_extension(). Inilah satu-satunya tempat literal lama boleh
+# muncul di app/ (allowlist guard sempit).
+WORKSPACE_EXT_PREFIX = "workspace:"
+LEGACY_EXT_PREFIXES = ("tenant:",)
+EXT_PREFIXES = (WORKSPACE_EXT_PREFIX, *LEGACY_EXT_PREFIXES)
 
 
 def is_core_node_type(t: str) -> bool:
@@ -37,12 +40,32 @@ def is_core_relation(r: str) -> bool:
     return r in RELATIONS
 
 
+def extension_suffix(name: str) -> str | None:
+    """Suffix ekstensi (tanpa prefix) atau None bila bukan ekstensi valid."""
+    for p in EXT_PREFIXES:
+        if name.startswith(p):
+            rest = name[len(p):]
+            if rest and " " not in rest and "/" not in rest:
+                return rest
+            return None
+    return None
+
+
 def is_workspace_extension(name: str) -> bool:
-    """`workspace:xyz` valid = prefix + nama non-kosong tanpa spasi/paren."""
-    if not name.startswith(WORKSPACE_EXT_PREFIX):
-        return False
-    rest = name[len(WORKSPACE_EXT_PREFIX):]
-    return bool(rest) and " " not in rest and "/" not in rest
+    """`workspace:xyz` (atau prefix legacy) valid."""
+    return extension_suffix(name) is not None
+
+
+def canonical_extension(name: str) -> str:
+    """Normalkan prefix lama -> kanonis. Non-ekstensi dikembalikan apa adanya.
+
+    Dipakai di batas TULIS supaya data baru tidak pernah tersimpan dengan
+    prefix lama (mencegah duplikat antara prefix legacy dan kanonis).
+    """
+    suffix = extension_suffix(name)
+    if suffix is None:
+        return name
+    return f"{WORKSPACE_EXT_PREFIX}{suffix}"
 
 
 def validate_relation(relation: str) -> str:

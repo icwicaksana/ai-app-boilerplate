@@ -83,25 +83,32 @@ def test_guc_rls_masih_app_current_tenant():
 
 
 # --- 5. Tier C DIBEKUKAN: namespace memori --------------------------------
-def test_namespace_memori_masih_tenants():
-    """DIBEKUKAN sampai v0.8.2 (rename = data user hilang tanpa migrasi)."""
+def test_namespace_memori_sudah_workspaces():
+    """v0.8.2 (2026-11-16): DIPENSIUNKAN — namespace dimigrasikan migrasi 018.
+
+    Alasan: `store.prefix` sudah dipindah `tenants.*` -> `workspaces.*`, jadi
+    kode WAJIB memakai nilai baru. Mempertahankan assert lama justru mengunci
+    kode ke nilai yang tidak lagi cocok dengan data (memori jadi tak terlihat).
+    Jangkar pengganti: nilai baru ada DAN nilai lama tidak tersisa.
+    """
     src = _read("app/infra/memory.py")
-    assert re.search(r"""["']tenants["']""", src)
+    assert re.search(r"""["']workspaces["']""", src)
+    assert not re.search(r"""["']tenants["']""", src)
 
 
 # --- 6. Tier C DIBEKUKAN: prefix ontologi KG ------------------------------
-def test_nilai_prefix_ontologi_masih_tenant():
-    """Nama simbol boleh berubah; NILAI-nya DIBEKUKAN sampai v0.8.2.
+def test_prefix_ontologi_kanonis_workspace():
+    """v0.8.2 (2026-11-16): DIPENSIUNKAN — prefix kanonis kini 'workspace:'.
 
-    Prefix tersimpan di `kg_entities.type` / `kg_edges.relation`. Mengubahnya
-    tanpa migrasi data membuat relasi ekstensi jatuh ke force-fit
-    `related_to` (KG degradasi diam-diam).
+    Alasan: migrasi 018 memindahkan nilai tersimpan, dan `canonical_extension`
+    menormalkan tulisan baru. Nilai lama tetap TERBACA lewat
+    LEGACY_EXT_PREFIXES (dual-read), diuji di tests/test_graph_pure.py.
+    Jangkar pengganti: kanonis baru + legacy masih dikenali.
     """
     from app.rag import ontology
 
-    prefix = (getattr(ontology, "WORKSPACE_EXT_PREFIX", None)
-              or getattr(ontology, "TENANT_PREFIX"))
-    assert prefix == "tenant:"
+    assert ontology.WORKSPACE_EXT_PREFIX == "workspace:"
+    assert "tenant:" in ontology.LEGACY_EXT_PREFIXES
 
 
 # --- 7. Identitas deterministik (bukan label — jangan di-rename) ----------

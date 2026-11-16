@@ -2,7 +2,7 @@
 
 Aturan keras (meniru `pgvector.py` + DESIGN §2/§4):
 - Instance DIBANGUN sudah terikat workspace (factory). Semua SQL memakai
-  `WHERE workspace = %s` eksplisit + `SET LOCAL app.current_tenant`.
+  `WHERE workspace = %s` eksplisit + `SET LOCAL app.current_workspace`.
 - `SET LOCAL` hanya dalam `conn.transaction()` eksplisit (pool autocommit!).
 - Traversal = BFS iteratif bounded di Python, BUKAN recursive CTE
   (pelajaran LightRAG #3103: RCTE timeout di hub).
@@ -97,7 +97,7 @@ class PgGraphStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtext(%s))",
@@ -176,7 +176,7 @@ class PgGraphStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 # Lock SAMA dengan upsert: cegah interleave
                 # upsert.DELETE → delete.DELETE → upsert.INSERT (graph bangkit).
@@ -203,7 +203,7 @@ class PgGraphStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 vals = ",".join(["(%s,%s,%s)"] * len(pairs))
                 flat = [v for a, c in pairs for v in (self._workspace, a, c)]
@@ -219,7 +219,7 @@ class PgGraphStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 cur = await conn.execute(
                     "SELECT alias_norm, canonical_norm FROM kg_aliases"
@@ -237,7 +237,7 @@ class PgGraphStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 cur = await conn.execute(
                     "SELECT alias_norm, canonical_norm FROM kg_aliases"
@@ -258,7 +258,7 @@ class PgGraphStore:
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (self._workspace,))
                 cur = await conn.execute(
                     "SELECT COUNT(*) AS n FROM kg_entities WHERE workspace = %s",
@@ -307,7 +307,7 @@ class PgGraphStore:
             async with self._pool.connection() as conn:
                 async with conn.transaction():
                     await conn.execute(
-                        "SELECT set_config('app.current_tenant', %s, true)",
+                        "SELECT set_config('app.current_workspace', %s, true)",
                         (self._workspace,))
                     await conn.execute(
                         f"SET LOCAL statement_timeout = {int(self._timeout_ms)}")

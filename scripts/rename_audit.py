@@ -47,8 +47,6 @@ BUCKETS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # Setiap entri di sini adalah keputusan sadar, bukan kelalaian — dan guard
 # tetap menangkap pemakaian BARU di luar daftar ini.
 FROZEN_ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("guc", re.compile(r"app\.current_tenant")),
-    ("namespace_memori", re.compile(r"""["']tenants["']""")),
     ("prefix_ontologi", re.compile(
         r'WORKSPACE_EXT_PREFIX\s*=\s*"tenant:"')),
     ("komentar_prefix", re.compile(r'# "tenant:" sampai ada migrasi')),
@@ -61,6 +59,8 @@ FROZEN_ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
     # per modul. Guard tetap menangkap pemakaian baru di luar itu.
     ("legacy_claim_def", re.compile(
         r'LEGACY_CLAIM_WORKSPACE\s*=\s*"tenant"')),
+    ("legacy_ext_def", re.compile(
+        r'LEGACY_EXT_PREFIXES\s*=\s*\("tenant:",\)')),
 )
 
 

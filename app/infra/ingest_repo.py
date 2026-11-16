@@ -1,6 +1,6 @@
 """Repo ingest RAG (D12): SQL documents/ingestion_jobs untuk worker + API + test.
 
-Semua query difilter workspace eksplisit + `SET LOCAL app.current_tenant`
+Semua query difilter workspace eksplisit + `SET LOCAL app.current_workspace`
 (kecuali `claim_job` yang lewat fungsi privileged `claim_ingest_job`).
 """
 
@@ -38,7 +38,7 @@ def _workspace_conn(pool, workspace: str):
         async with pool.connection() as conn:
             async with conn.transaction():
                 await conn.execute(
-                    "SELECT set_config('app.current_tenant', %s, true)",
+                    "SELECT set_config('app.current_workspace', %s, true)",
                     (workspace,))
                 yield conn
     return _cm()
@@ -174,7 +174,7 @@ async def claim_job(pool, *, worker_id: str,
                          [worker_id, lease_seconds])
         if row is None:
             return None
-        return await get_job(pool, workspace=row["job_tenant"],
+        return await get_job(pool, workspace=row["job_workspace"],
                              job_id=row["job_id"])
 
 

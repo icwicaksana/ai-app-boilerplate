@@ -77,9 +77,9 @@ def _mem(raw=None):
 
 
 def test_namespace_canonical():
-    assert namespace_for("toko-a", "budi") == ("tenants", "toko-a", "users", "budi")
-    assert namespace_for("Toko-A", "Budi") == ("tenants", "toko-a", "users", "budi")
-    assert _mem().namespace == ("tenants", "toko-a", "users", "budi")
+    assert namespace_for("toko-a", "budi") == ("workspaces", "toko-a", "users", "budi")
+    assert namespace_for("Toko-A", "Budi") == ("workspaces", "toko-a", "users", "budi")
+    assert _mem().namespace == ("workspaces", "toko-a", "users", "budi")
 
 
 @pytest.mark.asyncio
@@ -234,7 +234,7 @@ async def test_put_profile_never_merges_over_failed_read():
     """Baca gagal + tulis bisa → raise TANPA tulis (cengkeraman P1)."""
     """Baca gagal + tulis bisa → raise TANPA tulis (cengkeraman P1)."""
     raw = FlakyReadStore()
-    await FakeRawStore.aput(raw, ("tenants", "toko-a", "users", "budi"),
+    await FakeRawStore.aput(raw, ("workspaces", "toko-a", "users", "budi"),
                             "profile", {"nama": "Budi"})
     mem = _mem(raw)
     with pytest.raises(ConnectionError):

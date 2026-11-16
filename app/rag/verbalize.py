@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from app.rag.ontology import WORKSPACE_EXT_PREFIX
+from app.rag.ontology import extension_suffix
 
 _TEMPLATES = {
     "memasok": "{s} memasok {o}.",
@@ -53,8 +53,11 @@ def _clean_label(text: str) -> str:
 def _render_relation(relation: str) -> str:
     if relation in _TEMPLATES:
         return relation
-    if relation.startswith(WORKSPACE_EXT_PREFIX):  # ekstensi: pakai apa adanya (aman)
-        return _REL_SAFE_RE.sub("", relation[len(WORKSPACE_EXT_PREFIX):]) or "terkait"
+    # v0.8.2 dual-read: prefix kanonis maupun legacy dirender sama, sehingga
+    # data lama dan baru menghasilkan teks identik (gpath_id sitasi stabil).
+    suffix = extension_suffix(relation)
+    if suffix is not None:
+        return _REL_SAFE_RE.sub("", suffix) or "terkait"
     return "terkait"
 
 

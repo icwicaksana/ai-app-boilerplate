@@ -11,6 +11,58 @@ Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 > ontologi `tenant:`, payload Qdrant) sengaja **dibekukan** sampai v0.8.2
 > karena butuh migrasi data — lihat `Docs/RENAME-V081.md`.
 
+## v0.8.2 (2026-11-16) — Selesaikan Tier C: GUC, namespace, ontologi, kode error
+
+**Perbaikan regresi v0.8.1 (P1).** v0.8.1 mengganti klaim JWT `tenant` →
+`workspace` **termasuk** di `options={"require": [...]}` tanpa fase transisi,
+sehingga token yang terbit sebelum deploy langsung ditolak 401. Kini
+**dual-read**: `workspace` diutamakan, nama lama diterima sebagai fallback;
+`TokenClaims.legacy_claim` untuk telemetri. `tests/test_legacy_claim_sunset.py`
+adalah **date-bomb**: gagal setelah 2026-11-30 dan memaksa pencabutan.
+
+**GUC RLS (P3, migrasi 016).** 8 policy → `workspace_isolation`, ekspresi
+`COALESCE(NULLIF(current_setting('app.current_workspace', true), ''),
+NULLIF(current_setting('app.current_tenant', true), ''))`.
+Kenapa COALESCE, bukan switch langsung: `current_setting(..., true)`
+mengembalikan **NULL, bukan error** — policy yang hanya membaca GUC baru pada
+sesi yang menyetel GUC lama mengevaluasi `workspace = NULL` → **0 baris tanpa
+satu pun exception** (SELECT 0 baris, DELETE 0 baris, INSERT ditolak).
+COALESCE membuat urutan deploy apa pun aman dan tetap fail-closed.
+`NULLIF` wajib: GUC yang di-set `''` bernilai `''`, bukan NULL.
+
+**OUT param fungsi (migrasi 017).** `claim_ingest_job` `job_tenant` →
+`job_workspace`. `CREATE OR REPLACE` mustahil (nama OUT = bagian tipe
+kembalian) → DROP+CREATE dalam satu transaksi, dengan re-assert OWNER,
+`REVOKE ALL FROM PUBLIC`, `GRANT` ulang, dan `SET search_path = public`.
+
+**Migrasi data (migrasi 018).** `store.prefix` `tenants.<t>.users.<u>` →
+`workspaces.<t>.users.<u>` (separator **titik**, bukan slash — nilai on-disk
+LangGraph; pola slash akan mengubah 0 baris secara senyap) dan prefix
+ontologi `tenant:` → `workspace:` di `kg_entities.type`/`kg_edges.relation`.
+`ONTO_VERSION` **tidak** di-bump: ia dipakai sebagai filter baca, jadi bump =
+KG blackout sampai reindex penuh.
+
+**Keamanan (migrasi 019).** Temuan baru: PostgreSQL memberi `EXECUTE` kepada
+`PUBLIC` secara default pada setiap fungsi baru, dan 007/014 hanya menulis
+`GRANT ... TO app_api` tanpa `REVOKE ... FROM PUBLIC`. Akibatnya role DB mana
+pun bisa memanggil `get_source_secret(uuid)` (milik `rag_admin` BYPASSRLS) dan
+membaca `secret_enc` **semua** workspace. Kini dicabut dari PUBLIC, diberikan
+hanya ke `app_api` + role koneksi.
+
+**Kode (P2, P4).** Kode error `CROSS_TENANT_DENIED` →
+`CROSS_WORKSPACE_DENIED`. Ontologi: prefix kanonis `workspace:`,
+`LEGACY_EXT_PREFIXES` untuk baca data lama, `canonical_extension()` menormalkan
+tulisan (mencegah duplikat `tenant:x` vs `workspace:x`), `verbalize` merender
+keduanya identik sehingga `gpath_id` sitasi stabil.
+
+**Gate.** 715 unit hijau; 19 integrasi hijau (termasuk kontrak retrieval dua
+backend + persistensi profil dengan namespace baru); guard CI exit 0 dengan
+allowlist menyempit ke **satu baris definisi per modul**; dua jangkar beku
+dipensiunkan sesuai aturan berkasnya (tanggal + alasan) dan diganti jangkar
+setara.
+
+
+
 ## v0.8.1 (2026-11-16) — Rename `tenant` → `workspace` (tanpa perubahan perilaku)
 
 **Terminologi (F1–F3).** 1.806 occurrence di 121 file → `workspace`:

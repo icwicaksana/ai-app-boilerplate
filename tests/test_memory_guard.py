@@ -209,6 +209,6 @@ def test_namespace_rejects_empty():
 
 
 def test_namespace_casefold_and_charset():
-    assert namespace_for("Toko-A", "Budi") == ("tenants", "toko-a", "users", "budi")
+    assert namespace_for("Toko-A", "Budi") == ("workspaces", "toko-a", "users", "budi")
     with pytest.raises(Exception):
         namespace_for("TOKO A!", "budi")
