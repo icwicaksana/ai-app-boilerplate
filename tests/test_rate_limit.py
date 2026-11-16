@@ -6,9 +6,9 @@ from app.core.ratelimit import RateLimiter
 from tests._fake_cache import FakeCache
 
 
-async def _check(limiter, limit=3, subject="budi", tenant="toko-a",
+async def _check(limiter, limit=3, subject="budi", workspace="toko-a",
                  scope="chat", now=1000.0):
-    return await limiter.check(scope=scope, tenant=tenant, subject=subject,
+    return await limiter.check(scope=scope, workspace=workspace, subject=subject,
                                limit=limit, now=now)
 
 
@@ -38,10 +38,10 @@ async def test_identity_isolation():
     for _ in range(3):
         await _check(lim, subject="budi")
     assert (await _check(lim, subject="budi")).allowed is False
-    # user lain di tenant sama tidak terpengaruh
+    # user lain di workspace sama tidak terpengaruh
     assert (await _check(lim, subject="ani")).allowed is True
-    # tenant lain juga tidak
-    assert (await _check(lim, tenant="toko-b", subject="budi")).allowed is True
+    # workspace lain juga tidak
+    assert (await _check(lim, workspace="toko-b", subject="budi")).allowed is True
 
 
 @pytest.mark.asyncio

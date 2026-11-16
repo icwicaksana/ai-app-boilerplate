@@ -20,14 +20,14 @@ DEFAULT_SCOPES = "chat jobs threads"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS app_users (
     id            BIGSERIAL PRIMARY KEY,
-    tenant        TEXT        NOT NULL,
+    workspace        TEXT        NOT NULL,
     username      TEXT        NOT NULL,
     password_hash TEXT        NOT NULL,
     scopes        TEXT        NOT NULL DEFAULT 'chat jobs threads',
     is_active     BOOLEAN     NOT NULL DEFAULT TRUE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ,
-    UNIQUE (tenant, username)
+    UNIQUE (workspace, username)
 )
 """
 
@@ -39,31 +39,31 @@ async def ensure_schema(pool: AsyncConnectionPool) -> None:
     log.info("auth schema ready (app_users)")
 
 
-async def get_user(pool: AsyncConnectionPool, tenant: str,
+async def get_user(pool: AsyncConnectionPool, workspace: str,
                    username: str) -> dict[str, Any] | None:
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT id, tenant, username, password_hash, scopes, is_active "
-            "FROM app_users WHERE tenant = %s AND username = %s",
-            (tenant, username),
+            "SELECT id, workspace, username, password_hash, scopes, is_active "
+            "FROM app_users WHERE workspace = %s AND username = %s",
+            (workspace, username),
         )
         row = await cur.fetchone()
     return dict(row) if row else None
 
 
-async def create_user(pool: AsyncConnectionPool, *, tenant: str, username: str,
+async def create_user(pool: AsyncConnectionPool, *, workspace: str, username: str,
                       password_hash: str, scopes: str = DEFAULT_SCOPES,
                       is_active: bool = True) -> int:
     """Insert user baru; raise ValueError bila sudah ada (unique)."""
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "INSERT INTO app_users (tenant, username, password_hash, scopes, "
+            "INSERT INTO app_users (workspace, username, password_hash, scopes, "
             "is_active) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (tenant, username, password_hash, scopes, is_active),
+            (workspace, username, password_hash, scopes, is_active),
         )
         row = await cur.fetchone()
     user_id = int(row["id"])
-    log.info("user dibuat id=%s tenant=%s username=%s", user_id, tenant, username)
+    log.info("user dibuat id=%s workspace=%s username=%s", user_id, workspace, username)
     return user_id
 
 
@@ -75,11 +75,11 @@ async def mark_login(pool: AsyncConnectionPool, user_id: int) -> None:
         )
 
 
-async def set_active(pool: AsyncConnectionPool, *, tenant: str, username: str,
+async def set_active(pool: AsyncConnectionPool, *, workspace: str, username: str,
                      is_active: bool) -> bool:
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "UPDATE app_users SET is_active = %s WHERE tenant = %s AND username = %s",
-            (is_active, tenant, username),
+            "UPDATE app_users SET is_active = %s WHERE workspace = %s AND username = %s",
+            (is_active, workspace, username),
         )
         return (cur.rowcount or 0) > 0

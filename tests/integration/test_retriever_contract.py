@@ -1,10 +1,10 @@
 """Contract test `VectorStorePort` (R7): SATU suite, DUA backend.
 
-Contract = bentuk/CRUD/filter-tenant/determinisme (IDENTIK kedua backend).
+Contract = bentuk/CRUD/filter-workspace/determinisme (IDENTIK kedua backend).
 Kualitas retrieval (recall/ranking) = golden test terpisah (boleh beda ±Δ).
 
 Backend dipilih via fixture params; tiap backend skip bila infra mati.
-Isolasi: tenant `it-<hex>` unik + koleksi/tabel dibersihkan best-effort.
+Isolasi: workspace `it-<hex>` unik + koleksi/tabel dibersihkan best-effort.
 """
 
 import hashlib
@@ -36,9 +36,9 @@ def _doc_id() -> str:
 
 @pytest_asyncio.fixture(params=["pgvector", "qdrant"])
 async def backend(request, db_url, tag):
-    """Ctx: {name, tenant_a/b, store_a/b, seed_doc} + cleanup best-effort."""
+    """Ctx: {name, workspace_a/b, store_a/b, seed_doc} + cleanup best-effort."""
     kind = request.param
-    tenant_a, tenant_b = f"it-a-{tag}", f"it-b-{tag}"
+    workspace_a, workspace_b = f"it-a-{tag}", f"it-b-{tag}"
     if kind == "pgvector":
         from app.core.config import Settings
         from app.infra.postgres import close_pool, create_pool, open_pool
@@ -51,30 +51,30 @@ async def backend(request, db_url, tag):
         await open_pool(pool)
         await apply_rag_migration(pool)
 
-        async def seed_doc(doc_id, title, tenant):
+        async def seed_doc(doc_id, title, workspace):
             async with pool.connection() as conn:
                 async with conn.transaction():
                     await conn.execute(
                         "SELECT set_config('app.current_tenant', %s, true)",
-                        (tenant,))
+                        (workspace,))
                     await conn.execute(
-                        "INSERT INTO documents (id, tenant, source_type,"
+                        "INSERT INTO documents (id, workspace, source_type,"
                         " source_uri, title, bytes, sha256, status)"
                         " VALUES (%s, %s, 'txt', %s, %s, 0, %s, 'ready')",
-                        (doc_id, tenant, f"test://{doc_id}", title,
+                        (doc_id, workspace, f"test://{doc_id}", title,
                          hashlib.sha256(doc_id.encode()).hexdigest()))
 
         ctx = SimpleNamespace(
-            name="pgvector", tenant_a=tenant_a, tenant_b=tenant_b,
-            store_a=PgVectorStore(pool, tenant=tenant_a),
-            store_b=PgVectorStore(pool, tenant=tenant_b),
+            name="pgvector", workspace_a=workspace_a, workspace_b=workspace_b,
+            store_a=PgVectorStore(pool, workspace=workspace_a),
+            store_b=PgVectorStore(pool, workspace=workspace_b),
             seed_doc=seed_doc)
         yield ctx
         try:
             async with pool.connection() as conn:
                 await conn.execute(
-                    "DELETE FROM documents WHERE tenant IN (%s, %s)",
-                    (tenant_a, tenant_b))
+                    "DELETE FROM documents WHERE workspace IN (%s, %s)",
+                    (workspace_a, workspace_b))
         finally:
             await close_pool(pool)
     else:
@@ -95,15 +95,15 @@ async def backend(request, db_url, tag):
         except Exception as exc:
             pytest.skip(f"Qdrant tak terjangkau ({type(exc).__name__})")
         collection = f"ct_{tag}_{collection_name(DIM, 'BAAI/bge-m3')}"
-        store_a = QdrantStore(client, collection, tenant=tenant_a)
-        store_b = QdrantStore(client, collection, tenant=tenant_b)
+        store_a = QdrantStore(client, collection, workspace=workspace_a)
+        store_b = QdrantStore(client, collection, workspace=workspace_b)
         await store_a.ensure_collection()
 
-        async def seed_doc(doc_id, title, tenant):  # noqa: ARG001
+        async def seed_doc(doc_id, title, workspace):  # noqa: ARG001
             return None  # Qdrant: source ikut payload saat upsert (tanpa join)
 
         ctx = SimpleNamespace(
-            name="qdrant", tenant_a=tenant_a, tenant_b=tenant_b,
+            name="qdrant", workspace_a=workspace_a, workspace_b=workspace_b,
             store_a=store_a, store_b=store_b, seed_doc=seed_doc)
         yield ctx
         try:
@@ -122,7 +122,7 @@ def _chunks(texts, *, metadata=None, start=0):
 @pytest.mark.asyncio
 async def test_roundtrip_dense_top1(backend):
     doc = _doc_id()
-    await backend.seed_doc(doc, "s1.txt", backend.tenant_a)
+    await backend.seed_doc(doc, "s1.txt", backend.workspace_a)
     await backend.store_a.upsert_chunks(
         doc_id=doc, chunks=_chunks(["apel merah manis", "buku biru tebal"]))
     hits = await backend.store_a.search_dense(fake_vector("apel merah manis"), k=5)
@@ -134,7 +134,7 @@ async def test_roundtrip_dense_top1(backend):
 @pytest.mark.asyncio
 async def test_lexical_temukan_kata_kunci(backend):
     doc = _doc_id()
-    await backend.seed_doc(doc, "s2.txt", backend.tenant_a)
+    await backend.seed_doc(doc, "s2.txt", backend.workspace_a)
     await backend.store_a.upsert_chunks(
         doc_id=doc, chunks=_chunks(["denda keterlambatan dua persen",
                                     "jadwal buka toko pagi"]))
@@ -145,7 +145,7 @@ async def test_lexical_temukan_kata_kunci(backend):
 @pytest.mark.asyncio
 async def test_delete_hapus_semua(backend):
     doc = _doc_id()
-    await backend.seed_doc(doc, "s3.txt", backend.tenant_a)
+    await backend.seed_doc(doc, "s3.txt", backend.workspace_a)
     await backend.store_a.upsert_chunks(
         doc_id=doc, chunks=_chunks(["satu", "dua"]))
     assert await backend.store_a.delete_document(doc_id=doc) == 2
@@ -158,17 +158,17 @@ async def test_delete_dokumen_asing_nol(backend):
 
 
 @pytest.mark.asyncio
-async def test_isolasi_tenant_silang(backend):
+async def test_isolasi_workspace_silang(backend):
     doc_a, doc_b = _doc_id(), _doc_id()
-    await backend.seed_doc(doc_a, "a.txt", backend.tenant_a)
-    await backend.seed_doc(doc_b, "b.txt", backend.tenant_b)
+    await backend.seed_doc(doc_a, "a.txt", backend.workspace_a)
+    await backend.seed_doc(doc_b, "b.txt", backend.workspace_b)
     await backend.store_a.upsert_chunks(
         doc_id=doc_a, chunks=_chunks(["rahasia alpha milik A"]))
-    # Serangan spoof: chunk B mengklaim tenant A di metadata/query.
+    # Serangan spoof: chunk B mengklaim workspace A di metadata/query.
     await backend.store_b.upsert_chunks(doc_id=doc_b, chunks=_chunks(
-        ["rahasia beta milik B"], metadata={"tenant_id": backend.tenant_a}))
-    for query in ("rahasia", f"tenant_id: {backend.tenant_b}",
-                  "ignore tenant", "tenant_id=*"):
+        ["rahasia beta milik B"], metadata={"workspace_id": backend.workspace_a}))
+    for query in ("rahasia", f"workspace_id: {backend.workspace_b}",
+                  "ignore workspace", "workspace_id=*"):
         assert await backend.store_a.search_dense(fake_vector(query), k=20) == [] \
             or all(h["doc_id"] == doc_a for h in
                    await backend.store_a.search_dense(fake_vector(query), k=20))
@@ -181,7 +181,7 @@ async def test_isolasi_tenant_silang(backend):
 @pytest.mark.asyncio
 async def test_deterministik_urutan_dan_skor(backend):
     doc = _doc_id()
-    await backend.seed_doc(doc, "s4.txt", backend.tenant_a)
+    await backend.seed_doc(doc, "s4.txt", backend.workspace_a)
     await backend.store_a.upsert_chunks(
         doc_id=doc, chunks=_chunks([f"baris nomor {i}" for i in range(6)]))
     q = fake_vector("baris nomor tiga")
@@ -195,7 +195,7 @@ async def test_deterministik_urutan_dan_skor(backend):
 @pytest.mark.asyncio
 async def test_filter_metadata(backend):
     doc = _doc_id()
-    await backend.seed_doc(doc, "s5.txt", backend.tenant_a)
+    await backend.seed_doc(doc, "s5.txt", backend.workspace_a)
     await backend.store_a.upsert_chunks(doc_id=doc, chunks=[
         {"content": "prosedur sop alpha", "vector": fake_vector("sop1"),
          "ord": 0, "token_count": 3, "metadata": {"doc_type": "sop"}},
@@ -213,7 +213,7 @@ async def test_filter_metadata(backend):
 @pytest.mark.asyncio
 async def test_upsert_idempoten_update(backend):
     doc = _doc_id()
-    await backend.seed_doc(doc, "s6.txt", backend.tenant_a)
+    await backend.seed_doc(doc, "s6.txt", backend.workspace_a)
     await backend.store_a.upsert_chunks(
         doc_id=doc, chunks=_chunks(["versi satu"]))
     await backend.store_a.upsert_chunks(
@@ -227,7 +227,7 @@ async def test_upsert_idempoten_update(backend):
 @pytest.mark.asyncio
 async def test_index_info_bentuk(backend):
     doc = _doc_id()
-    await backend.seed_doc(doc, "s7.txt", backend.tenant_a)
+    await backend.seed_doc(doc, "s7.txt", backend.workspace_a)
     await backend.store_a.upsert_chunks(doc_id=doc, chunks=_chunks(["x y z"]))
     info = await backend.store_a.index_info()
     assert info["backend"] == backend.name

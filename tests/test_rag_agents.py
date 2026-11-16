@@ -263,7 +263,7 @@ def test_middleware_retrieval_limit_10_dan_exclude():
 
 # --- wiring controller ---
 
-def test_controller_injeksi_retriever_tenant_bound():
+def test_controller_injeksi_retriever_workspace_bound():
     from types import SimpleNamespace
 
     from app.controllers.ChatController import ChatController
@@ -275,11 +275,11 @@ def test_controller_injeksi_retriever_tenant_bound():
                           pool=object(), rag=clients)
     agent = chat._agent_for("toko-a:budi:sess-1", "rag_chat")
     assert agent.retriever is not None
-    assert agent.retriever._store._tenant == "toko-a"
+    assert agent.retriever._store._workspace == "toko-a"
     job = JobController(_settings(), InMemorySaver(), Runner(),
                         pool=object(), rag=clients)
     agent2 = job._agent_for("toko-b:siti:sess-2", "rag_answer")
-    assert agent2.retriever._store._tenant == "toko-b"
+    assert agent2.retriever._store._workspace == "toko-b"
 
 
 def test_controller_tanpa_rag_503_untuk_rag_agent():

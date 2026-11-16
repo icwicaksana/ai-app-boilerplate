@@ -27,9 +27,9 @@ def _dummy_settings():
 @pytest.mark.asyncio
 async def test_fork_copies_prefix_then_delete_source(persistence, tag):
     _, checkpointer, store = persistence
-    tenant, user = f"it-{tag}", "budi"
-    ident = ThreadIdentity(tenant=tenant, user=user)
-    src = f"{tenant}:{user}:sess-src"
+    workspace, user = f"it-{tag}", "budi"
+    ident = ThreadIdentity(workspace=workspace, user=user)
+    src = f"{workspace}:{user}:sess-src"
 
     ctx = AgentContext(settings=_dummy_settings(), checkpointer=checkpointer,
                        runner=Runner(), session_id=src)
@@ -43,7 +43,7 @@ async def test_fork_copies_prefix_then_delete_source(persistence, tag):
                                             HumanMessage(content="m1")]})
 
     ctrl = ThreadController(_dummy_settings(), checkpointer, Runner())
-    mem = MemoryStore(store, tenant, user)
+    mem = MemoryStore(store, workspace, user)
     await mem.put_profile({"nama": "Budi"})
     forked_id: str | None = None
     try:
@@ -53,7 +53,7 @@ async def test_fork_copies_prefix_then_delete_source(persistence, tag):
 
         forked = await ctrl.fork(ident, src, old_cp, "example_chat")
         forked_id = forked.thread_id
-        assert forked.thread_id.startswith(f"{tenant}:{user}:sess-")
+        assert forked.thread_id.startswith(f"{workspace}:{user}:sess-")
         assert forked.thread_id != src
 
         state = await ctrl.get_state(ident, forked.thread_id)

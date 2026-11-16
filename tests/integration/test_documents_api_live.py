@@ -1,7 +1,7 @@
 """Live API dokumen: lifespan nyata + Postgres + Valkey + Infinity.
 
 Siklus: upload → proses inline (repo+worker) → GET/SSE/search → retry → hapus.
-Klien module-scoped (lifespan RAG ±20 dtk, sekali saja); tenant unik per test.
+Klien module-scoped (lifespan RAG ±20 dtk, sekali saja); workspace unik per test.
 """
 
 import asyncio
@@ -60,7 +60,7 @@ def live(tmp_path_factory):
                "db_url": db_url, "embed_url": embed_url}
 
 
-def _seed_user(db_url, tenant, username, password):
+def _seed_user(db_url, workspace, username, password):
     async def _go():
         from app.infra.postgres import close_pool, create_pool, open_pool
 
@@ -69,7 +69,7 @@ def _seed_user(db_url, tenant, username, password):
         try:
             await users.ensure_schema(pool)
             await users.create_user(
-                pool, tenant=tenant, username=username,
+                pool, workspace=workspace, username=username,
                 password_hash=hash_password(password))
         finally:
             await close_pool(pool)
@@ -80,18 +80,18 @@ def _seed_user(db_url, tenant, username, password):
 @pytest.fixture
 def auth(live):
     db_url = live["db_url"]
-    tenant = "it-doc-" + uuid.uuid4().hex[:6]
+    workspace = "it-doc-" + uuid.uuid4().hex[:6]
     username = "u" + uuid.uuid4().hex[:6]
     password = "rahasia-" + uuid.uuid4().hex[:8]
-    _seed_user(db_url, tenant, username, password)
+    _seed_user(db_url, workspace, username, password)
     res = live["client"].post("/api/v1/auth/login", json={
-        "tenant": tenant, "username": username, "password": password})
+        "workspace": workspace, "username": username, "password": password})
     assert res.status_code == 200, res.text
     token = res.json()["access_token"]
-    return tenant, {"Authorization": f"Bearer {token}"}
+    return workspace, {"Authorization": f"Bearer {token}"}
 
 
-def _process_inline(db_url, embed_url, storage, tenant, document_id):
+def _process_inline(db_url, embed_url, storage, workspace, document_id):
     """Jalankan worker inline (pool+embed sendiri, loop sendiri)."""
     from app.infra import ingest_repo as repo
     from app.infra.postgres import close_pool, create_pool, open_pool
@@ -115,10 +115,10 @@ def _process_inline(db_url, embed_url, storage, tenant, document_id):
             await purge_stale_test_jobs(pool, keep_document_id=document_id)
             async with pool.connection() as _c:
                 await _c.execute(
-                    "DELETE FROM documents WHERE tenant LIKE 'it-doc-%%'"
+                    "DELETE FROM documents WHERE workspace LIKE 'it-doc-%%'"
                     " AND id::text != %s", (document_id,))
             job = await repo.latest_job_for_document(
-                pool, tenant=tenant, document_id=document_id)
+                pool, workspace=workspace, document_id=document_id)
             assert job is not None
             claimed = await repo.claim_job(pool, worker_id="live-inline")
             assert claimed is not None and claimed["id"] == job["id"], \
@@ -138,7 +138,7 @@ def _process_inline(db_url, embed_url, storage, tenant, document_id):
 
 def test_live_upload_proses_search_hapus(live, auth):
     client = live["client"]
-    tenant, headers = auth
+    workspace, headers = auth
     storage = live["settings"].RAG_STORAGE_DIR
 
     up = client.post("/api/v1/documents",
@@ -151,7 +151,7 @@ def test_live_upload_proses_search_hapus(live, auth):
     assert got.status_code == 200 and got.json()["status"] == "pending"
 
     assert _process_inline(live["db_url"], live["embed_url"], storage,
-                           tenant, doc_id) == "done"
+                           workspace, doc_id) == "done"
 
     got2 = client.get(f"/api/v1/documents/{doc_id}", headers=headers)
     assert got2.json()["status"] == "ready", got2.text
@@ -165,7 +165,7 @@ def test_live_upload_proses_search_hapus(live, auth):
                          json={"query": "berapa lama retur?", "k": 3},
                          headers=headers)
     assert search.status_code == 200, search.text
-    # Bentuk + tenant-bound (kualitas ranking = eval mini F6, bukan di sini).
+    # Bentuk + workspace-bound (kualitas ranking = eval mini F6, bukan di sini).
     assert search.json()["matches"], search.text
     assert search.json()["matches"][0]["n"] == 1
     assert search.json()["meta"]["backend"] == "pgvector"
@@ -190,20 +190,20 @@ def test_live_idempotency_key_asli(live, auth):
     assert r2.json()["document_id"] == r1.json()["document_id"]
 
 
-def test_live_lintas_tenant_404(live, auth):
+def test_live_lintas_workspace_404(live, auth):
     client = live["client"]
-    tenant_a, headers_a = auth
+    workspace_a, headers_a = auth
     up = client.post("/api/v1/documents",
                      files={"file": ("rahasia.md", b"rahasia A",
                                      "text/markdown")},
                      headers=headers_a)
     doc_id = up.json()["document_id"]
 
-    tenant_b = "it-doc-" + uuid.uuid4().hex[:6]
-    user_b, pass_b = "ub" + tenant_b[-4:], "p-" + uuid.uuid4().hex[:8]
-    _seed_user(live["db_url"], tenant_b, user_b, pass_b)
+    workspace_b = "it-doc-" + uuid.uuid4().hex[:6]
+    user_b, pass_b = "ub" + workspace_b[-4:], "p-" + uuid.uuid4().hex[:8]
+    _seed_user(live["db_url"], workspace_b, user_b, pass_b)
     login = client.post("/api/v1/auth/login", json={
-        "tenant": tenant_b, "username": user_b, "password": pass_b})
+        "workspace": workspace_b, "username": user_b, "password": pass_b})
     headers_b = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
     assert client.get(f"/api/v1/documents/{doc_id}",
@@ -216,14 +216,14 @@ def test_live_lintas_tenant_404(live, auth):
 
 def test_live_retry_kosong_dead_lalu_ocr_flag(live, auth):
     client = live["client"]
-    tenant, headers = auth
+    workspace, headers = auth
     up = client.post("/api/v1/documents",
                      files={"file": ("kosong.md", b"\n\n",
                                      "text/markdown")},
                      headers=headers)
     doc_id, job_id = up.json()["document_id"], up.json()["job_id"]
     assert _process_inline(live["db_url"], live["settings"].RAG_EMBED_BASE_URL,
-                           live["settings"].RAG_STORAGE_DIR, tenant,
+                           live["settings"].RAG_STORAGE_DIR, workspace,
                            doc_id) == "dead"
     job = client.get(f"/api/v1/ingestion_jobs/{job_id}", headers=headers)
     assert "EMPTY_DOCUMENT" in (job.json()["last_error"] or "")

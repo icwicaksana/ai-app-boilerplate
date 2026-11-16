@@ -5,7 +5,7 @@ Dipanggil orchestrator (`layered`) HANYA bila trigger terpenuhi
 cache-hash 7 hari → breaker → kuota harian → cap per-dok (orkestrator).
 
 Penyederhanaan F4 (tercatat, konservatif): kuota = per-PROSES per-hari
-(bukan per-tenant — protocol `extract` tanpa tenant; split per-tenant =
+(bukan per-workspace — protocol `extract` tanpa workspace; split per-workspace =
 tier-M). Nilai kuota dipakai apa adanya → bound global lebih ketat.
 """
 

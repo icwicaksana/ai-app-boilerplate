@@ -3,14 +3,14 @@
 Aturan modul (test arsitektur `test_rag_arch.py`):
 - File ini + seluruh `app/rag/` DILARANG mengimpor `app/infra`, `httpx`,
   `qdrant_client`, `psycopg`, `fastapi`, atau SDK model. Pure Python + pydantic.
-- Tenant dikunci saat CONSTRUCTION (factory-bound, D2) — tidak ada argumen
-  tenant di method query. Implementasi yang menerima tenant per-call = langgar kontrak.
+- Workspace dikunci saat CONSTRUCTION (factory-bound, D2) — tidak ada argumen
+  workspace di method query. Implementasi yang menerima workspace per-call = langgar kontrak.
 
 Lapis:
 - `EmbeddingsPort` / `RerankerPort` — jasa model (adapter: Infinity).
 - `VectorStorePort` — primitif per-backend (adapter: pgvector / Qdrant).
   `RAG_BACKEND` mengganti INI, bukan seluruh retrieval.
-- `BoundRetriever` — hasil `RetrieverFactory.for_tenant()`; dipakai agen.
+- `BoundRetriever` — hasil `RetrieverFactory.for_workspace()`; dipakai agen.
 - `SourceConnector` / `OCREngine` / `DocumentParser` — ingest (D10/D11).
 - v0.8 (Docs/RAG-V08-DESIGN.md): `GraphStore` + `EntityExtractor` +
   `GraphRanker` — graph PG-native doc-scoped, factory-bound (D2).
@@ -196,7 +196,7 @@ class TokenizerPort(Protocol):
 
 
 class VectorStorePort(Protocol):
-    """Primitif vektor per-backend. Dibangun SUDAH terikat tenant (D2)."""
+    """Primitif vektor per-backend. Dibangun SUDAH terikat workspace (D2)."""
 
     backend_name: str
 
@@ -213,15 +213,15 @@ class VectorStorePort(Protocol):
         k: int,
         filters: dict[str, Any] | None = None,
     ) -> list[CitedChunk]:
-        """Top-k ANN. Filter tenant SUDAH di dalam (pre-filter, D2).
-        `filters` = metadata BUKAN tenant (doc_type, access_level, ...)."""
+        """Top-k ANN. Filter workspace SUDAH di dalam (pre-filter, D2).
+        `filters` = metadata BUKAN workspace (doc_type, access_level, ...)."""
         ...
 
     async def search_lexical(
         self, query: str, *, k: int, filters: dict[str, Any] | None = None,
         raw_query: str | None = None,
     ) -> list[CitedChunk]:
-        """Top-k lexical (tsvector PG / full-text Qdrant). Pre-filter tenant.
+        """Top-k lexical (tsvector PG / full-text Qdrant). Pre-filter workspace.
 
         `query` = SUDAH dinormalisasi pipeline (normalize.py); `raw_query` =
         query mentah untuk cabang fallback baris lama (pre-010, tanpa
@@ -232,7 +232,7 @@ class VectorStorePort(Protocol):
         ...
 
     async def delete_document(self, *, doc_id: str) -> int:
-        """Hapus semua vektor 1 dokumen (milik tenant terikat)."""
+        """Hapus semua vektor 1 dokumen (milik workspace terikat)."""
         ...
 
     async def index_info(self) -> IndexInfo:
@@ -241,7 +241,7 @@ class VectorStorePort(Protocol):
 
 
 class BoundRetriever(Protocol):
-    """Retriever terikat tenant — SATU-SATUNYA yang dipakai agen (D2)."""
+    """Retriever terikat workspace — SATU-SATUNYA yang dipakai agen (D2)."""
 
     async def search(
         self,
@@ -251,7 +251,7 @@ class BoundRetriever(Protocol):
         filters: dict[str, Any] | None = None,
     ) -> RetrievalResult:
         """Hybrid penuh: embed → dense+lexical → RRF → rerank → top-k.
-        `filters` = metadata BUKAN tenant (tenant sudah terkunci)."""
+        `filters` = metadata BUKAN workspace (workspace sudah terkunci)."""
         ...
 
 
@@ -302,7 +302,7 @@ class KgEntityIn(TypedDict, total=False):
 
     name: str            # tampil ("PT Maju Jaya")
     norm: str            # kunci dedup (lower+fold TANPA stem)
-    type: str            # tipe ontologi core / tenant:*
+    type: str            # tipe ontologi core / workspace:*
     confidence: float    # 0..1
     chunk_ord: int       # provenance → chunk
     chunk_id: str        # format citations.chunk_id (stabil)
@@ -313,7 +313,7 @@ class KgEdgeIn(TypedDict, total=False):
 
     src_norm: str
     dst_norm: str
-    relation: str        # relasi ontologi core / tenant:* / related_to
+    relation: str        # relasi ontologi core / workspace:* / related_to
     confidence: float
     layer: str           # "L1" | "L2" | "L3"
     coref_resolved: bool
@@ -362,7 +362,7 @@ class Extraction(TypedDict):
 
 
 class GraphStore(Protocol):
-    """Store graph factory-bound tenant (D2) — tanpa argumen tenant."""
+    """Store graph factory-bound workspace (D2) — tanpa argumen workspace."""
 
     backend_name: str    # "pggraph"
 
@@ -379,11 +379,11 @@ class GraphStore(Protocol):
         max_hops: int = 2, fanout: int = 50,
     ) -> list[KgHit]:
         """Seed (norm entitas query) → BFS bounded → evidence. Pre-filter
-        tenant + whitelist filter SAMA dengan VectorStore di tiap hop (D13)."""
+        workspace + whitelist filter SAMA dengan VectorStore di tiap hop (D13)."""
         ...
 
     async def resolve_seeds(self, seeds: list[str]) -> list[str]:
-        """Norm seed → norm kanonis (alias tenant + keberadaan entity).
+        """Norm seed → norm kanonis (alias workspace + keberadaan entity).
 
         Return subset yang MATCH entity (sesudah alias). Pipeline memakai
         rasio match/request sebagai `seed_confidence` REAL (F4).
@@ -391,11 +391,11 @@ class GraphStore(Protocol):
         ...
 
     async def upsert_aliases(self, aliases: dict[str, str]) -> int:
-        """Tulis alias tenant (alias_norm → canonical_norm). Return jumlah."""
+        """Tulis alias workspace (alias_norm → canonical_norm). Return jumlah."""
         ...
 
     async def list_aliases(self) -> dict[str, str]:
-        """Seluruh alias tenant (tabel kecil; pipeline cache per-request).
+        """Seluruh alias workspace (tabel kecil; pipeline cache per-request).
 
         Dipakai seed preseed: substring-match query (longest-first) agar
         alias multi-kata ("komputer jinjing", "ess") selalu terjangkau
@@ -404,7 +404,7 @@ class GraphStore(Protocol):
         ...
 
     async def delete_subgraph(self, *, doc_id: str) -> tuple[int, int]:
-        """Hapus entitas+edge 1 dokumen (milik tenant terikat). Idempoten."""
+        """Hapus entitas+edge 1 dokumen (milik workspace terikat). Idempoten."""
         ...
 
     async def graph_info(self) -> GraphInfo:

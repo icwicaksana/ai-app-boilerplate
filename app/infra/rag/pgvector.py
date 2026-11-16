@@ -1,8 +1,8 @@
 """`VectorStorePort` via Postgres: dense HNSW + lexical tsvector (D3, T02/T03).
 
 Aturan keras (D2):
-- Instance DIBANGUN sudah terikat tenant (factory). Semua SQL memakai
-  `WHERE tenant = $1` eksplisit + `SET LOCAL app.current_tenant` (RLS lapis 3).
+- Instance DIBANGUN sudah terikat workspace (factory). Semua SQL memakai
+  `WHERE workspace = $1` eksplisit + `SET LOCAL app.current_tenant` (RLS lapis 3).
 - Vektor dikirim sebagai string `'[..]'::vector` (tanpa dep `pgvector-python`;
   kita tak pernah membaca embedding kembali — hanya content/metadata/skor).
 - `SET LOCAL` hanya dalam `conn.transaction()` eksplisit (pool autocommit!).
@@ -27,7 +27,7 @@ def format_vector(vec: list[float]) -> str:
 
 
 class PgVectorStore:
-    """Adapter pgvector, terikat 1 tenant + 1 pin embedding (D6)."""
+    """Adapter pgvector, terikat 1 workspace + 1 pin embedding (D6)."""
 
     backend_name = "pgvector"
 
@@ -35,16 +35,16 @@ class PgVectorStore:
         self,
         pool: AsyncConnectionPool,
         *,
-        tenant: str,
+        workspace: str,
         model: str = "BAAI/bge-m3",
         dim: int = 1024,
         version: str = "v1",
         ef_search: int = 100,
     ) -> None:
-        if not tenant:
-            raise ValueError("PgVectorStore wajib tenant (factory-bound, D2).")
+        if not workspace:
+            raise ValueError("PgVectorStore wajib workspace (factory-bound, D2).")
         self._pool = pool
-        self._tenant = tenant
+        self._workspace = workspace
         self._model = model
         self._dim = dim
         self._version = version
@@ -75,7 +75,7 @@ class PgVectorStore:
                 raise ValueError("chunk tanpa content")
             vec = c.get("vector")
             rows.append((
-                self._tenant, doc_id, int(c.get("ord", 0)), content,
+                self._workspace, doc_id, int(c.get("ord", 0)), content,
                 c.get("content_norm"),
                 c.get("token_count") or max(1, len(content.split())),
                 c.get("page"), c.get("sheet"), c.get("heading"),
@@ -87,10 +87,10 @@ class PgVectorStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 cur = conn.cursor()
                 await cur.executemany(
-                    "INSERT INTO chunks (tenant, document_id, ord, content,"
+                    "INSERT INTO chunks (workspace, document_id, ord, content,"
                     " content_norm,"
                     " token_count, page, sheet, heading, embedding,"
                     " embedding_model, embedding_dim, embedding_version, meta)"
@@ -118,17 +118,17 @@ class PgVectorStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 await conn.execute(f"SET LOCAL hnsw.ef_search = {int(self._ef_search)}")
                 cur = await conn.execute(
                     "SELECT c.id, c.document_id, c.ord, c.content, c.page,"
                     " c.sheet, c.heading, c.meta, d.title AS source,"
                     " (c.embedding <=> %s::vector) AS dist"
                     " FROM chunks c JOIN documents d ON d.id = c.document_id"
-                    " WHERE c.tenant = %s AND c.embedding IS NOT NULL"
+                    " WHERE c.workspace = %s AND c.embedding IS NOT NULL"
                     + clause +
                     " ORDER BY dist LIMIT %s",
-                    [format_vector(vector), self._tenant, *fparams, k],
+                    [format_vector(vector), self._workspace, *fparams, k],
                 )
                 rows = await cur.fetchall()
         return [self._to_cited(r, score=-float(r["dist"])) for r in rows]
@@ -150,7 +150,7 @@ class PgVectorStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 cur = await conn.execute(
                     "SELECT c.id, c.document_id, c.ord, c.content, c.page,"
                     " c.sheet, c.heading, c.meta, d.title AS source,"
@@ -159,12 +159,12 @@ class PgVectorStore:
                     " ts_rank_cd(c.content_tsv,"
                     " plainto_tsquery('simple', %s))) AS rank"
                     " FROM chunks c JOIN documents d ON d.id = c.document_id"
-                    " WHERE c.tenant = %s"
+                    " WHERE c.workspace = %s"
                     " AND (c.content_tsv_norm @@ plainto_tsquery('simple', %s)"
                     " OR c.content_tsv @@ plainto_tsquery('simple', %s))"
                     + clause +
                     " ORDER BY rank DESC LIMIT %s",
-                    [query, raw, self._tenant, query, raw, *fparams, k],
+                    [query, raw, self._workspace, query, raw, *fparams, k],
                 )
                 rows = await cur.fetchall()
         return [self._to_cited(r, score=float(r["rank"])) for r in rows]
@@ -174,10 +174,10 @@ class PgVectorStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 cur = await conn.execute(
-                    "DELETE FROM chunks WHERE tenant = %s AND document_id = %s",
-                    (self._tenant, doc_id),
+                    "DELETE FROM chunks WHERE workspace = %s AND document_id = %s",
+                    (self._workspace, doc_id),
                 )
                 return cur.rowcount or 0
 
@@ -186,15 +186,15 @@ class PgVectorStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 cur = await conn.execute(
-                    "SELECT count(*) AS n FROM chunks WHERE tenant = %s",
-                    (self._tenant,))
+                    "SELECT count(*) AS n FROM chunks WHERE workspace = %s",
+                    (self._workspace,))
                 n = (await cur.fetchone())["n"]
                 cur = await conn.execute(
                     "SELECT embedding_model, embedding_dim, embedding_version"
-                    " FROM chunks WHERE tenant = %s LIMIT 1",
-                    (self._tenant,))
+                    " FROM chunks WHERE workspace = %s LIMIT 1",
+                    (self._workspace,))
                 row = await cur.fetchone()
         if row is None:
             return {"backend": self.backend_name, "embedding_model": self._model,

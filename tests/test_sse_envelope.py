@@ -28,7 +28,7 @@ def _settings():
 
 
 def _ident():
-    return ThreadIdentity(tenant="toko-a", user="budi")
+    return ThreadIdentity(workspace="toko-a", user="budi")
 
 
 def _run(coro):
@@ -92,7 +92,7 @@ def test_unknown_agent_yields_terminal_error():
     assert err["title"] == "Agent Not Found"  # T-03: judul asli, bukan generik
 
 
-def test_cross_tenant_thread_yields_terminal_403():
+def test_cross_workspace_thread_yields_terminal_403():
     ctrl = ChatController(_settings(), None, Runner())
     req = ChatRequest(agent="example_chat", input="halo",
                       thread_id="toko-B:andi:sess-1")

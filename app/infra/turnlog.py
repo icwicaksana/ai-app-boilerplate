@@ -11,7 +11,7 @@ Kontrak:
 - Event terminal (`result`/`error`) menandai akhir; `finish()` memperpendek
   TTL ke jendela reconnect.
 - Turn kedaluwarsa → `exists()` False → route membalas 410 (bukan menggantung).
-- Key hanya `tenant + turn_id` (thread_id ada di payload `started`), sehingga
+- Key hanya `workspace + turn_id` (thread_id ada di payload `started`), sehingga
   resume tak perlu tahu thread lebih dulu.
 """
 
@@ -39,8 +39,8 @@ return id
 """
 
 
-def turn_key(tenant: str, turn_id: str) -> str:
-    return f"turn:{tenant}:{turn_id}"
+def turn_key(workspace: str, turn_id: str) -> str:
+    return f"turn:{workspace}:{turn_id}"
 
 
 def new_turn_id() -> str:
@@ -61,7 +61,7 @@ class TurnLog:
     def enabled(self) -> bool:
         return self.cache is not None
 
-    async def create(self, *, tenant: str, turn_id: str,
+    async def create(self, *, workspace: str, turn_id: str,
                      first_event: dict[str, Any],
                      ttl_seconds: int = DEFAULT_TTL_SECONDS) -> str:
         """Buat stream + event pertama (atomik dengan TTL). Return entry ID."""
@@ -69,47 +69,47 @@ class TurnLog:
             return "0-0"
         payload = json.dumps(first_event, ensure_ascii=False, default=str)
         entry_id = await self.cache.eval_int(
-            _CREATE_LUA, [turn_key(tenant, turn_id)],
+            _CREATE_LUA, [turn_key(workspace, turn_id)],
             [payload, int(ttl_seconds)])
         return str(entry_id)
 
-    async def append(self, *, tenant: str, turn_id: str,
+    async def append(self, *, workspace: str, turn_id: str,
                      event: dict[str, Any]) -> str:
         if self.cache is None:
             return "0-0"
         return await self.cache.xadd(
-            turn_key(tenant, turn_id),
+            turn_key(workspace, turn_id),
             {"data": json.dumps(event, ensure_ascii=False, default=str)},
             maxlen=MAX_EVENTS_PER_TURN)
 
-    async def finish(self, *, tenant: str, turn_id: str,
+    async def finish(self, *, workspace: str, turn_id: str,
                      ttl_seconds: int = RECONNECT_TTL_SECONDS) -> None:
         """Turn selesai: perpendek TTL ke jendela reconnect."""
         if self.cache is None:
             return
         try:
-            await self.cache.expire(turn_key(tenant, turn_id), ttl_seconds)
+            await self.cache.expire(turn_key(workspace, turn_id), ttl_seconds)
         except CacheUnavailable:
             log.warning("turnlog finish gagal (cache down) turn=%s", turn_id)
 
-    async def exists(self, *, tenant: str, turn_id: str) -> bool:
+    async def exists(self, *, workspace: str, turn_id: str) -> bool:
         if self.cache is None:
             return False
         try:
-            return await self.cache.exists(turn_key(tenant, turn_id))
+            return await self.cache.exists(turn_key(workspace, turn_id))
         except CacheUnavailable:
             return False
 
-    async def replay(self, *, tenant: str, turn_id: str,
+    async def replay(self, *, workspace: str, turn_id: str,
                      cursor: str = "0-0") -> list[tuple[str, dict[str, Any]]]:
         """Semua event setelah cursor (untuk resume/inspeksi)."""
         if self.cache is None:
             return []
-        rows = await self.cache.xrange(turn_key(tenant, turn_id),
+        rows = await self.cache.xrange(turn_key(workspace, turn_id),
                                        start=_after(cursor))
         return [(rid, _decode(fields)) for rid, fields in rows]
 
-    async def follow(self, *, tenant: str, turn_id: str, cursor: str = "0-0",
+    async def follow(self, *, workspace: str, turn_id: str, cursor: str = "0-0",
                      block_ms: int = 1000,
                      idle_timeout_s: float = 60.0) -> AsyncIterator[tuple[str, dict]]:
         """Ikuti turn dari cursor: replay lalu live sampai event terminal.
@@ -122,11 +122,11 @@ class TurnLog:
         pos = _xread_start(cursor)
         idle = 0.0
         while idle < idle_timeout_s:
-            rows = await self.cache.xread(turn_key(tenant, turn_id), pos,
+            rows = await self.cache.xread(turn_key(workspace, turn_id), pos,
                                           block_ms=block_ms)
             if not rows:
                 idle += block_ms / 1000.0
-                if not await self.exists(tenant=tenant, turn_id=turn_id):
+                if not await self.exists(workspace=workspace, turn_id=turn_id):
                     return
                 continue
             idle = 0.0

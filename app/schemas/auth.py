@@ -6,12 +6,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-TENANT_PATTERN = r"^[a-z0-9-]{3,32}$"
+WORKSPACE_PATTERN = r"^[a-z0-9-]{3,32}$"
 USER_PATTERN = r"^[a-z0-9-_]{1,64}$"
 
 
 class LoginRequest(BaseModel):
-    tenant: str = Field(pattern=TENANT_PATTERN, examples=["toko-a"])
+    workspace: str = Field(pattern=WORKSPACE_PATTERN, examples=["toko-a"])
     username: str = Field(pattern=USER_PATTERN, examples=["budi"])
     password: str = Field(min_length=1, max_length=256)
 
@@ -34,7 +34,7 @@ class LogoutRequest(BaseModel):
 
 
 class MeResponse(BaseModel):
-    tenant: str
+    workspace: str
     user: str
     scopes: list[str] = Field(default_factory=list)
     expires_at: int = Field(description="Epoch detik kedaluwarsa access token.")

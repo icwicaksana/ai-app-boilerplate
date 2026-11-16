@@ -44,9 +44,9 @@ async def login(
     cache: CacheClient | None = Depends(get_cache),
 ) -> TokenPair:
     # Anti credential stuffing: batasi per (IP + username) SEBELUM verifikasi.
-    await check_login_limit(request, tenant=req.tenant, username=req.username,
+    await check_login_limit(request, workspace=req.workspace, username=req.username,
                             settings=settings, cache=cache)
-    return await ctrl.login(tenant=req.tenant, username=req.username,
+    return await ctrl.login(workspace=req.workspace, username=req.username,
                             password=req.password,
                             request_id=get_request_id(request))
 

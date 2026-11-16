@@ -110,8 +110,8 @@ def _graph(settings, cp, thread_id: str):
 @pytest.mark.asyncio
 async def test_full_approval_flow(env):
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
     graph = _graph(settings, cp, thread_id)
 
@@ -120,17 +120,17 @@ async def test_full_approval_flow(env):
     assert first["status"] == "pending_approval"
     interrupts = first["interrupts"]
 
-    rows = await svc.record_interrupts(tenant=tenant, thread_id=thread_id,
+    rows = await svc.record_interrupts(workspace=workspace, thread_id=thread_id,
                                        agent="hitl_fake", interrupts=interrupts,
                                        request_id="r1")
     assert len(rows) == 1 and rows[0]["status"] == "pending"
 
-    pending = await svc.list(tenant=tenant)
+    pending = await svc.list(workspace=workspace)
     assert [r["tool_name"] for r in pending] == ["process_refund"]
     approval_id = pending[0]["id"]
     assert pending[0]["action_hash"] == action_hash("process_refund", _payload())
 
-    out = await svc.decide(tenant=tenant, actor="budi", approval_id=approval_id,
+    out = await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
                            decision="approve", reason="ok", request_id="r2")
     assert out["status"] == "approved" and out["resumed"] is True
     assert out["result"]["status"] == "completed"
@@ -140,13 +140,13 @@ async def test_full_approval_flow(env):
 
     # Double decide â†’ 409 (bukan eksekusi ganda)
     with pytest.raises(ApprovalStateError):
-        await svc.decide(tenant=tenant, actor="budi",
+        await svc.decide(workspace=workspace, actor="budi",
                          approval_id=approval_id, decision="approve")
 
     # Audit chain utuh + mencatat aktor & keputusan
-    ok, bad = await repo.verify_chain(pool, tenant=tenant)
+    ok, bad = await repo.verify_chain(pool, workspace=workspace)
     assert ok is True and bad is None
-    entries = await repo.list_audit(pool, tenant=tenant)
+    entries = await repo.list_audit(pool, workspace=workspace)
     actions = [e["action"] for e in entries]
     assert actions == ["approval_requested", "approval_decided"]
     assert entries[1]["actor"] == "budi"
@@ -156,17 +156,17 @@ async def test_full_approval_flow(env):
 @pytest.mark.asyncio
 async def test_reject_does_not_resume(env):
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
     graph = _graph(settings, cp, thread_id)
 
     first = await svc.runner.run(graph, {"approved": False},
                                  {"configurable": {"thread_id": thread_id}})
-    rows = await svc.record_interrupts(tenant=tenant, thread_id=thread_id,
+    rows = await svc.record_interrupts(workspace=workspace, thread_id=thread_id,
                                        agent="hitl_fake",
                                        interrupts=first["interrupts"])
-    out = await svc.decide(tenant=tenant, actor="ani",
+    out = await svc.decide(workspace=workspace, actor="ani",
                            approval_id=rows[0]["id"], decision="reject",
                            reason="tidak sesuai")
     assert out["status"] == "rejected" and out["resumed"] is False
@@ -182,14 +182,14 @@ async def test_stale_action_detected(env):
     from app.core.approvals import ApprovalStaleError
 
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
     graph = _graph(settings, cp, thread_id)
 
     first = await svc.runner.run(graph, {"approved": False},
                                  {"configurable": {"thread_id": thread_id}})
-    rows = await svc.record_interrupts(tenant=tenant, thread_id=thread_id,
+    rows = await svc.record_interrupts(workspace=workspace, thread_id=thread_id,
                                        agent="hitl_fake",
                                        interrupts=first["interrupts"])
     # Rusak hash tersimpan â†’ mensimulasikan aksi berubah sejak approval.
@@ -199,37 +199,37 @@ async def test_stale_action_detected(env):
             ("0" * 64, rows[0]["id"]))
 
     with pytest.raises(ApprovalStaleError):
-        await svc.decide(tenant=tenant, actor="budi",
+        await svc.decide(workspace=workspace, actor="budi",
                          approval_id=rows[0]["id"], decision="approve")
 
 
 @pytest.mark.asyncio
-async def test_tenant_isolation_of_approvals(env):
+async def test_workspace_isolation_of_approvals(env):
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     other = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
     graph = _graph(settings, cp, thread_id)
 
     first = await svc.runner.run(graph, {"approved": False},
                                  {"configurable": {"thread_id": thread_id}})
-    rows = await svc.record_interrupts(tenant=tenant, thread_id=thread_id,
+    rows = await svc.record_interrupts(workspace=workspace, thread_id=thread_id,
                                        agent="hitl_fake",
                                        interrupts=first["interrupts"])
-    # Tenant lain tidak bisa melihat/memutuskan approval tenant ini.
-    assert await svc.list(tenant=other) == []
+    # Workspace lain tidak bisa melihat/memutuskan approval workspace ini.
+    assert await svc.list(workspace=other) == []
     with pytest.raises(ApprovalNotFoundError):
-        await svc.get(tenant=other, approval_id=rows[0]["id"])
+        await svc.get(workspace=other, approval_id=rows[0]["id"])
 
 
 # --- edge cases v0.6 ---
 
-async def _make_pending(svc, settings, cp, tenant, thread_id):
+async def _make_pending(svc, settings, cp, workspace, thread_id):
     graph = _graph(settings, cp, thread_id)
     first = await svc.runner.run(graph, {"approved": False},
                                  {"configurable": {"thread_id": thread_id}})
-    rows = await svc.record_interrupts(tenant=tenant, thread_id=thread_id,
+    rows = await svc.record_interrupts(workspace=workspace, thread_id=thread_id,
                                        agent="hitl_fake",
                                        interrupts=first["interrupts"])
     return rows[0]["id"]
@@ -240,19 +240,19 @@ async def test_expired_approval_cannot_be_decided(env):
     from app.core.approvals import ApprovalExpiredError
 
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
-    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+    approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
 
     async with pool.connection() as conn:
         await conn.execute(
             "UPDATE approvals SET expires_at = now() - interval '1 minute' "
             "WHERE id = %s", (approval_id,))
     with pytest.raises(ApprovalExpiredError):
-        await svc.decide(tenant=tenant, actor="budi",
+        await svc.decide(workspace=workspace, actor="budi",
                          approval_id=approval_id, decision="approve")
-    row = await repo.get_approval(pool, tenant=tenant, approval_id=approval_id)
+    row = await repo.get_approval(pool, workspace=workspace, approval_id=approval_id)
     assert row["status"] == "expired"
 
 
@@ -261,15 +261,15 @@ async def test_unknown_approval_404_and_invalid_decision(env):
     from app.core.errors import AppError
 
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     svc = _service(settings, pool, cp)
     with pytest.raises(ApprovalNotFoundError):
-        await svc.get(tenant=tenant, approval_id=999_999)
+        await svc.get(workspace=workspace, approval_id=999_999)
 
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
-    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
+    approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
     with pytest.raises(AppError) as ei:
-        await svc.decide(tenant=tenant, actor="budi",
+        await svc.decide(workspace=workspace, actor="budi",
                          approval_id=approval_id, decision="mungkin")
     assert ei.value.status_code == 422 and ei.value.code == "INVALID_DECISION"
 
@@ -277,46 +277,46 @@ async def test_unknown_approval_404_and_invalid_decision(env):
 @pytest.mark.asyncio
 async def test_reject_then_approve_is_409(env):
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
-    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
+    approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
 
-    await svc.decide(tenant=tenant, actor="budi", approval_id=approval_id,
+    await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
                      decision="reject")
     with pytest.raises(ApprovalStateError):
-        await svc.decide(tenant=tenant, actor="budi",
+        await svc.decide(workspace=workspace, actor="budi",
                          approval_id=approval_id, decision="approve")
 
 
 @pytest.mark.asyncio
 async def test_audit_tampering_detected(env):
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
-    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
-    await svc.decide(tenant=tenant, actor="budi", approval_id=approval_id,
+    approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
+    await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
                      decision="approve")
 
-    ok, bad = await repo.verify_chain(pool, tenant=tenant)
+    ok, bad = await repo.verify_chain(pool, workspace=workspace)
     assert ok is True and bad is None
 
     async with pool.connection() as conn:
         await conn.execute(
             "UPDATE audit_log SET payload = payload || '{\"tampered\":true}'::jsonb "
-            "WHERE tenant = %s AND action = 'approval_decided'", (tenant,))
-    ok2, bad2 = await repo.verify_chain(pool, tenant=tenant)
+            "WHERE workspace = %s AND action = 'approval_decided'", (workspace,))
+    ok2, bad2 = await repo.verify_chain(pool, workspace=workspace)
     assert ok2 is False and bad2 is not None
 
 
 @pytest.mark.asyncio
 async def test_no_pending_left_after_approval(env):
     settings, pool, cp = env
-    tenant = "it-hitl-" + uuid.uuid4().hex[:6]
-    thread_id = f"{tenant}:budi:sess-{uuid.uuid4().hex[:8]}"
+    workspace = "it-hitl-" + uuid.uuid4().hex[:6]
+    thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp)
-    approval_id = await _make_pending(svc, settings, cp, tenant, thread_id)
-    await svc.decide(tenant=tenant, actor="budi", approval_id=approval_id,
+    approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
+    await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
                      decision="approve")
-    assert await svc.list(tenant=tenant) == []
+    assert await svc.list(workspace=workspace) == []

@@ -67,6 +67,6 @@ class ForkRequest(BaseModel):
 
 
 class ForkResponse(BaseModel):
-    thread_id: str = Field(description="Thread BARU (tenant:user:sess-*) hasil fork.")
+    thread_id: str = Field(description="Thread BARU (workspace:user:sess-*) hasil fork.")
     forked_from: str = Field(description="checkpoint_id sumber.")
     agent: str

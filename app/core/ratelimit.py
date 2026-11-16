@@ -37,23 +37,23 @@ class RateDecision:
 
 
 class RateLimiter:
-    """Penghitung per (scope, tenant, subject) dalam window berjalan."""
+    """Penghitung per (scope, workspace, subject) dalam window berjalan."""
 
     def __init__(self, cache: CacheClient | None):
         self.cache = cache
 
-    async def check(self, *, scope: str, tenant: str, subject: str,
+    async def check(self, *, scope: str, workspace: str, subject: str,
                     limit: int, window_seconds: int = WINDOW_SECONDS,
                     now: int | None = None) -> RateDecision:
         if self.cache is None:
             return RateDecision(True, limit, limit, 0, degraded=True)
         window = int((now if now is not None else time.time()) // window_seconds)
-        key = rate_limit_key(scope, tenant, subject, window)
+        key = rate_limit_key(scope, workspace, subject, window)
         try:
             count, ttl = await self.cache.incr_window(key, window_seconds)
         except CacheUnavailable:
-            log.warning("rate-limit fail-open (cache down) scope=%s tenant=%s",
-                        scope, tenant)
+            log.warning("rate-limit fail-open (cache down) scope=%s workspace=%s",
+                        scope, workspace)
             return RateDecision(True, limit, limit, 0, degraded=True)
         remaining = max(0, limit - count)
         if count > limit:
@@ -64,7 +64,7 @@ class RateLimiter:
 # --- dependency FastAPI (dipakai route terautentikasi) ---
 
 def rate_limit_dependency(scope: str, limit_attr: str):
-    """Dependency: batasi per (tenant, user) sesuai field Settings.
+    """Dependency: batasi per (workspace, user) sesuai field Settings.
 
     Import dependency identitas di dalam factory (bukan top-level) untuk
     menghindari siklus modul; tetap memakai `Depends` agar override test
@@ -82,29 +82,29 @@ def rate_limit_dependency(scope: str, limit_attr: str):
             return
         limit = int(getattr(settings, limit_attr))
         decision = await RateLimiter(cache).check(
-            scope=scope, tenant=identity.tenant, subject=identity.user, limit=limit)
+            scope=scope, workspace=identity.workspace, subject=identity.user, limit=limit)
         if decision.degraded:
             request.state.rate_limit_degraded = True
         if not decision.allowed:
-            log.warning("rate-limit ditolak scope=%s tenant=%s user=%s",
-                        scope, identity.tenant, identity.user)
+            log.warning("rate-limit ditolak scope=%s workspace=%s user=%s",
+                        scope, identity.workspace, identity.user)
             raise RateLimitedError(decision.retry_after, decision.limit)
 
     return _dep
 
 
-async def check_login_limit(request: Request, *, tenant: str, username: str,
+async def check_login_limit(request: Request, *, workspace: str, username: str,
                             settings: Settings, cache: CacheClient | None) -> None:
     """Login dibatasi per (IP + username) — anti credential stuffing."""
     if not settings.RATE_LIMIT_ENABLED:
         return
     ip = getattr(getattr(request, "client", None), "host", None) or "unknown"
     decision = await RateLimiter(cache).check(
-        scope="login", tenant=tenant, subject=f"{ip}:{username}",
+        scope="login", workspace=workspace, subject=f"{ip}:{username}",
         limit=settings.RATE_LIMIT_LOGIN_PER_MIN)
     if decision.degraded:
         request.state.rate_limit_degraded = True
     if not decision.allowed:
-        log.warning("rate-limit login ditolak tenant=%s user=%s ip=%s",
-                    tenant, username, ip)
+        log.warning("rate-limit login ditolak workspace=%s user=%s ip=%s",
+                    workspace, username, ip)
         raise RateLimitedError(decision.retry_after, decision.limit)

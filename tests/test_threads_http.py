@@ -61,8 +61,8 @@ def _client(cp):
     return TestClient(app, raise_server_exceptions=False)
 
 
-def _hdr(user="budi", tenant="toko-a", rid="t1"):
-    return auth_headers(tenant=tenant, user=user, request_id=rid)
+def _hdr(user="budi", workspace="toko-a", rid="t1"):
+    return auth_headers(workspace=workspace, user=user, request_id=rid)
 
 
 

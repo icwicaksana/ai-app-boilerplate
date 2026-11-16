@@ -64,21 +64,21 @@ def test_ports_expose_frozen_contracts():
                  "SourceRecord", "KgEntityIn", "KgEdgeIn", "KgHit",
                  "GraphInfo", "Extraction"):
         assert hasattr(p, name), f"DTO {name} hilang dari ports.py"
-    # BoundRetriever.search TANPA argumen tenant (D2: factory-bound).
+    # BoundRetriever.search TANPA argumen workspace (D2: factory-bound).
     import inspect
 
     sig = inspect.signature(p.BoundRetriever.search)
-    assert "tenant" not in sig.parameters
-    assert "tenant_id" not in sig.parameters
-    # VectorStorePort.search_* juga tanpa tenant.
+    assert "workspace" not in sig.parameters
+    assert "workspace_id" not in sig.parameters
+    # VectorStorePort.search_* juga tanpa workspace.
     for meth in ("search_dense", "search_lexical"):
         ps = inspect.signature(getattr(p.VectorStorePort, meth)).parameters
-        assert "tenant" not in ps and "tenant_id" not in ps
-    # v0.8 D2: GraphStore juga factory-bound (tanpa tenant per-call).
+        assert "workspace" not in ps and "workspace_id" not in ps
+    # v0.8 D2: GraphStore juga factory-bound (tanpa workspace per-call).
     for meth in ("upsert_subgraph", "expand", "delete_subgraph",
                  "resolve_seeds", "upsert_aliases", "list_aliases"):
         ps = inspect.signature(getattr(p.GraphStore, meth)).parameters
-        assert "tenant" not in ps and "tenant_id" not in ps, meth
+        assert "workspace" not in ps and "workspace_id" not in ps, meth
 
 
 def test_no_llm_in_rag_package():

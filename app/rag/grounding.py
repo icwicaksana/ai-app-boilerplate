@@ -74,7 +74,7 @@ def check_graph_provenance(included: list[dict]) -> list[str]:
     """G1 struktural (redefinisi QA-F3): tiap sitasi graph wajib membawa
     provenance utuh — chunk_id + chunk_row_id + isi per hop.
 
-    Tenant dijamin by construction (adapter tenant-bound); keberadaan baris
+    Workspace dijamin by construction (adapter workspace-bound); keberadaan baris
     dijamin FK `chunk_row_id` saat tulis. TIDAK membandingkan dengan final
     top-5 (itu over-refusal sistematis — provenance jarang masuk top-5).
     """

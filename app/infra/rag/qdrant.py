@@ -6,8 +6,8 @@ Keputusan implementasi (melengkapi desain; lihat addendum A1.5):
 - Lexical = boolean `MatchText` + urut deterministik client-side
   (document_id, ord), skor konstanta 1.0. Qdrant tanpa fastembed tak memberi
   ranking BM25 server-side — divergensi vs tsvector PG dicatat di golden test (R7).
-- Filter tenant SELALU di-inject wrapper (lapis 1); query tanpa tenant mustahil
-  karena tenant terkunci di konstruktor (D2).
+- Filter workspace SELALU di-inject wrapper (lapis 1); query tanpa workspace mustahil
+  karena workspace terkunci di konstruktor (D2).
 """
 
 from __future__ import annotations
@@ -29,13 +29,13 @@ def collection_name(dim: int, model: str) -> str:
     return f"chunks_{int(dim)}_{slug}"
 
 
-def point_id(tenant: str, doc_id: str, ord_: int) -> str:
-    """ID point deterministik (upsert idempoten + anti tabrakan lintas tenant)."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant}:{doc_id}:{ord_}"))
+def point_id(workspace: str, doc_id: str, ord_: int) -> str:
+    """ID point deterministik (upsert idempoten + anti tabrakan lintas workspace)."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{workspace}:{doc_id}:{ord_}"))
 
 
 class QdrantStore:
-    """Adapter Qdrant, terikat 1 tenant + 1 pin embedding (D6)."""
+    """Adapter Qdrant, terikat 1 workspace + 1 pin embedding (D6)."""
 
     backend_name = "qdrant"
 
@@ -44,16 +44,16 @@ class QdrantStore:
         client: AsyncQdrantClient,
         collection: str,
         *,
-        tenant: str,
+        workspace: str,
         model: str = "BAAI/bge-m3",
         dim: int = 1024,
         version: str = "v1",
     ) -> None:
-        if not tenant:
-            raise ValueError("QdrantStore wajib tenant (factory-bound, D2).")
+        if not workspace:
+            raise ValueError("QdrantStore wajib workspace (factory-bound, D2).")
         self._client = client
         self._collection = collection
-        self._tenant = tenant
+        self._workspace = workspace
         self._model = model
         self._dim = dim
         self._version = version
@@ -93,8 +93,8 @@ class QdrantStore:
                     always_ram=True)),
             on_disk_payload=True,
         )
-        # Filter tenant + doc top-level; filter metadata nested meta.* (P2-14).
-        for field in ("tenant", "document_id", "meta.source_type",
+        # Filter workspace + doc top-level; filter metadata nested meta.* (P2-14).
+        for field in ("workspace", "document_id", "meta.source_type",
                       "meta.lang"):
             await self._client.create_payload_index(
                 self._collection, field,
@@ -116,7 +116,7 @@ class QdrantStore:
                              f"(izinkan: {sorted(FILTER_KEYS)})")
         must: list[Any] = [
             models.FieldCondition(key="tenant",
-                                  match=models.MatchValue(value=self._tenant))]
+                                  match=models.MatchValue(value=self._workspace))]
         for key in sorted(filters or ()):
             must.append(models.FieldCondition(
                 key=f"meta.{key}",
@@ -138,10 +138,10 @@ class QdrantStore:
             ord_ = int(c.get("ord", 0))
             meta = dict(c.get("metadata") or {})
             points.append(models.PointStruct(
-                id=point_id(self._tenant, doc_id, ord_),
+                id=point_id(self._workspace, doc_id, ord_),
                 vector=[float(x) for x in vec],
                 payload={
-                    "tenant": self._tenant, "document_id": doc_id,
+                    "workspace": self._workspace, "document_id": doc_id,
                     "ord": ord_, "content": content,
                     "content_norm": c.get("content_norm") or content,
                     "page": c.get("page"), "sheet": c.get("sheet"),
@@ -195,7 +195,7 @@ class QdrantStore:
     async def delete_document(self, *, doc_id: str) -> int:
         filt = models.Filter(must=[
             models.FieldCondition(key="tenant", match=models.MatchValue(
-                value=self._tenant)),
+                value=self._workspace)),
             models.FieldCondition(key="document_id", match=models.MatchValue(
                 value=doc_id))])
         before = await self._client.count(
@@ -207,7 +207,7 @@ class QdrantStore:
 
     async def index_info(self) -> IndexInfo:
         filt = models.Filter(must=[models.FieldCondition(
-            key="tenant", match=models.MatchValue(value=self._tenant))])
+            key="tenant", match=models.MatchValue(value=self._workspace))])
         n = (await self._client.count(
             self._collection, count_filter=filt, exact=True)).count
         if n == 0:

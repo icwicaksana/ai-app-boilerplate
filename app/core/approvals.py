@@ -71,7 +71,7 @@ class ApprovalService:
         self.runner = runner or Runner(durability=settings.GRAPH_DURABILITY)
 
     # --- perekaman ---
-    async def record_interrupts(self, *, tenant: str, thread_id: str,
+    async def record_interrupts(self, *, workspace: str, thread_id: str,
                                 agent: str, interrupts: list[dict[str, Any]],
                                 request_id: str = "-") -> list[dict[str, Any]]:
         """Simpan setiap interrupt sebagai approval pending (idempotent)."""
@@ -85,7 +85,7 @@ class ApprovalService:
             if pol is not None:
                 expires = pol.expires_in_seconds
             row = await repo.record_pending(
-                self.pool, tenant=tenant, thread_id=thread_id,
+                self.pool, workspace=workspace, thread_id=thread_id,
                 interrupt_id=str(item.get("id", "")), agent=agent,
                 tool_name=tool_name,
                 action_hash=action_hash(tool_name, snapshot),
@@ -95,7 +95,7 @@ class ApprovalService:
             if row:
                 out.append(row)
                 await repo.append_audit(
-                    self.pool, tenant=tenant, actor="system",
+                    self.pool, workspace=workspace, actor="system",
                     action="approval_requested", subject_type="approval",
                     subject_id=str(row["id"]),
                     payload={"thread_id": thread_id, "agent": agent,
@@ -105,25 +105,25 @@ class ApprovalService:
         return out
 
     # --- pembacaan ---
-    async def list(self, *, tenant: str, status: str | None = "pending",
+    async def list(self, *, workspace: str, status: str | None = "pending",
                    limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        await repo.expire_stale(self.pool, tenant=tenant)
-        return await repo.list_approvals(self.pool, tenant=tenant, status=status,
+        await repo.expire_stale(self.pool, workspace=workspace)
+        return await repo.list_approvals(self.pool, workspace=workspace, status=status,
                                          limit=limit, offset=offset)
 
-    async def get(self, *, tenant: str, approval_id: int) -> dict[str, Any]:
-        await repo.expire_stale(self.pool, tenant=tenant)
-        row = await repo.get_approval(self.pool, tenant=tenant,
+    async def get(self, *, workspace: str, approval_id: int) -> dict[str, Any]:
+        await repo.expire_stale(self.pool, workspace=workspace)
+        row = await repo.get_approval(self.pool, workspace=workspace,
                                       approval_id=approval_id)
         if row is None:
             raise ApprovalNotFoundError(approval_id)
         return row
 
     # --- keputusan ---
-    async def decide(self, *, tenant: str, actor: str, approval_id: int,
+    async def decide(self, *, workspace: str, actor: str, approval_id: int,
                      decision: str, reason: str | None = None,
                      request_id: str = "-") -> dict[str, Any]:
-        row = await self.get(tenant=tenant, approval_id=approval_id)
+        row = await self.get(workspace=workspace, approval_id=approval_id)
         if row["status"] == "expired":
             raise ApprovalExpiredError()
         if row["status"] != "pending":
@@ -136,17 +136,17 @@ class ApprovalService:
         await self._assert_not_stale(row)
 
         claimed = await repo.claim_decision(
-            self.pool, tenant=tenant, approval_id=approval_id,
+            self.pool, workspace=workspace, approval_id=approval_id,
             decision=decision, actor=actor, reason=reason)
         if claimed is None:  # kalah balapan / baru kedaluwarsa
-            current = await repo.get_approval(self.pool, tenant=tenant,
+            current = await repo.get_approval(self.pool, workspace=workspace,
                                               approval_id=approval_id)
             if current and current["status"] == "expired":
                 raise ApprovalExpiredError()
             raise ApprovalStateError((current or {}).get("status", "unknown"))
 
         await repo.append_audit(
-            self.pool, tenant=tenant, actor=actor, action="approval_decided",
+            self.pool, workspace=workspace, actor=actor, action="approval_decided",
             subject_type="approval", subject_id=str(approval_id),
             payload={"decision": decision, "reason": reason,
                      "thread_id": claimed["thread_id"],
@@ -192,7 +192,7 @@ class ApprovalService:
             {"configurable": {"thread_id": row["thread_id"]}})
         if result.get("status") == "pending_approval":
             await self.record_interrupts(
-                tenant=row["tenant"], thread_id=str(row["thread_id"]),
+                workspace=row["workspace"], thread_id=str(row["thread_id"]),
                 agent=str(row["agent"]),
                 interrupts=result.get("interrupts") or [],
                 request_id=request_id)
@@ -230,7 +230,7 @@ async def record_pending_approvals(app_or_request, *, identity, thread_id: str,
     svc = ApprovalService(get_settings(), pool, checkpointer)
     try:
         return await svc.record_interrupts(
-            tenant=identity.tenant, thread_id=thread_id, agent=agent,
+            workspace=identity.workspace, thread_id=thread_id, agent=agent,
             interrupts=interrupts, request_id=request_id)
     except Exception:
         log.exception("gagal mencatat approval (stream tetap jalan)")

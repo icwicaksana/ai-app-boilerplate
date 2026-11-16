@@ -112,7 +112,7 @@ async def upload_document(
     # NOTE: filename SENGAJA tak ikut hash (retry wajar boleh beda nama).
     if idem_key:
         decision = await guard.begin(
-            tenant=identity.tenant, user=identity.user, key=idem_key,
+            workspace=identity.workspace, user=identity.user, key=idem_key,
             payload_hash=payload_hash)
         if decision.state == REPLAY and decision.response is not None:
             response.headers["Idempotent-Replayed"] = "true"
@@ -126,18 +126,18 @@ async def upload_document(
 
     try:
         out = await ctrl.enqueue(
-            tenant=identity.tenant, user=identity.user,
+            workspace=identity.workspace, user=identity.user,
             filename=file.filename or "", blob=blob, preset=preset, ocr=ocr,
             lang=(lang or "id")[:8])
     except Exception:
         if idem_key:
-            await guard.abort(tenant=identity.tenant, user=identity.user,
+            await guard.abort(workspace=identity.workspace, user=identity.user,
                               key=idem_key)
         raise
     body = {"document_id": out["document_id"], "job_id": out["job_id"],
             "status": "queued", "deduped": out["deduped"]}
     if idem_key:
-        await guard.finish(tenant=identity.tenant, user=identity.user,
+        await guard.finish(workspace=identity.workspace, user=identity.user,
                            key=idem_key, payload_hash=payload_hash,
                            response=body)
     response.headers["X-Request-ID"] = request_id
@@ -161,7 +161,7 @@ async def list_documents(
                        "(izinkan: pending/ready/failed/deleted)",
                        status_code=422, code="INVALID_STATUS",
                        title="Invalid Status Filter")
-    items, total = await ctrl.list(tenant=identity.tenant, status=status,
+    items, total = await ctrl.list(workspace=identity.workspace, status=status,
                                    limit=limit, offset=offset)
     return DocumentListResponse(
         items=[DocumentResponse(
@@ -178,7 +178,7 @@ async def get_document(
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: DocumentController = Depends(get_document_controller),
 ) -> DocumentResponse:
-    detail = await ctrl.get(tenant=identity.tenant, document_id=document_id)
+    detail = await ctrl.get(workspace=identity.workspace, document_id=document_id)
     if detail is None:
         raise DocumentNotFoundError(document_id)
     return _to_doc_response(detail["document"], detail["job"],
@@ -191,7 +191,7 @@ async def delete_document(
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: DocumentController = Depends(get_document_controller),
 ) -> dict:
-    if not await ctrl.delete(tenant=identity.tenant,
+    if not await ctrl.delete(workspace=identity.workspace,
                              document_id=document_id):
         raise DocumentNotFoundError(document_id)
     return {"document_id": document_id, "status": "deleted"}
@@ -207,7 +207,7 @@ async def document_progress(
     """SSE progress ingest (skema sendiri). Snapshot dulu, lalu poll SoR
     sampai terminal. Job hilang + retensi habis → 410 (via IngestGoneError
     saat connect) — stream putus = connect ulang = snapshot terbaru."""
-    detail = await ctrl.get(tenant=identity.tenant, document_id=document_id)
+    detail = await ctrl.get(workspace=identity.workspace, document_id=document_id)
     if detail is None:
         raise DocumentNotFoundError(document_id)
     job = detail["job"]
@@ -233,14 +233,14 @@ async def document_progress(
             if await request.is_disconnected():
                 break
             # Guard: dokumen dihapus di tengah stream → tutup jujur (P2).
-            cur_doc = await ctrl.get(tenant=identity.tenant,
+            cur_doc = await ctrl.get(workspace=identity.workspace,
                                      document_id=document_id)
             if cur_doc is None or cur_doc["document"]["status"] == "deleted":
                 yield _frame("ingest_error", {
                     "job_id": job_id, "code": "DOCUMENT_DELETED",
                     "message": "Dokumen dihapus."})
                 break
-            st = await ctrl.job_status(tenant=identity.tenant, job_id=job_id)
+            st = await ctrl.job_status(workspace=identity.workspace, job_id=job_id)
             if st is None:
                 yield _frame("ingest_error", {
                     "job_id": job_id, "code": "INGEST_GONE",
@@ -264,7 +264,7 @@ async def document_progress(
                 idle += 1
             if st["state"] in _TERMINAL:
                 if st["state"] == "done":
-                    n = (await ctrl.get(tenant=identity.tenant,
+                    n = (await ctrl.get(workspace=identity.workspace,
                                         document_id=document_id))["chunks"]
                     yield _frame("ingest_result", {
                         "document_id": document_id, "job_id": job_id,
@@ -294,7 +294,7 @@ async def get_ingestion_job(
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: DocumentController = Depends(get_document_controller),
 ) -> JobStatusResponse:
-    st = await ctrl.job_status(tenant=identity.tenant, job_id=job_id)
+    st = await ctrl.job_status(workspace=identity.workspace, job_id=job_id)
     if st is None:
         raise IngestGoneError(str(job_id))
     return JobStatusResponse(
@@ -312,10 +312,10 @@ async def retry_ingestion_job(
 ) -> dict:
     """Reset job failed/dead (+override `ocr`). 409 bila state tak boleh."""
     body = req or RetryRequest()
-    job = await ctrl.retry(tenant=identity.tenant, job_id=job_id,
+    job = await ctrl.retry(workspace=identity.workspace, job_id=job_id,
                            ocr=body.ocr)
     if job is None:
-        current = await ctrl.job_status(tenant=identity.tenant,
+        current = await ctrl.job_status(workspace=identity.workspace,
                                         job_id=job_id)
         if current is None:
             raise IngestGoneError(str(job_id))
@@ -335,10 +335,10 @@ async def retrieval_search(
     _rl=Depends(rate_limit_dependency("retrieval",
                                       "RATE_LIMIT_RETRIEVAL_PER_MIN")),
 ) -> RetrievalSearchResponse:
-    """Debug retrieval (filter tenant wajib, dari JWT)."""
+    """Debug retrieval (filter workspace wajib, dari JWT)."""
     from app.rag import citations as C
 
-    out = await ctrl.search(tenant=identity.tenant, query=req.query, k=req.k,
+    out = await ctrl.search(workspace=identity.workspace, query=req.query, k=req.k,
                             filters=req.filters, clients=clients)
     if out["degraded"]:
         # Observabilitas degradasi untuk operator/FE (P2-13 parsial).

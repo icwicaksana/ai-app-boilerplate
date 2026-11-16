@@ -53,18 +53,18 @@ class IdempotencyGuard:
         self.cache = cache
         self.ttl = max(60, int(ttl_seconds))
 
-    async def begin(self, *, tenant: str, user: str, key: str,
+    async def begin(self, *, workspace: str, user: str, key: str,
                     payload_hash: str) -> IdemDecision:
         if self.cache is None:
             return IdemDecision(NEW)
-        cache_key = idempotency_key(tenant, user, key)
+        cache_key = idempotency_key(workspace, user, key)
         pending = json.dumps({"state": STATE_PENDING, "hash": payload_hash})
         try:
             if await self.cache.set_if_absent(cache_key, pending, self.ttl):
                 return IdemDecision(NEW)  # kita pemilik eksekusi
             stored = await self.cache.get_json(cache_key)
         except CacheUnavailable:
-            log.warning("idempotency fail-open (cache down) tenant=%s", tenant)
+            log.warning("idempotency fail-open (cache down) workspace=%s", workspace)
             return IdemDecision(NEW)
         if not stored:
             # Kunci hilang di antara NX dan GET (TTL habis) → anggap baru.
@@ -75,24 +75,24 @@ class IdempotencyGuard:
             return IdemDecision(REPLAY, stored["response"])
         return IdemDecision(IN_PROGRESS)
 
-    async def finish(self, *, tenant: str, user: str, key: str,
+    async def finish(self, *, workspace: str, user: str, key: str,
                      payload_hash: str, response: dict[str, Any]) -> None:
         if self.cache is None:
             return
         try:
             await self.cache.set_json(
-                idempotency_key(tenant, user, key),
+                idempotency_key(workspace, user, key),
                 {"state": STATE_DONE, "hash": payload_hash, "response": response},
                 ttl_seconds=self.ttl,
             )
         except CacheUnavailable:
-            log.warning("idempotency finish gagal (cache down) tenant=%s", tenant)
+            log.warning("idempotency finish gagal (cache down) workspace=%s", workspace)
 
-    async def abort(self, *, tenant: str, user: str, key: str) -> None:
+    async def abort(self, *, workspace: str, user: str, key: str) -> None:
         """Lepas kunci saat eksekusi gagal, agar klien bisa retry."""
         if self.cache is None:
             return
         try:
-            await self.cache.delete(idempotency_key(tenant, user, key))
+            await self.cache.delete(idempotency_key(workspace, user, key))
         except CacheUnavailable:
-            log.warning("idempotency abort gagal (cache down) tenant=%s", tenant)
+            log.warning("idempotency abort gagal (cache down) workspace=%s", workspace)

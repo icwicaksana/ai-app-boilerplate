@@ -26,10 +26,10 @@ class ResponseMeta(BaseModel):
 
 
 class RunMetadata(BaseModel):
-    """Slot observability + multi-tenant (v1). v0: bebas diisi, tidak wajib."""
+    """Slot observability + multi-workspace (v1). v0: bebas diisi, tidak wajib."""
 
     source: str | None = Field(default=None, examples=["dashboard", "webhook", "cron"])
-    tenant_id: str | None = Field(default=None, description="Slot v1: isolasi antar toko.")
+    workspace_id: str | None = Field(default=None, description="Slot v1: isolasi antar toko.")
     user_id: str | None = Field(default=None, description="Slot v1: user pemanggil.")
     extra: dict[str, Any] = Field(default_factory=dict)
 

@@ -3,7 +3,7 @@
 Aturan (DESIGN §4 + G5):
 - 1 triple = 1 kalimat mandiri dengan subjek eksplisit; DILARANG menggabung
   2 hop jadi satu klaim transitivitas ("A terkait B, B terkait C" ≠ "A–C").
-- Template fixed-set per relasi core; ekstensi `tenant:*` pakai fallback aman.
+- Template fixed-set per relasi core; ekstensi `workspace:*` pakai fallback aman.
 - Output = untrusted (disanitasi di sini + `sanitize_untrusted` di grounding).
 - Maks 2 triple (bounded 2-hop); lebih = potong defensif.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from app.rag.ontology import TENANT_PREFIX
+from app.rag.ontology import WORKSPACE_EXT_PREFIX
 
 _TEMPLATES = {
     "memasok": "{s} memasok {o}.",
@@ -53,8 +53,8 @@ def _clean_label(text: str) -> str:
 def _render_relation(relation: str) -> str:
     if relation in _TEMPLATES:
         return relation
-    if relation.startswith(TENANT_PREFIX):  # ekstensi: pakai apa adanya (aman)
-        return _REL_SAFE_RE.sub("", relation[len(TENANT_PREFIX):]) or "terkait"
+    if relation.startswith(WORKSPACE_EXT_PREFIX):  # ekstensi: pakai apa adanya (aman)
+        return _REL_SAFE_RE.sub("", relation[len(WORKSPACE_EXT_PREFIX):]) or "terkait"
     return "terkait"
 
 

@@ -205,7 +205,7 @@ async def test_graph_gold_runner(backend, db_url, embed_url, tag):
     rerank = InfinityReranker(embed_url, "BAAI/bge-reranker-v2-m3",
                               timeout_ms=120_000)
     tok = BgeTokenizer(cache_dir=".hf-cache")
-    tenants = {suf: f"it-gg-{suf}-{tag}" for suf in ("a", "b")}
+    workspaces = {suf: f"it-gg-{suf}-{tag}" for suf in ("a", "b")}
     qdrant_shared = None
     if backend == "qdrant":
         qdrant_shared = _qdrant_client_or_none()
@@ -221,19 +221,19 @@ async def test_graph_gold_runner(backend, db_url, embed_url, tag):
     try:
         parsers, ocr = build_parsers(settings)
         for doc_id, (dsuf, fname, blob) in DOCS.items():
-            t = tenants[dsuf]
+            t = workspaces[dsuf]
             rel = f"{t}/doc-{doc_id}.bin"
             target = blob_root / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(blob)
             doc = await repo.create_document(
-                pool, tenant=t, source_type="md", source_uri=rel,
+                pool, workspace=t, source_type="md", source_uri=rel,
                 title=fname, lang="id", size_bytes=len(blob),
                 sha256=hashlib.sha256(
                     blob + t.encode() + doc_id.encode()).hexdigest(),
                 parser="auto", chunk_preset="markdown",
                 created_by="goldgraph")
-            job = await repo.create_job(pool, tenant=t,
+            job = await repo.create_job(pool, workspace=t,
                                         document_id=str(doc["id"]))
             claimed = await repo.claim_job(pool, worker_id="goldgraph")
             assert claimed is not None and claimed["id"] == job["id"]
@@ -243,13 +243,13 @@ async def test_graph_gold_runner(backend, db_url, embed_url, tag):
                 parsers=parsers, ocr=ocr, extractor=extractor)
             got = await process_job(ctx, claimed)
             assert got == "done", (doc_id, got)
-        await PgGraphStore(pool, tenant=tenants["a"]).upsert_aliases(ALIASES)
+        await PgGraphStore(pool, workspace=workspaces["a"]).upsert_aliases(ALIASES)
 
         all_rows: dict[str, list] = {}
         for cell, gon, ca, cd, hops, gf in CELLS:
             rows = []
             for suf, stratum, q, expected, need_graph in GOLD:
-                t = tenants[suf]
+                t = workspaces[suf]
                 client = None
                 if backend == "qdrant":
                     from qdrant_client import AsyncQdrantClient
@@ -266,13 +266,13 @@ async def test_graph_gold_runner(backend, db_url, embed_url, tag):
                                                timeout=10)
                     store = QdrantStore(
                         client, collection_name(1024, "BAAI/bge-m3"),
-                        tenant=t)
+                        workspace=t)
                 else:
                     from app.infra.rag.pgvector import PgVectorStore
 
-                    store = PgVectorStore(pool, tenant=t)
+                    store = PgVectorStore(pool, workspace=t)
                 try:
-                    graph = (PgGraphStore(pool, tenant=t) if gon else None)
+                    graph = (PgGraphStore(pool, workspace=t) if gon else None)
                     r = HybridRetriever(
                         embed=embed, rerank=rerank, store=store, tok=tok,
                         graph=graph, graph_cap_agree=ca,
@@ -303,12 +303,12 @@ async def test_graph_gold_runner(backend, db_url, embed_url, tag):
         await rerank.aclose()
         if qdrant_shared is not None:
             await qdrant_shared.close()
-        for t in tenants.values():
+        for t in workspaces.values():
             async with pool.connection() as conn:
-                await conn.execute("DELETE FROM documents WHERE tenant=%s",
+                await conn.execute("DELETE FROM documents WHERE workspace=%s",
                                    (t,))
                 await conn.execute(
-                    "DELETE FROM kg_aliases WHERE tenant=%s", (t,))
+                    "DELETE FROM kg_aliases WHERE workspace=%s", (t,))
             shutil.rmtree(blob_root / t, ignore_errors=True)
         await close_pool(pool)
 

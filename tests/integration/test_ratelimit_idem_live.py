@@ -21,7 +21,7 @@ async def test_rate_limit_exact_limit_under_concurrency(cache):
     lim = RateLimiter(cache)
     subject = _subject()
     decisions = await asyncio.gather(*[
-        lim.check(scope="chat", tenant="toko-a", subject=subject, limit=10)
+        lim.check(scope="chat", workspace="toko-a", subject=subject, limit=10)
         for _ in range(50)
     ])
     allowed = [d for d in decisions if d.allowed]
@@ -30,14 +30,14 @@ async def test_rate_limit_exact_limit_under_concurrency(cache):
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_isolated_tenants_live(cache):
+async def test_rate_limit_isolated_workspaces_live(cache):
     lim = RateLimiter(cache)
     subject = _subject()
     for _ in range(3):
-        await lim.check(scope="jobs", tenant="toko-a", subject=subject, limit=3)
-    assert (await lim.check(scope="jobs", tenant="toko-a",
+        await lim.check(scope="jobs", workspace="toko-a", subject=subject, limit=3)
+    assert (await lim.check(scope="jobs", workspace="toko-a",
                             subject=subject, limit=3)).allowed is False
-    assert (await lim.check(scope="jobs", tenant="toko-b",
+    assert (await lim.check(scope="jobs", workspace="toko-b",
                             subject=subject, limit=3)).allowed is True
 
 
@@ -46,15 +46,15 @@ async def test_idempotency_flow_live(cache):
     guard = IdempotencyGuard(cache, ttl_seconds=60)
     key = uuid.uuid4().hex[:12]
     h = body_hash({"n": 1})
-    assert (await guard.begin(tenant="toko-a", user="budi", key=key,
+    assert (await guard.begin(workspace="toko-a", user="budi", key=key,
                               payload_hash=h)).state == NEW
-    assert (await guard.begin(tenant="toko-a", user="budi", key=key,
+    assert (await guard.begin(workspace="toko-a", user="budi", key=key,
                               payload_hash=h)).state == IN_PROGRESS
-    assert (await guard.begin(tenant="toko-a", user="budi", key=key,
+    assert (await guard.begin(workspace="toko-a", user="budi", key=key,
                               payload_hash=body_hash({"n": 2}))).state == CONFLICT
-    await guard.finish(tenant="toko-a", user="budi", key=key, payload_hash=h,
+    await guard.finish(workspace="toko-a", user="budi", key=key, payload_hash=h,
                        response={"thread_id": "t", "status": "completed"})
-    replay = await guard.begin(tenant="toko-a", user="budi", key=key, payload_hash=h)
+    replay = await guard.begin(workspace="toko-a", user="budi", key=key, payload_hash=h)
     assert replay.state == REPLAY
     assert replay.response["status"] == "completed"
 
@@ -65,7 +65,7 @@ async def test_idempotency_only_one_winner_concurrent(cache):
     key = uuid.uuid4().hex[:12]
     h = body_hash({"n": 1})
     states = await asyncio.gather(*[
-        guard.begin(tenant="toko-a", user="budi", key=key, payload_hash=h)
+        guard.begin(workspace="toko-a", user="budi", key=key, payload_hash=h)
         for _ in range(20)
     ])
     assert sum(1 for s in states if s.state == NEW) == 1

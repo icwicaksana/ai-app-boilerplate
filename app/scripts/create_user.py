@@ -1,7 +1,7 @@
 """CLI pembuatan user (v0.4). Tanpa UI (sesuai Scope OUT roadmap).
 
 Contoh:
-    python -m app.scripts.create_user --tenant toko-a --username budi \
+    python -m app.scripts.create_user --workspace toko-a --username budi \
         --password 'rahasia-kuat' --scopes "chat jobs threads"
 
 Kenapa CLI, bukan endpoint: pembuatan akun adalah operasi admin/out-of-band;
@@ -23,7 +23,7 @@ from app.infra.postgres import close_pool, create_pool, open_pool
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="create_user",
                                 description="Buat user auth di app-db.")
-    p.add_argument("--tenant", required=True)
+    p.add_argument("--workspace", required=True)
     p.add_argument("--username", required=True)
     p.add_argument("--password", required=True)
     p.add_argument("--scopes", default=users.DEFAULT_SCOPES)
@@ -38,16 +38,16 @@ async def _run(args: argparse.Namespace) -> int:
     await open_pool(pool)
     try:
         await users.ensure_schema(pool)
-        if await users.get_user(pool, args.tenant, args.username):
-            print(f"GAGAL: user '{args.username}'@{args.tenant} sudah ada.",
+        if await users.get_user(pool, args.workspace, args.username):
+            print(f"GAGAL: user '{args.username}'@{args.workspace} sudah ada.",
                   file=sys.stderr)
             return 1
         user_id = await users.create_user(
-            pool, tenant=args.tenant, username=args.username,
+            pool, workspace=args.workspace, username=args.username,
             password_hash=hash_password(args.password), scopes=args.scopes,
             is_active=not args.inactive,
         )
-        print(f"OK: user id={user_id} tenant={args.tenant} "
+        print(f"OK: user id={user_id} workspace={args.workspace} "
               f"username={args.username} scopes='{args.scopes}' "
               f"active={not args.inactive}")
         return 0

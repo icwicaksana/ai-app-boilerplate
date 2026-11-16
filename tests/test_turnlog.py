@@ -13,7 +13,7 @@ from app.core.turns import TurnManager
 from app.infra.turnlog import is_terminal, new_turn_id, turn_key
 
 
-def test_turn_key_shape_and_tenant_isolation():
+def test_turn_key_shape_and_workspace_isolation():
     assert turn_key("toko-a", "abc") == "turn:toko-a:abc"
     assert turn_key("toko-a", "abc") != turn_key("toko-b", "abc")
 
@@ -46,25 +46,25 @@ class FakeTurnLog:
         self.appended = 0
         self.fail_on_append_at = fail_on_append_at
 
-    async def create(self, *, tenant, turn_id, first_event, ttl_seconds=900):
+    async def create(self, *, workspace, turn_id, first_event, ttl_seconds=900):
         self.first_event = first_event
         self.events.append(first_event)
         return "0-0"
 
-    async def append(self, *, tenant, turn_id, event):
+    async def append(self, *, workspace, turn_id, event):
         self.appended += 1
         if self.fail_on_append_at is not None and self.appended >= self.fail_on_append_at:
             raise ConnectionError("cache mati")
         self.events.append(event)
         return f"{self.appended}-0"
 
-    async def finish(self, *, tenant, turn_id, ttl_seconds=300):
+    async def finish(self, *, workspace, turn_id, ttl_seconds=300):
         self.finished = True
 
-    async def exists(self, *, tenant, turn_id):
+    async def exists(self, *, workspace, turn_id):
         return True
 
-    async def follow(self, *, tenant, turn_id, cursor="0-0", idle_timeout_s=60.0):
+    async def follow(self, *, workspace, turn_id, cursor="0-0", idle_timeout_s=60.0):
         for i, event in enumerate(self.events):
             yield f"{i}-0", event
 
@@ -81,7 +81,7 @@ def _stream(*events):
 async def test_producer_writes_started_then_events_and_finishes():
     log = FakeTurnLog()
     mgr = TurnManager(log)
-    await mgr.start(tenant="toko-a", turn_id="t1",
+    await mgr.start(workspace="toko-a", turn_id="t1",
                     first_event={"type": "started", "turn_id": "t1"},
                     events=_stream({"type": "token", "delta": "a"},
                                    {"type": "result", "status": "completed"}))
@@ -94,7 +94,7 @@ async def test_producer_writes_started_then_events_and_finishes():
 async def test_producer_stops_at_terminal():
     log = FakeTurnLog()
     mgr = TurnManager(log)
-    await mgr.start(tenant="t", turn_id="t2", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t2", first_event={"type": "started"},
                     events=_stream({"type": "result"},
                                    {"type": "token", "delta": "harusnya tidak"}))
     await asyncio.gather(*list(mgr._tasks.values()))
@@ -105,7 +105,7 @@ async def test_producer_stops_at_terminal():
 async def test_producer_writes_error_terminal_on_failure():
     log = FakeTurnLog(fail_on_append_at=1)  # append pertama (token) gagal
     mgr = TurnManager(log)
-    await mgr.start(tenant="t", turn_id="t3", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t3", first_event={"type": "started"},
                     events=_stream({"type": "token", "delta": "a"}))
     await asyncio.gather(*list(mgr._tasks.values()))
     # error terminal tetap ditulis walau append pertama gagal? append berikutnya
@@ -118,10 +118,10 @@ async def test_follow_passthrough_and_running_flag():
     log = FakeTurnLog()
     mgr = TurnManager(log)
     assert mgr.running("t4") is False
-    await mgr.start(tenant="t", turn_id="t4", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t4", first_event={"type": "started"},
                     events=_stream({"type": "result"}))
     await asyncio.gather(*list(mgr._tasks.values()))  # producer selesai dulu
-    items = [x async for x in mgr.follow(tenant="t", turn_id="t4")]
+    items = [x async for x in mgr.follow(workspace="t", turn_id="t4")]
     assert [e["type"] for _, e in items] == ["started", "result"]
     assert mgr.running("t4") is False
 
@@ -131,7 +131,7 @@ async def test_producer_skips_duplicate_started():
     """`started` hanya ditulis sekali (first_event), bukan dari runner juga."""
     log = FakeTurnLog()
     mgr = TurnManager(log)
-    await mgr.start(tenant="t", turn_id="t6",
+    await mgr.start(workspace="t", turn_id="t6",
                     first_event={"type": "started", "turn_id": "t6"},
                     events=_stream({"type": "started"},
                                    {"type": "token", "delta": "a"},
@@ -149,7 +149,7 @@ async def test_cancel_all_stops_producers():
         await asyncio.sleep(3600)
 
     mgr = TurnManager(log)
-    await mgr.start(tenant="t", turn_id="t5", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t5", first_event={"type": "started"},
                     events=never_ending())
     await asyncio.sleep(0.01)
     await mgr.cancel_all()

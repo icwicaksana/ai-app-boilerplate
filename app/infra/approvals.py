@@ -32,7 +32,7 @@ _SCHEMA_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS approvals (
         id              BIGSERIAL PRIMARY KEY,
-        tenant          TEXT        NOT NULL,
+        workspace          TEXT        NOT NULL,
         thread_id       TEXT        NOT NULL,
         interrupt_id    TEXT        NOT NULL,
         agent           TEXT        NOT NULL DEFAULT 'example_chat',
@@ -52,12 +52,12 @@ _SCHEMA_STATEMENTS = (
     """,
     """
     CREATE INDEX IF NOT EXISTS approvals_pending_idx
-        ON approvals (tenant, status, created_at DESC)
+        ON approvals (workspace, status, created_at DESC)
     """,
     """
     CREATE TABLE IF NOT EXISTS audit_log (
         id           BIGSERIAL PRIMARY KEY,
-        tenant       TEXT        NOT NULL,
+        workspace       TEXT        NOT NULL,
         actor        TEXT        NOT NULL,
         action       TEXT        NOT NULL,
         subject_type TEXT        NOT NULL,
@@ -70,7 +70,7 @@ _SCHEMA_STATEMENTS = (
     )
     """,
     """
-    CREATE INDEX IF NOT EXISTS audit_tenant_idx ON audit_log (tenant, id)
+    CREATE INDEX IF NOT EXISTS audit_workspace_idx ON audit_log (workspace, id)
     """,
 )
 
@@ -86,7 +86,7 @@ async def ensure_schema(pool: AsyncConnectionPool) -> None:
 
 # --- approvals ---
 
-async def record_pending(pool: AsyncConnectionPool, *, tenant: str,
+async def record_pending(pool: AsyncConnectionPool, *, workspace: str,
                          thread_id: str, interrupt_id: str, agent: str,
                          tool_name: str,
                          action_hash: str, action_snapshot: dict[str, Any],
@@ -95,7 +95,7 @@ async def record_pending(pool: AsyncConnectionPool, *, tenant: str,
     async with pool.connection() as conn:
         cur = await conn.execute(
             """
-            INSERT INTO approvals (tenant, thread_id, interrupt_id, agent,
+            INSERT INTO approvals (workspace, thread_id, interrupt_id, agent,
                                    tool_name, action_hash, action_snapshot,
                                    policy_version, expires_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s,
@@ -106,7 +106,7 @@ async def record_pending(pool: AsyncConnectionPool, *, tenant: str,
                 WHERE approvals.status = 'pending'
             RETURNING id, status, action_hash
             """,
-            (tenant, thread_id, interrupt_id, agent, tool_name, action_hash,
+            (workspace, thread_id, interrupt_id, agent, tool_name, action_hash,
              canonical_json(action_snapshot), policy_version,
              int(expires_in_seconds)),
         )
@@ -120,35 +120,35 @@ async def record_pending(pool: AsyncConnectionPool, *, tenant: str,
     return dict(row) if row else {}
 
 
-async def get_approval(pool: AsyncConnectionPool, *, tenant: str,
+async def get_approval(pool: AsyncConnectionPool, *, workspace: str,
                        approval_id: int) -> dict[str, Any] | None:
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT * FROM approvals WHERE tenant = %s AND id = %s",
-            (tenant, approval_id))
+            "SELECT * FROM approvals WHERE workspace = %s AND id = %s",
+            (workspace, approval_id))
         row = await cur.fetchone()
     return dict(row) if row else None
 
 
-async def list_approvals(pool: AsyncConnectionPool, *, tenant: str,
+async def list_approvals(pool: AsyncConnectionPool, *, workspace: str,
                          status: str | None = STATUS_PENDING,
                          limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
     async with pool.connection() as conn:
         if status:
             cur = await conn.execute(
-                "SELECT * FROM approvals WHERE tenant = %s AND status = %s "
+                "SELECT * FROM approvals WHERE workspace = %s AND status = %s "
                 "ORDER BY created_at DESC LIMIT %s OFFSET %s",
-                (tenant, status, limit, offset))
+                (workspace, status, limit, offset))
         else:
             cur = await conn.execute(
-                "SELECT * FROM approvals WHERE tenant = %s "
+                "SELECT * FROM approvals WHERE workspace = %s "
                 "ORDER BY created_at DESC LIMIT %s OFFSET %s",
-                (tenant, limit, offset))
+                (workspace, limit, offset))
         rows = await cur.fetchall()
     return [dict(r) for r in rows]
 
 
-async def claim_decision(pool: AsyncConnectionPool, *, tenant: str,
+async def claim_decision(pool: AsyncConnectionPool, *, workspace: str,
                          approval_id: int, decision: str, actor: str,
                          reason: str | None) -> dict[str, Any] | None:
     """Klaim keputusan secara ATOMIK (anti double-approve).
@@ -162,23 +162,23 @@ async def claim_decision(pool: AsyncConnectionPool, *, tenant: str,
             UPDATE approvals
                SET status = %s, decision = %s, decided_by = %s,
                    decided_at = now(), reason = %s
-             WHERE tenant = %s AND id = %s AND status = 'pending'
+             WHERE workspace = %s AND id = %s AND status = 'pending'
                AND expires_at > now()
             RETURNING *
             """,
-            (new_status, decision, actor, reason, tenant, approval_id))
+            (new_status, decision, actor, reason, workspace, approval_id))
         row = await cur.fetchone()
     return dict(row) if row else None
 
 
-async def expire_stale(pool: AsyncConnectionPool, *, tenant: str | None = None) -> int:
+async def expire_stale(pool: AsyncConnectionPool, *, workspace: str | None = None) -> int:
     """Tandai approval kedaluwarsa (dipanggil saat list/decide)."""
     async with pool.connection() as conn:
-        if tenant:
+        if workspace:
             cur = await conn.execute(
                 "UPDATE approvals SET status = 'expired' "
-                "WHERE status = 'pending' AND expires_at <= now() AND tenant = %s",
-                (tenant,))
+                "WHERE status = 'pending' AND expires_at <= now() AND workspace = %s",
+                (workspace,))
         else:
             cur = await conn.execute(
                 "UPDATE approvals SET status = 'expired' "
@@ -193,54 +193,54 @@ def compute_hash(prev_hash: str, body: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-async def append_audit(pool: AsyncConnectionPool, *, tenant: str, actor: str,
+async def append_audit(pool: AsyncConnectionPool, *, workspace: str, actor: str,
                        action: str, subject_type: str, subject_id: str,
                        payload: dict[str, Any], request_id: str = "-") -> str:
-    """Tambah entri audit dengan hash chain (advisory lock per tenant)."""
+    """Tambah entri audit dengan hash chain (advisory lock per workspace)."""
     async with pool.connection() as conn:
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
-                               (tenant,))
+                               (workspace,))
             cur = await conn.execute(
-                "SELECT hash FROM audit_log WHERE tenant = %s "
-                "ORDER BY id DESC LIMIT 1", (tenant,))
+                "SELECT hash FROM audit_log WHERE workspace = %s "
+                "ORDER BY id DESC LIMIT 1", (workspace,))
             row = await cur.fetchone()
             prev_hash = str(row["hash"]) if row else GENESIS
             body = {
-                "tenant": tenant, "actor": actor, "action": action,
+                "workspace": workspace, "actor": actor, "action": action,
                 "subject_type": subject_type, "subject_id": subject_id,
                 "payload": payload, "request_id": request_id,
             }
             new_hash = compute_hash(prev_hash, body)
             await conn.execute(
                 """
-                INSERT INTO audit_log (tenant, actor, action, subject_type,
+                INSERT INTO audit_log (workspace, actor, action, subject_type,
                                        subject_id, payload, request_id,
                                        prev_hash, hash)
                 VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
                 """,
-                (tenant, actor, action, subject_type, subject_id,
+                (workspace, actor, action, subject_type, subject_id,
                  canonical_json(payload), request_id, prev_hash, new_hash))
     return new_hash
 
 
-async def list_audit(pool: AsyncConnectionPool, *, tenant: str,
+async def list_audit(pool: AsyncConnectionPool, *, workspace: str,
                      limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT * FROM audit_log WHERE tenant = %s "
-            "ORDER BY id ASC LIMIT %s OFFSET %s", (tenant, limit, offset))
+            "SELECT * FROM audit_log WHERE workspace = %s "
+            "ORDER BY id ASC LIMIT %s OFFSET %s", (workspace, limit, offset))
         rows = await cur.fetchall()
     return [dict(r) for r in rows]
 
 
-async def verify_chain(pool: AsyncConnectionPool, *, tenant: str) -> tuple[bool, int | None]:
+async def verify_chain(pool: AsyncConnectionPool, *, workspace: str) -> tuple[bool, int | None]:
     """Verifikasi integritas hash chain. Return (ok, id_pertama_yang_rusak)."""
-    rows = await list_audit(pool, tenant=tenant, limit=10_000, offset=0)
+    rows = await list_audit(pool, workspace=workspace, limit=10_000, offset=0)
     prev = GENESIS
     for row in rows:
         body = {
-            "tenant": row["tenant"], "actor": row["actor"],
+            "workspace": row["workspace"], "actor": row["actor"],
             "action": row["action"], "subject_type": row["subject_type"],
             "subject_id": row["subject_id"], "payload": row["payload"],
             "request_id": row["request_id"],

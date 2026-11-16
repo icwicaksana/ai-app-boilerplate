@@ -28,4 +28,4 @@ class AgentContext:
     runner: object  # Runner asli (object agar fake di test tetap sah)
     session_id: str | None = None
     store: MemoryStore | None = None  # MemoryStore per-user (chat) atau None (pipeline/test)
-    retriever: BoundRetriever | None = None  # RAG terikat tenant (v0.7) atau None
+    retriever: BoundRetriever | None = None  # RAG terikat workspace (v0.7) atau None

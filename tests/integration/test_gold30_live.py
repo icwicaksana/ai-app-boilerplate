@@ -1,7 +1,7 @@
 """Runner gold-30 v0.7.1 F2: UKUR kualitas retrieval, bukan gate.
 
 Strata (30 QA): faktoid 5, parafrase 5, morfologi 4, angka-format 2,
-tabel 3, negasi 2, typo 2, multi-bagian 1, cross-tenant 3, unanswerable 3.
+tabel 3, negasi 2, typo 2, multi-bagian 1, cross-workspace 3, unanswerable 3.
 Berjalan di pgvector + qdrant (bila terjangkau).
 
 Satu-satunya assertion kualitas = canary faktoid 5/5 (sudah hijau di v0.7;
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 ARTIFACT = (Path(__file__).resolve().parents[2] / ".." / "Test" / "spike_v07")
 
 DOCS: dict[str, tuple[str, str, bytes]] = {
-    # doc_id: (tenant_suffix, filename, bytes)
+    # doc_id: (workspace_suffix, filename, bytes)
     "kebijakan": ("a", "kebijakan.md",
                   "## Kebijakan Toko Maju Jaya\n\nBarang bisa diretur maksimal "
                   "14 hari dengan nota pembelian.\n\nGaransi laptop 24 bulan "
@@ -55,7 +55,7 @@ DOCS: dict[str, tuple[str, str, bytes]] = {
                "kerja ke rekening pelanggan.\n".encode()),
 }
 
-# (tenant_suffix, stratum, question, expected_sources|None, min_chunks)
+# (workspace_suffix, stratum, question, expected_sources|None, min_chunks)
 GOLD: list[tuple[str, str, str, list[str] | None, int]] = [
     ("a", "faktoid", "Berapa lama masa retur barang?", ["kebijakan.md"], 1),
     ("a", "faktoid", "Garansi laptop berapa bulan?", ["kebijakan.md"], 1),
@@ -143,18 +143,18 @@ async def test_gold30_runner(backend, db_url, embed_url, tag, tmp_path):
     rerank = InfinityReranker(embed_url, "BAAI/bge-reranker-v2-m3",
                               timeout_ms=120_000)
     tok = BgeTokenizer(cache_dir=".hf-cache")
-    tenants = {suf: f"it-g30-{suf}-{tag}" for suf in ("a", "b")}
-    # Seed memakai tenant per-doc (isolasi antar-doc dalam 1 backend run).
-    doc_tenants: dict[str, str] = {}
+    workspaces = {suf: f"it-g30-{suf}-{tag}" for suf in ("a", "b")}
+    # Seed memakai workspace per-doc (isolasi antar-doc dalam 1 backend run).
+    doc_workspaces: dict[str, str] = {}
     try:
         for suf in ("a", "b"):
-            t = tenants[suf]
-            # Tandai tenant per-doc agar cross-tenant terukur murni.
+            t = workspaces[suf]
+            # Tandai workspace per-doc agar cross-workspace terukur murni.
             for doc_id, (dsuf, _fn, _b) in DOCS.items():
                 if dsuf == suf:
-                    doc_tenants[doc_id] = t
-        for suf, t in tenants.items():
-            # Seed dengan namespace tenant uji (purge aman: prefix it-).
+                    doc_workspaces[doc_id] = t
+        for suf, t in workspaces.items():
+            # Seed dengan namespace workspace uji (purge aman: prefix it-).
             import app.infra.ingest_repo as repo
 
             from app.workers.ingest import (WorkerCtx, build_parsers,
@@ -177,7 +177,7 @@ async def test_gold30_runner(backend, db_url, embed_url, tag, tmp_path):
 
                 probe = QdrantStore(
                     client, collection_name(1024, "BAAI/bge-m3"),
-                    tenant="__probe__")
+                    workspace="__probe__")
                 await probe.ensure_collection()
                 qdrant = client
             try:
@@ -189,7 +189,7 @@ async def test_gold30_runner(backend, db_url, embed_url, tag, tmp_path):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(blob)
                     doc = await repo.create_document(
-                        pool, tenant=t, source_type="md",
+                        pool, workspace=t, source_type="md",
                         source_uri=rel, title=fname, lang="id",
                         size_bytes=len(blob),
                         sha256=hashlib.sha256(
@@ -197,7 +197,7 @@ async def test_gold30_runner(backend, db_url, embed_url, tag, tmp_path):
                         parser="auto", chunk_preset="markdown",
                         created_by="gold30")
                     job = await repo.create_job(
-                        pool, tenant=t, document_id=str(doc["id"]))
+                        pool, workspace=t, document_id=str(doc["id"]))
                     claimed = await repo.claim_job(pool,
                                                    worker_id="gold30")
                     assert claimed is not None
@@ -214,7 +214,7 @@ async def test_gold30_runner(backend, db_url, embed_url, tag, tmp_path):
 
         rows = []
         for suf, stratum, q, expected, min_n in GOLD:
-            t = tenants[suf]
+            t = workspaces[suf]
             if backend == "qdrant":
                 from qdrant_client import AsyncQdrantClient
 
@@ -229,12 +229,12 @@ async def test_gold30_runner(backend, db_url, embed_url, tag, tmp_path):
                 client = AsyncQdrantClient(url=url, api_key=key,
                                            timeout=10)
                 store = QdrantStore(
-                    client, collection_name(1024, "BAAI/bge-m3"), tenant=t)
+                    client, collection_name(1024, "BAAI/bge-m3"), workspace=t)
             else:
                 from app.infra.rag.pgvector import PgVectorStore
 
                 client = None
-                store = PgVectorStore(pool, tenant=t)
+                store = PgVectorStore(pool, workspace=t)
             try:
                 r = HybridRetriever(embed=embed, rerank=rerank, store=store,
                                     tok=tok)
@@ -255,9 +255,9 @@ async def test_gold30_runner(backend, db_url, embed_url, tag, tmp_path):
     finally:
         await embed.aclose()
         await rerank.aclose()
-        for t in tenants.values():
+        for t in workspaces.values():
             async with pool.connection() as conn:
-                await conn.execute("DELETE FROM documents WHERE tenant=%s",
+                await conn.execute("DELETE FROM documents WHERE workspace=%s",
                                    (t,))
         await close_pool(pool)
 

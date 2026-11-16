@@ -1,4 +1,4 @@
-"""API approval + audit (v0.6). Tenant-scoped via JWT.
+"""API approval + audit (v0.6). Workspace-scoped via JWT.
 
 Keputusan approval **memicu resume graph** — bukan hanya menandai baris.
 Semua aksi dicatat ke audit trail (hash chain) sehingga bisa diaudit.
@@ -43,7 +43,7 @@ async def list_approvals(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> ApprovalListResponse:
-    rows = await svc.list(tenant=identity.tenant, status=status,
+    rows = await svc.list(workspace=identity.workspace, status=status,
                           limit=limit, offset=offset)
     return ApprovalListResponse(items=[_row_to_response(r) for r in rows],
                                 total=len(rows), limit=limit, offset=offset)
@@ -55,7 +55,7 @@ async def get_approval(
     identity: ThreadIdentity = Depends(get_thread_identity),
     svc: ApprovalService = Depends(get_approval_service),
 ) -> ApprovalResponse:
-    row = await svc.get(tenant=identity.tenant, approval_id=approval_id)
+    row = await svc.get(workspace=identity.workspace, approval_id=approval_id)
     return _row_to_response(row)
 
 
@@ -68,7 +68,7 @@ async def decide_approval(
     svc: ApprovalService = Depends(get_approval_service),
 ) -> DecideResponse:
     out = await svc.decide(
-        tenant=identity.tenant, actor=identity.user, approval_id=approval_id,
+        workspace=identity.workspace, actor=identity.user, approval_id=approval_id,
         decision=req.decision, reason=req.reason,
         request_id=get_request_id(request))
     return DecideResponse(**out)
@@ -81,7 +81,7 @@ async def list_audit(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> AuditListResponse:
-    rows = await repo.list_audit(svc.pool, tenant=identity.tenant,
+    rows = await repo.list_audit(svc.pool, workspace=identity.workspace,
                                  limit=limit, offset=offset)
     items = []
     for r in rows:
@@ -97,5 +97,5 @@ async def verify_audit(
     identity: ThreadIdentity = Depends(get_thread_identity),
     svc: ApprovalService = Depends(get_approval_service),
 ) -> VerifyChainResponse:
-    ok, bad = await repo.verify_chain(svc.pool, tenant=identity.tenant)
+    ok, bad = await repo.verify_chain(svc.pool, workspace=identity.workspace)
     return VerifyChainResponse(ok=ok, first_bad_id=bad)

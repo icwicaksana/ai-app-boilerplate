@@ -33,7 +33,7 @@ def test_chat_bad_thread_returns_json_400_not_empty_sse():
     assert "text/event-stream" not in res.headers.get("content-type", "")
 
 
-def test_chat_cross_tenant_returns_json_403():
+def test_chat_cross_workspace_returns_json_403():
     client = TestClient(_app_with_fake_ctrl(), raise_server_exceptions=False)
     res = client.post(
         "/api/v1/chat/stream", headers=_HEADERS,

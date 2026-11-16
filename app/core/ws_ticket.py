@@ -34,7 +34,7 @@ def ticket_key(ticket: str) -> str:
 
 @dataclass(frozen=True)
 class WsIdentity:
-    tenant: str
+    workspace: str
     user: str
     thread_id: str | None = None
 
@@ -44,7 +44,7 @@ class TicketStore:
         self.cache = cache
         self.ttl = ttl_seconds
 
-    async def issue(self, *, tenant: str, user: str,
+    async def issue(self, *, workspace: str, user: str,
                     thread_id: str | None = None) -> tuple[str, int]:
         """Terbitkan ticket baru. Raise CacheUnavailable bila cache mati."""
         if self.cache is None:
@@ -52,7 +52,7 @@ class TicketStore:
         ticket = secrets.token_urlsafe(32)
         await self.cache.set_json(
             ticket_key(ticket),
-            {"tenant": tenant, "user": user, "thread_id": thread_id},
+            {"workspace": workspace, "user": user, "thread_id": thread_id},
             ttl_seconds=self.ttl)
         return ticket, self.ttl
 
@@ -72,9 +72,9 @@ class TicketStore:
             data = json.loads(raw) if isinstance(raw, str) else None
         except ValueError:
             return None
-        if not isinstance(data, dict) or not data.get("tenant") or not data.get("user"):
+        if not isinstance(data, dict) or not data.get("workspace") or not data.get("user"):
             return None
-        return WsIdentity(tenant=str(data["tenant"]), user=str(data["user"]),
+        return WsIdentity(workspace=str(data["workspace"]), user=str(data["user"]),
                           thread_id=(str(data["thread_id"])
                                      if data.get("thread_id") else None))
 

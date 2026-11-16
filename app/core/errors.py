@@ -93,10 +93,10 @@ class ThreadNotFoundError(AppError):
         )
 
 
-class CrossTenantError(AppError):
+class CrossWorkspaceError(AppError):
     def __init__(self):
         super().__init__(
-            "Thread milik tenant lain — akses ditolak.",
+            "Thread milik workspace lain — akses ditolak.",
             status_code=403,
             code="CROSS_TENANT_DENIED",
             title="Forbidden",
@@ -196,7 +196,7 @@ class StreamGoneError(AppError):
 # --- v0.7: RAG / ingest (desain beku: Docs/RAG-V07-DESIGN.md D12) ---
 
 class DocumentNotFoundError(AppError):
-    """Dokumen asing/tak ada → 404 (anti-enumerasi: tanpa bocor tenant)."""
+    """Dokumen asing/tak ada → 404 (anti-enumerasi: tanpa bocor workspace)."""
 
     def __init__(self, document_id: str = ""):
         super().__init__(

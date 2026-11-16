@@ -25,7 +25,7 @@ CHAT_AGENTS: dict[str, type[BaseChatAgent]] = {
     "example_chat": ExampleChatAgent,
     # Demo HITL tanpa LLM (v0.6): mencoba alur approval end-to-end.
     "hitl_demo": HitlDemoAgent,
-    # RAG chat (v0.7): ReAct + search_knowledge_base tenant-bound.
+    # RAG chat (v0.7): ReAct + search_knowledge_base workspace-bound.
     "rag_chat": RagChatAgent,
 }
 

@@ -55,7 +55,7 @@ async def test_100_turns_resume_exact(persistence, tag):
 
         # history API di atas thread yang sama: total + paginasi konsisten
         ctrl = ThreadController(Settings(_env_file=None), checkpointer, Runner())
-        ident = ThreadIdentity(tenant=f"it-{tag}", user="budi")
+        ident = ThreadIdentity(workspace=f"it-{tag}", user="budi")
         full = await ctrl.get_history(ident, tid, limit=100, offset=0)
         assert full.total >= 100  # ≥1 checkpoint per turn
         assert full.items[0].messages_count == 200  # terbaru dulu

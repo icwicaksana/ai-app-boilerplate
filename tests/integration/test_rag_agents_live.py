@@ -26,7 +26,7 @@ class _FakeLLM:
         return AIMessage(content=self.text)
 
 
-async def _seed_ready(pool, settings, tenant: str):
+async def _seed_ready(pool, settings, workspace: str):
     """Seed MD + proses inline sampai ready. Return document_id."""
     from app.infra import ingest_repo as repo
     from app.infra.rag.infinity import InfinityEmbeddings
@@ -34,23 +34,23 @@ async def _seed_ready(pool, settings, tenant: str):
     from app.workers.ingest import WorkerCtx, build_parsers, process_job
     from conftest import purge_stale_test_jobs
 
-    await purge_stale_test_jobs(pool)  # queue global: buang job basi tenant test
+    await purge_stale_test_jobs(pool)  # queue global: buang job basi workspace test
 
     async with pool.connection() as conn:
         await conn.execute(
-            "DELETE FROM documents WHERE tenant LIKE %s", (tenant + "%",))
+            "DELETE FROM documents WHERE workspace LIKE %s", (workspace + "%",))
     from pathlib import Path
 
-    rel = f"{tenant}/garansi.bin"
+    rel = f"{workspace}/garansi.bin"
     target = Path(settings.RAG_STORAGE_DIR) / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(MD)
     doc = await repo.create_document(
-        pool, tenant=tenant, source_type="md", source_uri=rel,
+        pool, workspace=workspace, source_type="md", source_uri=rel,
         title="garansi.md", lang="id", size_bytes=len(MD),
         sha256=hashlib.sha256(MD).hexdigest(), parser="auto",
         chunk_preset="markdown", created_by="live")
-    job = await repo.create_job(pool, tenant=tenant,
+    job = await repo.create_job(pool, workspace=workspace,
                                 document_id=str(doc["id"]))
     claimed = await repo.claim_job(pool, worker_id="live-ra")
     assert claimed is not None and claimed["id"] == job["id"]
@@ -72,10 +72,10 @@ async def test_live_tool_dan_retrieve_nyata(db_url, embed_url, tag, tmp_path):
     from app.agents.tools.RetrieverTool import make_search_knowledge_tool
     from app.core.config import Settings
     from app.infra.postgres import close_pool, create_pool, open_pool
-    from app.infra.rag.factory import init_rag, retriever_for_tenant
+    from app.infra.rag.factory import init_rag, retriever_for_workspace
     from app.infra.rag_migrate import apply_rag_migration
 
-    tenant = f"it-ra-{tag}"
+    workspace = f"it-ra-{tag}"
     settings = Settings(_env_file=None, DATABASE_URL=db_url,
                         DB_POOL_MIN=1, DB_POOL_MAX=5,
                         RAG_EMBED_BASE_URL=embed_url,
@@ -84,19 +84,19 @@ async def test_live_tool_dan_retrieve_nyata(db_url, embed_url, tag, tmp_path):
     await open_pool(pool)
     try:
         await apply_rag_migration(pool)
-        await _seed_ready(pool, settings, tenant)
+        await _seed_ready(pool, settings, workspace)
         clients = await init_rag(settings, pool)
-        retriever = retriever_for_tenant(settings, clients, pool,
-                                         tenant=tenant)
+        retriever = retriever_for_workspace(settings, clients, pool,
+                                         workspace=workspace)
         tool = make_search_knowledge_tool(retriever)
         out = await tool.ainvoke({"query": "berapa lama garansi laptop?"})
         assert "[^1]" in out and "24 bulan" in out
         assert "garansi.md" in out
-        # Tenant KOSONG (tanpa dokumen) → deterministik no_evidence.
+        # Workspace KOSONG (tanpa dokumen) → deterministik no_evidence.
         # (Query tak-terkait di index berisi = 'ok' skor-rendah; itu ranah
         # kalibrasi floor F6, bukan assertion di sini.)
-        empty_retriever = retriever_for_tenant(
-            settings, clients, pool, tenant=f"it-ra-kosong-{tag}")
+        empty_retriever = retriever_for_workspace(
+            settings, clients, pool, workspace=f"it-ra-kosong-{tag}")
         idle = await make_search_knowledge_tool(
             empty_retriever).ainvoke({"query": "jadwal kereta ke Surabaya?"})
         assert "TIDAK ADA BUKTI" in idle
@@ -112,10 +112,10 @@ async def test_live_answer_full_run_grounded(db_url, embed_url, tag, tmp_path):
     from app.controllers.runner import Runner
     from app.core.config import Settings
     from app.infra.postgres import close_pool, create_pool, open_pool
-    from app.infra.rag.factory import init_rag, retriever_for_tenant
+    from app.infra.rag.factory import init_rag, retriever_for_workspace
     from app.infra.rag_migrate import apply_rag_migration
 
-    tenant = f"it-rb-{tag}"
+    workspace = f"it-rb-{tag}"
     settings = Settings(_env_file=None, DATABASE_URL=db_url,
                         DB_POOL_MIN=1, DB_POOL_MAX=5,
                         LITELLM_BASE_URL="http://localhost:4000",
@@ -126,18 +126,18 @@ async def test_live_answer_full_run_grounded(db_url, embed_url, tag, tmp_path):
     await open_pool(pool)
     try:
         await apply_rag_migration(pool)
-        await _seed_ready(pool, settings, tenant)
+        await _seed_ready(pool, settings, workspace)
         clients = await init_rag(settings, pool)
-        retriever = retriever_for_tenant(settings, clients, pool,
-                                         tenant=tenant)
+        retriever = retriever_for_workspace(settings, clients, pool,
+                                         workspace=workspace)
         ctx = AgentContext(settings=settings,
                            checkpointer=InMemorySaver(), runner=Runner(),
-                           session_id=f"{tenant}:u:s", retriever=retriever)
+                           session_id=f"{workspace}:u:s", retriever=retriever)
         ag = RagAnswerAgent(ctx)
         ag.llm = _FakeLLM("Garansi resmi 24 bulan untuk semua laptop.[^1]")
         out = await ag.run_agent(
             {"question": "berapa lama garansi laptop?"},
-            {"configurable": {"thread_id": f"{tenant}:u:s"}})
+            {"configurable": {"thread_id": f"{workspace}:u:s"}})
         assert out["status"] == "completed"
         data = out["output"]["data"]
         assert data["grounded"] is True and data["refusal"] is False
@@ -157,11 +157,11 @@ async def test_live_answer_no_evidence_tanpa_llm(db_url, embed_url, tag,
     from app.controllers.runner import Runner
     from app.core.config import Settings
     from app.infra.postgres import close_pool, create_pool, open_pool
-    from app.infra.rag.factory import init_rag, retriever_for_tenant
+    from app.infra.rag.factory import init_rag, retriever_for_workspace
     from app.infra.rag_migrate import apply_rag_migration
     from app.rag.grounding import REFUSAL_ID
 
-    tenant = f"it-rc-{tag}"
+    workspace = f"it-rc-{tag}"
     settings = Settings(_env_file=None, DATABASE_URL=db_url,
                         DB_POOL_MIN=1, DB_POOL_MAX=5,
                         LITELLM_BASE_URL="http://localhost:4000",
@@ -172,13 +172,13 @@ async def test_live_answer_no_evidence_tanpa_llm(db_url, embed_url, tag,
     await open_pool(pool)
     try:
         await apply_rag_migration(pool)
-        # SENGAJA tanpa seed: tenant kosong → no_evidence deterministik.
+        # SENGAJA tanpa seed: workspace kosong → no_evidence deterministik.
         clients = await init_rag(settings, pool)
-        retriever = retriever_for_tenant(settings, clients, pool,
-                                         tenant=tenant)
+        retriever = retriever_for_workspace(settings, clients, pool,
+                                         workspace=workspace)
         ctx = AgentContext(settings=settings,
                            checkpointer=InMemorySaver(), runner=Runner(),
-                           session_id=f"{tenant}:u:s", retriever=retriever)
+                           session_id=f"{workspace}:u:s", retriever=retriever)
         ag = RagAnswerAgent(ctx)
 
         class _Boom:
@@ -188,7 +188,7 @@ async def test_live_answer_no_evidence_tanpa_llm(db_url, embed_url, tag,
         ag.llm = _Boom()
         out = await ag.run_agent(
             {"question": "jadwal kereta ke Surabaya?"},
-            {"configurable": {"thread_id": f"{tenant}:u:s"}})
+            {"configurable": {"thread_id": f"{workspace}:u:s"}})
         assert out["output"]["reply"] == REFUSAL_ID
         assert out["output"]["data"]["refusal"] is True
         assert out["output"]["data"]["retrieval_status"] == "no_evidence"

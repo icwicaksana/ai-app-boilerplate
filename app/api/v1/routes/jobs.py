@@ -61,7 +61,7 @@ async def run_job(
                               "thread_id": req.thread_id}) if idem_key else ""
 
     if idem_key:
-        decision = await guard.begin(tenant=identity.tenant, user=identity.user,
+        decision = await guard.begin(workspace=identity.workspace, user=identity.user,
                                      key=idem_key, payload_hash=payload_hash)
         if decision.state == REPLAY and decision.response is not None:
             response.headers["Idempotent-Replayed"] = "true"
@@ -85,12 +85,12 @@ async def run_job(
     except Exception:
         # Eksekusi gagal = lepas kunci agar klien boleh retry.
         if idem_key:
-            await guard.abort(tenant=identity.tenant, user=identity.user,
+            await guard.abort(workspace=identity.workspace, user=identity.user,
                               key=idem_key)
         raise
 
     if idem_key:
-        await guard.finish(tenant=identity.tenant, user=identity.user,
+        await guard.finish(workspace=identity.workspace, user=identity.user,
                            key=idem_key, payload_hash=payload_hash,
                            response=result.model_dump(mode="json"))
     return result

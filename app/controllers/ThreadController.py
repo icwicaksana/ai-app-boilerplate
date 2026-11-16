@@ -4,7 +4,7 @@
   butuh graph agen. Hanya `fork` butuh graph (untuk `aupdate_state`) sehingga
   request fork wajib sertakan `agent`.
 - Setiap method: parse thread (400) → cocok pemilik (403) → cek ada (404).
-  Urutan ini penting: jangan bocorkan keberadaan thread tenant lain (403 dulu).
+  Urutan ini penting: jangan bocorkan keberadaan thread workspace lain (403 dulu).
 - DELETE hanya hapus checkpoints. Profil/fakta user di store TIDAK tersentuh
   (hapus chat ≠ hapus ingatan).
 """
@@ -221,7 +221,7 @@ class ThreadController(BaseController):
         # gagal jelas di aupdate_state (skema state). Validasi silang-rel via
         # metadata pemilik ditunda (butuh tulis metadata di semua jalur).
         started = time.perf_counter()
-        tenant, user, _ = ensure_owner(identity, thread_id)
+        workspace, user, _ = ensure_owner(identity, thread_id)
         agents = {**CHAT_AGENTS, **JOB_AGENTS}
         if agent_name not in agents:  # lookup DULU (sebelum I/O sia-sia)
             raise AgentNotFoundError(agent_name)
@@ -230,7 +230,7 @@ class ThreadController(BaseController):
         if not cid:  # "" falsy → _require_tuple akan ambil latest (SALAH)
             raise InvalidThreadIdError(f"{tid}@<checkpoint kosong>")
         tup = await self._require_tuple(tid, cid)
-        new_thread = compose_thread_id(tenant, user)
+        new_thread = compose_thread_id(workspace, user)
         graph = self._graph_for_fork(agents[agent_name], new_thread)
         await graph.aupdate_state(
             {"configurable": {"thread_id": new_thread}},

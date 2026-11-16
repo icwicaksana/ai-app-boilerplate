@@ -62,10 +62,16 @@ def test_ensure_owner_tolak_identitas_lain():
 
 # --- 3. Kode error lintas-identitas (HTTP shape, bukan string) ------------
 def test_cross_identity_denied_status_403():
-    from app.core.errors import CrossTenantError
+    """Nama kelas boleh berubah (tenant→workspace); kontraknya TIDAK boleh.
 
-    err = CrossTenantError()
-    assert err.status_code == 403
+    Sengaja rename-agnostik: jangkar ini harus hijau SEBELUM dan SESUDAH
+    rename tanpa diedit.
+    """
+    from app.core import errors
+
+    cls = (getattr(errors, "CrossWorkspaceError", None)
+           or getattr(errors, "CrossTenantError"))
+    assert cls().status_code == 403
 
 
 # --- 4. Tier C DIBEKUKAN: GUC RLS -----------------------------------------
@@ -84,11 +90,18 @@ def test_namespace_memori_masih_tenants():
 
 
 # --- 6. Tier C DIBEKUKAN: prefix ontologi KG ------------------------------
-def test_prefix_ontologi_masih_tenant():
-    """DIBEKUKAN sampai v0.8.2 (tersimpan di kg_entities.type/kg_edges.relation)."""
-    from app.rag.ontology import TENANT_PREFIX
+def test_nilai_prefix_ontologi_masih_tenant():
+    """Nama simbol boleh berubah; NILAI-nya DIBEKUKAN sampai v0.8.2.
 
-    assert TENANT_PREFIX == "tenant:"
+    Prefix tersimpan di `kg_entities.type` / `kg_edges.relation`. Mengubahnya
+    tanpa migrasi data membuat relasi ekstensi jatuh ke force-fit
+    `related_to` (KG degradasi diam-diam).
+    """
+    from app.rag import ontology
+
+    prefix = (getattr(ontology, "WORKSPACE_EXT_PREFIX", None)
+              or getattr(ontology, "TENANT_PREFIX"))
+    assert prefix == "tenant:"
 
 
 # --- 7. Identitas deterministik (bukan label — jangan di-rename) ----------

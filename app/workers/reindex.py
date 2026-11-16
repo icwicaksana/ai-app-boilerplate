@@ -1,6 +1,6 @@
 """Reconciler PG → Qdrant (D4/T10): `python -m app.workers.reindex`.
 
-PG adalah SoR; Qdrant turunan rebuildable. Per tenant:
+PG adalah SoR; Qdrant turunan rebuildable. Per workspace:
 - bandingkan chunk PG vs point Qdrant (by point_id deterministik),
 - upsert yang hilang + hapus orphan,
 - laporkan selisih (kriteria cutover: selisih = 0).
@@ -30,11 +30,11 @@ def parse_vector(raw: object) -> list[float]:
     return [float(x) for x in s[1:-1].split(",") if x.strip()]
 
 
-async def reindex_tenant(pool, qdrant_client, collection: str, *,
-                         tenant: str, since: str | None = None,
+async def reindex_workspace(pool, qdrant_client, collection: str, *,
+                         workspace: str, since: str | None = None,
                          dry_run: bool = False,
                          batch: int = 100) -> dict:
-    """Rekonsiliasi 1 tenant. Return laporan {pg, qdrant_sebelum, ...}."""
+    """Rekonsiliasi 1 workspace. Return laporan {pg, qdrant_sebelum, ...}."""
     from qdrant_client import models
 
     from app.infra.rag.qdrant import point_id
@@ -45,8 +45,8 @@ async def reindex_tenant(pool, qdrant_client, collection: str, *,
             # SET LOCAL: benar di bawah RLS FORCED maupun superuser (K2).
             await conn.execute(
                 "SELECT set_config('app.current_tenant', %s, true)",
-                (tenant,))
-            params: list = [tenant]
+                (workspace,))
+            params: list = [workspace]
             filt = ""
             if since:
                 filt = " AND c.created_at >= %s::timestamptz"
@@ -61,7 +61,7 @@ async def reindex_tenant(pool, qdrant_client, collection: str, *,
                     " c.embedding_model, c.embedding_dim, c.embedding_version,"
                     " d.title AS source FROM chunks c"
                     " JOIN documents d ON d.id = c.document_id"
-                    " WHERE c.tenant = %s" + filt +
+                    " WHERE c.workspace = %s" + filt +
                     " AND (c.document_id, c.ord) > (%s::uuid, %s)"
                     " ORDER BY c.document_id, c.ord LIMIT 2000",
                     params + [last_doc, last_ord])
@@ -69,15 +69,15 @@ async def reindex_tenant(pool, qdrant_client, collection: str, *,
                 if not rows:
                     break
                 for r in rows:
-                    pid = point_id(tenant, str(r["document_id"]),
+                    pid = point_id(workspace, str(r["document_id"]),
                                    int(r["ord"]))
                     pg_ids[pid] = dict(r)
                 last_doc = str(rows[-1]["document_id"])
                 last_ord = int(rows[-1]["ord"])
 
-    # 2) Sisi Qdrant: semua point tenant (scroll paginal).
+    # 2) Sisi Qdrant: semua point workspace (scroll paginal).
     filt = models.Filter(must=[models.FieldCondition(
-        key="tenant", match=models.MatchValue(value=tenant))])
+        key="tenant", match=models.MatchValue(value=workspace))])
     q_ids: set[str] = set()
     offset = None
     while True:
@@ -92,12 +92,12 @@ async def reindex_tenant(pool, qdrant_client, collection: str, *,
     # salah, BUKAN orphan — abort SEBELUM delete.
     if not pg_ids and q_ids and not dry_run and since is None:
         raise SystemExit(
-            f"REFUSE {tenant}: pg=0 tapi qdrant={len(q_ids)} — curiga "
+            f"REFUSE {workspace}: pg=0 tapi qdrant={len(q_ids)} — curiga "
             "filter/RLS salah, abort sebelum delete.")
 
     missing = [pid for pid in pg_ids if pid not in q_ids]
     orphans = [pid for pid in q_ids if pid not in pg_ids]
-    report = {"tenant": tenant, "pg": len(pg_ids),
+    report = {"workspace": workspace, "pg": len(pg_ids),
               "qdrant_sebelum": len(q_ids), "hilang": len(missing),
               "orphan": len(orphans), "upserted": 0, "deleted": 0,
               "dry_run": dry_run}
@@ -114,7 +114,7 @@ async def reindex_tenant(pool, qdrant_client, collection: str, *,
             meta = dict(r["meta"] or {})
             points.append(models.PointStruct(
                 id=pid, vector=parse_vector(r["emb"]),
-                payload={"tenant": tenant,
+                payload={"workspace": workspace,
                          "document_id": str(r["document_id"]),
                          "ord": int(r["ord"]), "content": r["content"],
                          "page": r["page"], "sheet": r["sheet"],
@@ -165,15 +165,15 @@ async def _amain(args) -> int:
         client = AsyncQdrantClient(url=settings.QDRANT_URL,
                                    api_key=settings.QDRANT_API_KEY, timeout=30)
         try:
-            probe = QdrantStore(client, collection, tenant="__probe__")
+            probe = QdrantStore(client, collection, workspace="__probe__")
             await probe.ensure_collection()
-            tenants = [args.tenant] if args.tenant else await _all_tenants(pool)
+            workspaces = [args.workspace] if args.workspace else await _all_workspaces(pool)
             ok_all = True
-            for tenant in tenants:
-                rep = await reindex_tenant(
-                    pool, client, collection, tenant=tenant,
+            for workspace in workspaces:
+                rep = await reindex_workspace(
+                    pool, client, collection, workspace=workspace,
                     since=args.since, dry_run=args.dry_run)
-                print(f"{tenant}: pg={rep['pg']}"
+                print(f"{workspace}: pg={rep['pg']}"
                       f" qdrant={rep['qdrant_sebelum']} upserted={rep['upserted']}"
                       f" deleted={rep['deleted']} match={rep['match']}")
                 ok_all = ok_all and rep["match"]
@@ -200,16 +200,16 @@ async def _pg_dims(pool) -> int:
     return int(rows[0]["embedding_dim"])
 
 
-async def _all_tenants(pool) -> list[str]:
+async def _all_workspaces(pool) -> list[str]:
     async with pool.connection() as conn:
-        cur = await conn.execute("SELECT DISTINCT tenant FROM chunks")
-        return [r["tenant"] for r in await cur.fetchall()]
+        cur = await conn.execute("SELECT DISTINCT workspace FROM chunks")
+        return [r["workspace"] for r in await cur.fetchall()]
 
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Reconciler PG → Qdrant (D4).")
-    ap.add_argument("--tenant", default="",
-                    help="tenant saja (kosong = semua)")
+    ap.add_argument("--workspace", default="",
+                    help="workspace saja (kosong = semua)")
     ap.add_argument("--since", default=None,
                     help="ISO timestamp (inkremental, tanpa hapus orphan)")
     ap.add_argument("--dry-run", action="store_true",

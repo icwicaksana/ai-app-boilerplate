@@ -96,7 +96,7 @@ def _client(ctrl, cache=None):
 
 
 def _hdr(**kw):
-    args = {"tenant": "toko-a", "user": "budi", "request_id": "t1"}
+    args = {"workspace": "toko-a", "user": "budi", "request_id": "t1"}
     args.update(kw)
     return auth_headers(**args)
 
@@ -291,15 +291,15 @@ async def test_enqueue_tolak_sebelum_db():
     s = Settings(_env_file=None, DATABASE_URL="x", PHOENIX_ENABLED=False)
     ctrl = DocumentController(s, pool=None)
     with pytest.raises(PayloadTooLargeError):
-        await ctrl.enqueue(tenant="t", user="u", filename="a.pdf",
+        await ctrl.enqueue(workspace="t", user="u", filename="a.pdf",
                            blob=b"x" * (s.RAG_MAX_UPLOAD_BYTES + 1),
                            preset="prose", ocr="auto")
     with pytest.raises(UnsupportedMediaError):
-        await ctrl.enqueue(tenant="t", user="u", filename="a.bin",
+        await ctrl.enqueue(workspace="t", user="u", filename="a.bin",
                            blob=b"\x89PNG....", preset="prose", ocr="auto")
     with pytest.raises(UnsupportedMediaError):
-        await ctrl.enqueue(tenant="t", user="u", filename="a.xlsm",
+        await ctrl.enqueue(workspace="t", user="u", filename="a.xlsm",
                            blob=b"PK\x03\x04xx", preset="prose", ocr="auto")
     with pytest.raises(UnsupportedMediaError):
-        await ctrl.enqueue(tenant="t", user="u", filename="a.md",
+        await ctrl.enqueue(workspace="t", user="u", filename="a.md",
                            blob=b"", preset="prose", ocr="auto")

@@ -33,13 +33,13 @@ def client(db_url, cache_url):
 @pytest.fixture
 def creds(client):
     """User unik per test (idempotent, tanpa bentrok)."""
-    tenant = "it-" + uuid.uuid4().hex[:6]
+    workspace = "it-" + uuid.uuid4().hex[:6]
     username = "u" + uuid.uuid4().hex[:6]
     password = "rahasia-" + uuid.uuid4().hex[:8]
-    return tenant, username, password
+    return workspace, username, password
 
 
-async def _seed(db_url: str, tenant: str, username: str, password: str) -> None:
+async def _seed(db_url: str, workspace: str, username: str, password: str) -> None:
     """Seed user lewat pool SENDIRI (mirip CLI admin).
 
     Penting: JANGAN memakai `client.app.state.pool` — pool itu terikat ke
@@ -52,35 +52,35 @@ async def _seed(db_url: str, tenant: str, username: str, password: str) -> None:
     await open_pool(pool)
     try:
         await users.ensure_schema(pool)
-        await users.create_user(pool, tenant=tenant, username=username,
+        await users.create_user(pool, workspace=workspace, username=username,
                                 password_hash=hash_password(password))
     finally:
         await close_pool(pool)
 
 
-def _login(client, tenant, username, password):
+def _login(client, workspace, username, password):
     return client.post("/api/v1/auth/login",
-                       json={"tenant": tenant, "username": username,
+                       json={"workspace": workspace, "username": username,
                              "password": password})
 
 
 def test_login_and_protected_route(client, creds, db_url):
     import asyncio
 
-    tenant, username, password = creds
-    asyncio.run(_seed(db_url, tenant, username, password))
+    workspace, username, password = creds
+    asyncio.run(_seed(db_url, workspace, username, password))
 
-    res = _login(client, tenant, username, password)
+    res = _login(client, workspace, username, password)
     assert res.status_code == 200, res.text
     tokens = res.json()
     h = {"Authorization": f"Bearer {tokens['access_token']}"}
 
     me = client.get("/api/v1/auth/me", headers=h)
     assert me.status_code == 200
-    assert me.json()["tenant"] == tenant and me.json()["user"] == username
+    assert me.json()["workspace"] == workspace and me.json()["user"] == username
 
     # Route terlindungi: thread tak ada → 404 (bukan 401) = identitas diterima.
-    tid = f"{tenant}:{username}:sess-{uuid.uuid4().hex[:8]}"
+    tid = f"{workspace}:{username}:sess-{uuid.uuid4().hex[:8]}"
     state = client.get(f"/api/v1/threads/{tid}/state", headers=h)
     assert state.status_code == 404
     assert state.json()["code"] == "THREAD_NOT_FOUND"
@@ -89,22 +89,22 @@ def test_login_and_protected_route(client, creds, db_url):
 def test_wrong_password_and_unknown_user_same_shape(client, creds, db_url):
     import asyncio
 
-    tenant, username, password = creds
-    asyncio.run(_seed(db_url, tenant, username, password))
-    a = _login(client, tenant, username, "salah-banget")
-    b = _login(client, tenant, "tidakada", password)
+    workspace, username, password = creds
+    asyncio.run(_seed(db_url, workspace, username, password))
+    a = _login(client, workspace, username, "salah-banget")
+    b = _login(client, workspace, "tidakada", password)
     assert a.status_code == b.status_code == 401
     assert a.json()["code"] == b.json()["code"] == "UNAUTHENTICATED"
 
 
-def test_cross_tenant_thread_denied_with_real_token(client, creds, db_url):
+def test_cross_workspace_thread_denied_with_real_token(client, creds, db_url):
     import asyncio
 
-    tenant, username, password = creds
-    asyncio.run(_seed(db_url, tenant, username, password))
-    tokens = _login(client, tenant, username, password).json()
+    workspace, username, password = creds
+    asyncio.run(_seed(db_url, workspace, username, password))
+    tokens = _login(client, workspace, username, password).json()
     h = {"Authorization": f"Bearer {tokens['access_token']}"}
-    # Thread milik tenant lain (format valid, pemilik beda) → 403.
+    # Thread milik workspace lain (format valid, pemilik beda) → 403.
     other = f"toko-lain:{username}:sess-{uuid.uuid4().hex[:8]}"
     res = client.get(f"/api/v1/threads/{other}/state", headers=h)
     assert res.status_code == 403
@@ -114,9 +114,9 @@ def test_cross_tenant_thread_denied_with_real_token(client, creds, db_url):
 def test_refresh_rotation_and_logout_live(client, creds, db_url):
     import asyncio
 
-    tenant, username, password = creds
-    asyncio.run(_seed(db_url, tenant, username, password))
-    tokens = _login(client, tenant, username, password).json()
+    workspace, username, password = creds
+    asyncio.run(_seed(db_url, workspace, username, password))
+    tokens = _login(client, workspace, username, password).json()
 
     rotated = client.post("/api/v1/auth/refresh",
                           json={"refresh_token": tokens["refresh_token"]})

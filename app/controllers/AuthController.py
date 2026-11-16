@@ -47,23 +47,23 @@ class AuthController(BaseController):
         self.cache = cache
 
     # --- login ---
-    async def login(self, *, tenant: str, username: str, password: str,
+    async def login(self, *, workspace: str, username: str, password: str,
                     request_id: str = "-") -> TokenPair:
         started = time.perf_counter()
-        user = await users.get_user(self.pool, tenant, username)
+        user = await users.get_user(self.pool, workspace, username)
         # Verifikasi tetap dijalankan walau user tak ada? Tidak perlu: timing
         # oracle kecil diterima, pesan tetap generik (fokus anti-enumerasi).
         if not user or not user.get("is_active"):
-            log.warning("login gagal request_id=%s tenant=%s user=%s reason=unknown",
-                        request_id, tenant, username)
+            log.warning("login gagal request_id=%s workspace=%s user=%s reason=unknown",
+                        request_id, workspace, username)
             raise UnauthenticatedError(_GENERIC_LOGIN_FAIL)
         if not verify_password(password, str(user["password_hash"])):
-            log.warning("login gagal request_id=%s tenant=%s user=%s reason=password",
-                        request_id, tenant, username)
+            log.warning("login gagal request_id=%s workspace=%s user=%s reason=password",
+                        request_id, workspace, username)
             raise UnauthenticatedError(_GENERIC_LOGIN_FAIL)
 
         scopes = tuple(s for s in str(user.get("scopes") or "").split() if s)
-        pair = self._issue_pair(tenant=tenant, user=username, scopes=scopes)
+        pair = self._issue_pair(workspace=workspace, user=username, scopes=scopes)
         await users.mark_login(self.pool, int(user["id"]))
         self.log_done("auth login", request_id=request_id,
                       thread_id="-", agent="-", status="completed", started=started)
@@ -75,13 +75,13 @@ class AuthController(BaseController):
         if await is_revoked(self.cache, claims.jti):
             log.warning("refresh ditolak: token sudah di-revoke jti=%s", claims.jti)
             raise InvalidTokenError("Refresh token sudah dipakai/di-revoke.")
-        user = await users.get_user(self.pool, claims.tenant, claims.subject)
+        user = await users.get_user(self.pool, claims.workspace, claims.subject)
         if not user or not user.get("is_active"):
             raise InvalidTokenError("User tidak aktif.")
         # Rotasi: revoke SEBELUM terbitkan yang baru.
         await revoke(self.cache, claims)
         scopes = tuple(s for s in str(user.get("scopes") or "").split() if s)
-        pair = self._issue_pair(tenant=claims.tenant, user=claims.subject,
+        pair = self._issue_pair(workspace=claims.workspace, user=claims.subject,
                                 scopes=scopes)
         log.info("refresh ok request_id=%s jti_lama=%s", request_id, claims.jti)
         return pair
@@ -105,16 +105,16 @@ class AuthController(BaseController):
 
     # --- me ---
     def me(self, claims: TokenClaims) -> MeResponse:
-        return MeResponse(tenant=claims.tenant, user=claims.subject,
+        return MeResponse(workspace=claims.workspace, user=claims.subject,
                           scopes=list(claims.scopes),
                           expires_at=claims.expires_at)
 
     # --- internal ---
-    def _issue_pair(self, *, tenant: str, user: str,
+    def _issue_pair(self, *, workspace: str, user: str,
                     scopes: tuple[str, ...]) -> TokenPair:
-        access, _ = create_access_token(self.settings, tenant=tenant, user=user,
+        access, _ = create_access_token(self.settings, workspace=workspace, user=user,
                                         scopes=scopes)
-        refresh, _ = create_refresh_token(self.settings, tenant=tenant, user=user,
+        refresh, _ = create_refresh_token(self.settings, workspace=workspace, user=user,
                                           scopes=scopes)
         return TokenPair(access_token=access, refresh_token=refresh,
                          expires_in=self.settings.ACCESS_TOKEN_TTL_SECONDS)

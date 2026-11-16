@@ -5,7 +5,7 @@ token → full query (dibatasi). Bobot tier untuk `seed_confidence` =
 bobot-tertinggi yang MATCH entity (bukan rasio match/request — itu kolaps
 saat recall-net token besar; pelajaran F5 run 1: gused=0 di semua sel).
 
-Alias tenant diterapkan di ADAPTER (`resolve_seeds`, tabel kg_aliases);
+Alias workspace diterapkan di ADAPTER (`resolve_seeds`, tabel kg_aliases);
 param `aliases` di sini = override eval/fixture (bukan jalur produksi).
 """
 

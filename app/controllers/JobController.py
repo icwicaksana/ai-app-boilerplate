@@ -58,11 +58,11 @@ class JobController(BaseController):
         if self.pool is None or self.rag is None:
             raise EmbeddingUnavailableError(
                 "RAG tak tersedia (lifespan RAG gagal/nonaktif).")
-        from app.infra.rag.factory import retriever_for_tenant
+        from app.infra.rag.factory import retriever_for_workspace
 
-        tenant, _, _ = parse_thread_id(thread_id)
-        return retriever_for_tenant(self.settings, self.rag, self.pool,
-                                    tenant=tenant)
+        workspace, _, _ = parse_thread_id(thread_id)
+        return retriever_for_workspace(self.settings, self.rag, self.pool,
+                                    workspace=workspace)
 
     async def run(
         self,

@@ -7,7 +7,7 @@ from app.rag.ontology import (
     NODE_TYPES,
     ONTO_VERSION,
     RELATIONS,
-    is_tenant_extension,
+    is_workspace_extension,
     validate_node_type,
     validate_relation,
 )
@@ -32,10 +32,10 @@ def test_validasi_terima_core_dan_ekstensi():
         validate_node_type("alien")
 
 
-def test_is_tenant_extension():
-    assert is_tenant_extension("tenant:kode_hs")
-    assert not is_tenant_extension("memasok")
-    assert not is_tenant_extension("tenant:ada spasi")
+def test_is_workspace_extension():
+    assert is_workspace_extension("tenant:kode_hs")
+    assert not is_workspace_extension("memasok")
+    assert not is_workspace_extension("tenant:ada spasi")
 
 
 def test_verbalize_dua_hop_tanpa_transitivitas():

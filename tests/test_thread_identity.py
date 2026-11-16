@@ -7,7 +7,7 @@ from app.controllers.base import BaseController
 from app.core.config import Settings
 from app.core.dependencies import get_thread_identity
 from app.core.errors import (
-    CrossTenantError,
+    CrossWorkspaceError,
     InvalidIdentityError,
     InvalidThreadIdError,
 )
@@ -40,12 +40,12 @@ def test_parse_valid_lowercase_canon():
 
 @pytest.mark.parametrize("bad", [
     "", "thr-abc123", "run-xyz", "tanpa-pemisah", "a:b", "t:u:sess-1",
-    "to:u:sess-1",  # tenant < 3
+    "to:u:sess-1",  # workspace < 3
     "toko:a:b",  # session < 4
     "TOKO A:b:sess-1",  # spasi
     "toko-a:b:sess-1:extra",  # 4 segmen
     "toko-a::sess-1",  # user kosong
-    "x" * 33 + ":u:sess-1",  # tenant > 32
+    "x" * 33 + ":u:sess-1",  # workspace > 32
 ])
 def test_parse_invalid_rejected(bad):
     with pytest.raises(InvalidThreadIdError) as ei:
@@ -62,17 +62,17 @@ def test_compose_default_session():
 
 def test_compose_explicit_session():
     with pytest.raises(InvalidThreadIdError):
-        compose_thread_id("to", "u")  # tenant pendek
+        compose_thread_id("to", "u")  # workspace pendek
     assert compose_thread_id("toko-a", "budi", "Sess-1") == "toko-a:budi:sess-1"
 
 
 def test_ensure_owner_match_and_mismatch():
-    ident = ThreadIdentity(tenant="toko-a", user="budi")
+    ident = ThreadIdentity(workspace="toko-a", user="budi")
     assert ensure_owner(ident, "toko-a:budi:sess-1") == ("toko-a", "budi", "sess-1")
-    with pytest.raises(CrossTenantError) as ei:
+    with pytest.raises(CrossWorkspaceError) as ei:
         ensure_owner(ident, "toko-b:budi:sess-1")
     assert ei.value.status_code == 403
-    with pytest.raises(CrossTenantError):
+    with pytest.raises(CrossWorkspaceError):
         ensure_owner(ident, "toko-a:ani:sess-1")
     with pytest.raises(InvalidThreadIdError):
         ensure_owner(ident, "thr-xxx")
@@ -80,13 +80,13 @@ def test_ensure_owner_match_and_mismatch():
 
 def test_resolve_compose_and_continue():
     ctrl = BaseController(settings=None)
-    ident = ThreadIdentity(tenant="toko-a", user="budi")
+    ident = ThreadIdentity(workspace="toko-a", user="budi")
     tid, config = ctrl.resolve_thread_config(ident, None)
     assert tid.startswith("toko-a:budi:sess-")
     assert config == {"configurable": {"thread_id": tid}}
     tid2, _ = ctrl.resolve_thread_config(ident, "  TOKO-A:Budi:SESS-9  ")
     assert tid2 == "toko-a:budi:sess-9"  # kanon + lanjutkan, bukan baru
-    with pytest.raises(CrossTenantError):
+    with pytest.raises(CrossWorkspaceError):
         ctrl.resolve_thread_config(ident, "toko-b:budi:sess-1")
     with pytest.raises(InvalidThreadIdError):
         ctrl.resolve_thread_config(ident, "thr-lama")
@@ -98,7 +98,7 @@ async def test_identity_from_headers_trusted_mode():
     s = _trusted_settings()
     ident = await get_thread_identity(
         _req({"X-Tenant-ID": "Toko-A", "X-User-ID": "Budi"}), settings=s, cache=None)
-    assert ident == ThreadIdentity(tenant="toko-a", user="budi")
+    assert ident == ThreadIdentity(workspace="toko-a", user="budi")
     with pytest.raises(InvalidIdentityError) as ei:
         await get_thread_identity(_req({}), settings=s, cache=None)
     assert ei.value.status_code == 400 and ei.value.code == "INVALID_IDENTITY"

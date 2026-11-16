@@ -4,7 +4,7 @@
   di lifespan startup, ditutup saat shutdown. 1 pool per worker uvicorn.
 - Checkpointer: `AsyncPostgresSaver(pool)` — snapshot state per thread.
 - Store: `AsyncPostgresStore(pool)` — mentah; dibungkus `MemoryStore` per-request
-  (lihat `app/infra/memory.py`) agar namespace tenant/user terkunci.
+  (lihat `app/infra/memory.py`) agar namespace workspace/user terkunci.
 - kwargs koneksi MENIRU `from_conn_string` resmi (`autocommit`,
   `prepare_threshold=0`, `dict_row`) — tanpanya `setup()` gagal dengan
   `CREATE INDEX CONCURRENTLY cannot run inside a transaction block`.

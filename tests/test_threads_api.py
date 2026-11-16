@@ -15,7 +15,7 @@ from app.controllers.runner import Runner
 from app.core.config import Settings
 from app.core.errors import (
     AgentNotFoundError,
-    CrossTenantError,
+    CrossWorkspaceError,
     ThreadNotFoundError,
 )
 from app.core.threads import ThreadIdentity
@@ -58,7 +58,7 @@ def _settings():
 
 
 def _ident():
-    return ThreadIdentity(tenant="toko-a", user="budi")
+    return ThreadIdentity(workspace="toko-a", user="budi")
 
 
 def _msgs(n=2):
@@ -125,12 +125,12 @@ async def test_get_state_404_unknown():
 
 @pytest.mark.asyncio
 async def test_owner_checked_before_existence():
-    """Thread tenant lain → 403 (bukan 404): jangan bocorkan keberadaan."""
+    """Thread workspace lain → 403 (bukan 404): jangan bocorkan keberadaan."""
     ctrl = ThreadController(_settings(), _cp(), Runner())
-    other = ThreadIdentity(tenant="toko-b", user="budi")
-    with pytest.raises(CrossTenantError):
+    other = ThreadIdentity(workspace="toko-b", user="budi")
+    with pytest.raises(CrossWorkspaceError):
         await ctrl.get_state(other, "toko-a:budi:sess-1")
-    with pytest.raises(CrossTenantError):
+    with pytest.raises(CrossWorkspaceError):
         await ctrl.delete_thread(other, "toko-a:budi:sess-1")
 
 
@@ -168,8 +168,8 @@ async def test_fork_validations():
         await ctrl.fork(_ident(), "toko-a:budi:sess-1", "cp-salah", "example_chat")
     with pytest.raises(AgentNotFoundError):
         await ctrl.fork(_ident(), "toko-a:budi:sess-1", "cp-1", "tak-ada")
-    with pytest.raises(CrossTenantError):
-        other = ThreadIdentity(tenant="toko-b", user="budi")
+    with pytest.raises(CrossWorkspaceError):
+        other = ThreadIdentity(workspace="toko-b", user="budi")
         await ctrl.fork(other, "toko-a:budi:sess-1", "cp-1", "example_chat")
 
 

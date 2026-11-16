@@ -30,7 +30,7 @@ def _settings(**kw) -> Settings:
     return Settings(**args)
 
 
-# --- key builders: satu sumber, terisolasi per tenant/user ---
+# --- key builders: satu sumber, terisolasi per workspace/user ---
 
 def test_key_builders_shape():
     assert rate_limit_key("chat", "toko-a", "budi", 123) == "rl:chat:toko-a:budi:123"
@@ -38,7 +38,7 @@ def test_key_builders_shape():
     assert deny_key("jti-1") == "jwt:deny:jti-1"
 
 
-def test_key_builders_isolate_tenant_and_user():
+def test_key_builders_isolate_workspace_and_user():
     a = rate_limit_key("chat", "toko-a", "budi", 1)
     b = rate_limit_key("chat", "toko-b", "budi", 1)
     c = rate_limit_key("chat", "toko-a", "ani", 1)

@@ -5,7 +5,7 @@ import pytest
 
 from app.core.config import Settings
 from app.core.errors import EmbeddingUnavailableError, RagBackendMismatchError
-from app.infra.rag.factory import RagClients, init_rag, retriever_for_tenant
+from app.infra.rag.factory import RagClients, init_rag, retriever_for_workspace
 from app.rag.pipeline import HybridRetriever
 
 
@@ -61,7 +61,7 @@ async def test_init_rag_none_bila_embed_kosong():
 
 def test_retriever_pg_butuh_pool_bukan_qdrant():
     s = _settings(RAG_BACKEND="pgvector")
-    r = retriever_for_tenant(s, _clients(), pool=object(), tenant="toko-a")
+    r = retriever_for_workspace(s, _clients(), pool=object(), workspace="toko-a")
     assert isinstance(r, HybridRetriever)
     assert r._store.backend_name == "pgvector"
 
@@ -70,19 +70,19 @@ def test_retriever_qdrant_butuh_klien():
     s = _settings(RAG_BACKEND="qdrant", QDRANT_URL="http://q:6333",
                   QDRANT_API_KEY="k" * 32)
     with pytest.raises(RagBackendMismatchError):
-        retriever_for_tenant(s, _clients(qdrant=None), pool=object(),
-                             tenant="toko-a")
+        retriever_for_workspace(s, _clients(qdrant=None), pool=object(),
+                             workspace="toko-a")
 
 
 def test_retriever_tanpa_clients_jadi_unavailable():
     s = _settings()
     with pytest.raises(EmbeddingUnavailableError):
-        retriever_for_tenant(s, None, pool=object(), tenant="toko-a")
+        retriever_for_workspace(s, None, pool=object(), workspace="toko-a")
 
 
 def test_rag_numbers_diteruskan_dari_settings():
     s = _settings(RAG_DENSE_TOP=7, RAG_FINAL_TOP=2, RAG_RRF_K=30)
-    r = retriever_for_tenant(s, _clients(), pool=object(), tenant="t")
+    r = retriever_for_workspace(s, _clients(), pool=object(), workspace="t")
     assert (r._dense_top, r._final_top, r._rrf_k) == (7, 2, 30)
 
 

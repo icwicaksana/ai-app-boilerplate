@@ -30,7 +30,7 @@ async def test_live_ingest_layered_l1_l2(db_url, embed_url, tag):
     if not os.path.isdir(os.path.join(
             cache, "models--fastino--gliner2.5-multi-v1")):
         pytest.skip("model GLiNER2.5 belum diunduh")
-    tenant = f"it-g08y-{tag}"
+    workspace = f"it-g08y-{tag}"
     blob_root = Path(".test-blobs").resolve()
     settings = Settings(
         _env_file=None, DATABASE_URL=db_url, DB_POOL_MIN=1, DB_POOL_MAX=5,
@@ -45,16 +45,16 @@ async def test_live_ingest_layered_l1_l2(db_url, embed_url, tag):
         blob = ("PT Sumber Rasa memasok Kopi Arabika.\n\n"
                 "Budi Hartono bekerja sebagai manajer di PT Sumber Rasa.\n"
                 ).encode()
-        rel = f"{tenant}/doc.bin"
+        rel = f"{workspace}/doc.bin"
         target = blob_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(blob)
         doc = await repo.create_document(
-            pool, tenant=tenant, source_type="md", source_uri=rel,
+            pool, workspace=workspace, source_type="md", source_uri=rel,
             title="layered.md", lang="id", size_bytes=len(blob),
-            sha256=hashlib.sha256(blob + tenant.encode()).hexdigest(),
+            sha256=hashlib.sha256(blob + workspace.encode()).hexdigest(),
             parser="auto", chunk_preset="markdown", created_by="g08y")
-        job = await repo.create_job(pool, tenant=tenant,
+        job = await repo.create_job(pool, workspace=workspace,
                                     document_id=str(doc["id"]))
         claimed = await repo.claim_job(pool, worker_id="g08y")
         parsers, ocr = build_parsers(settings)
@@ -65,11 +65,11 @@ async def test_live_ingest_layered_l1_l2(db_url, embed_url, tag):
             tok=BgeTokenizer(cache_dir=".hf-cache"), qdrant=None,
             cache=None, parsers=parsers, ocr=ocr, extractor=extractor)
         assert await process_job(ctx, claimed) == "done"
-        doc2 = await repo.get_document(pool, tenant=tenant,
+        doc2 = await repo.get_document(pool, workspace=workspace,
                                        document_id=str(doc["id"]))
         assert doc2["meta"]["graph_status"] == "ok"
         assert doc2["meta"]["graph_edges"] >= 2
-        store = PgGraphStore(pool, tenant=tenant)
+        store = PgGraphStore(pool, workspace=workspace)
         hits = await store.expand(["budi hartono"], k=5)
         assert hits, "L2 tak mengekstrak Budi Hartono"
         assert any(h["metadata"].get("layers") == ["L2"] or "L2" in (
@@ -79,7 +79,7 @@ async def test_live_ingest_layered_l1_l2(db_url, embed_url, tag):
         try:
             async with pool.connection() as conn:
                 await conn.execute(
-                    "DELETE FROM documents WHERE tenant = %s", (tenant,))
+                    "DELETE FROM documents WHERE workspace = %s", (workspace,))
         finally:
             await close_pool(pool)
-        shutil.rmtree(blob_root / tenant, ignore_errors=True)
+        shutil.rmtree(blob_root / workspace, ignore_errors=True)

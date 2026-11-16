@@ -1,7 +1,7 @@
 """Tool retrieval RAG: `search_knowledge_base` (factory-bound, D13).
 
 - Pola factory-bound seperti MemoryTool (closure ke 1 BoundRetriever yang
-  sudah terikat tenant) — SENGAJA tidak di `ToolRegistry.TOOLS` (M6).
+  sudah terikat workspace) — SENGAJA tidak di `ToolRegistry.TOOLS` (M6).
 - Output = chunk ter-quoting + marker [^n] + aturan sitasi untuk LLM.
 - Fail-soft: gagal → string panduan (agen lanjut), JANGAN raise.
 """
@@ -29,7 +29,7 @@ _DESCRIPTION = (
 
 
 def make_search_knowledge_tool(retriever, *, k: int = 5):
-    """Ikat tool ke 1 retriever tenant (dipanggil saat build agen chat)."""
+    """Ikat tool ke 1 retriever workspace (dipanggil saat build agen chat)."""
 
     @tool(TOOL_NAME, description=_DESCRIPTION)
     async def search_knowledge_base(query: str) -> str:

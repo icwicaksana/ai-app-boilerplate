@@ -11,7 +11,7 @@ Aturan keras (T11/D12):
   OCR_FAILED (setelah 1x), BLOB_GONE, EMPTY_DOCUMENT, DOCUMENT_GONE.
   (FILE_TOO_LARGE ditolak API/413 — tak sampai worker.)
 - Progress: SoR Postgres (`stage/progress`) + ekor Valkey best-effort
-  (`ingest:{tenant}:{job_id}`, TTL 3600s).
+  (`ingest:{workspace}:{job_id}`, TTL 3600s).
 """
 
 from __future__ import annotations
@@ -184,14 +184,14 @@ return 1
 """
 
 
-async def publish(ctx: WorkerCtx, tenant: str, job_id: int, event: str,
+async def publish(ctx: WorkerCtx, workspace: str, job_id: int, event: str,
                   stage: str, progress: int) -> None:
     """Ekor Valkey best-effort (gagal = skip + log; SoR tetap Postgres)."""
     if ctx.cache is None:
         return
     try:
         await ctx.cache.eval_int(
-            _PROGRESS_LUA, [f"ingest:{tenant}:{job_id}"],
+            _PROGRESS_LUA, [f"ingest:{workspace}:{job_id}"],
             [event, stage, str(progress), str(PROGRESS_MAXLEN),
              str(PROGRESS_TTL_SECONDS)])
     except Exception as exc:
@@ -240,7 +240,7 @@ async def process_job(ctx: WorkerCtx, job: dict) -> str:
     from app.infra import ingest_repo as repo
 
     settings, pool = ctx.settings, ctx.pool
-    tenant, job_id = job["tenant"], job["id"]
+    workspace, job_id = job["workspace"], job["id"]
     doc_id = str(job["document_id"])
     stop_hb = asyncio.Event()
     lease_lost = asyncio.Event()
@@ -251,7 +251,7 @@ async def process_job(ctx: WorkerCtx, job: dict) -> str:
             try:
                 alive = await repo.heartbeat(
                     pool, job_id=job_id, worker_id=ctx.worker_id,
-                    tenant=tenant,
+                    workspace=workspace,
                     lease_seconds=settings.RAG_LEASE_SECONDS)
                 if not alive:
                     misses += 1
@@ -269,7 +269,7 @@ async def process_job(ctx: WorkerCtx, job: dict) -> str:
                 continue
 
     hb_task = asyncio.create_task(_heartbeat())
-    stages = asyncio.create_task(_run_stages(ctx, job, tenant, job_id,
+    stages = asyncio.create_task(_run_stages(ctx, job, workspace, job_id,
                                              doc_id))
     waiter = asyncio.create_task(lease_lost.wait())
     try:
@@ -295,7 +295,7 @@ async def process_job(ctx: WorkerCtx, job: dict) -> str:
             pass
 
 
-async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
+async def _run_graph_stage(ctx: WorkerCtx, *, workspace: str, job_id: int,
                           doc_id: str, rows: list, stage_fn) -> dict:
     """Stage `graph(95)` v0.8 (D10): ekstrak → tulis subgraph. Return meta.
 
@@ -320,7 +320,7 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
         # re-ingest): hapus agar tak basi (anti-stale, pola delete P1-7).
         from app.infra.rag.pg_graph import PgGraphStore
 
-        g = PgGraphStore(pool, tenant=tenant)
+        g = PgGraphStore(pool, workspace=workspace)
         await g.delete_subgraph(doc_id=doc_id)
         return {"graph_status": "disabled"}
     await stage_fn("graph", 95)
@@ -331,8 +331,8 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
     row_ids: dict[int, str] = {}
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT id, ord FROM chunks WHERE tenant = %s AND document_id = %s",
-            (tenant, doc_id))
+            "SELECT id, ord FROM chunks WHERE workspace = %s AND document_id = %s",
+            (workspace, doc_id))
         for r in await cur.fetchall():
             row_ids[int(r["ord"])] = str(r["id"])
     max_ent = settings.GRAPH_MAX_ENTITIES_PER_CHUNK
@@ -401,7 +401,7 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
                     "access_level": e.get("access_level") or acl,
                     "chunk_ord": ord_, "chunk_id": cid,
                     "chunk_row_id": row_ids.get(ord_)})
-    store = PgGraphStore(pool, tenant=tenant, model=extractor.model,
+    store = PgGraphStore(pool, workspace=workspace, model=extractor.model,
                          version=extractor.version,
                          timeout_ms=settings.GRAPH_TIMEOUT_MS)
     n_ent, n_edge = await store.upsert_subgraph(
@@ -415,7 +415,7 @@ async def _run_graph_stage(ctx: WorkerCtx, *, tenant: str, job_id: int,
             "graph_onto": ONTO_VERSION}
 
 
-async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
+async def _run_stages(ctx: WorkerCtx, job: dict, workspace: str,
                       job_id: int, doc_id: str) -> str:
     from app.infra import ingest_repo as repo
     from app.rag import citations as C
@@ -433,15 +433,15 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
     async def _stage(stage: str, progress: int) -> None:
         # Koneksi pendek per update (T11): buka-tulis-tutup.
         await repo.set_stage(pool, job_id=job_id, stage=stage,
-                             progress=progress, tenant=tenant)
-        await repo.set_document_status(pool, tenant=tenant,
+                             progress=progress, workspace=workspace)
+        await repo.set_document_status(pool, workspace=workspace,
                                        document_id=doc_id, status=stage)
-        await publish(ctx, tenant, job_id, "ingest_progress", stage, progress)
+        await publish(ctx, workspace, job_id, "ingest_progress", stage, progress)
 
     try:
-        doc = await repo.get_document(pool, tenant=tenant, document_id=doc_id)
+        doc = await repo.get_document(pool, workspace=workspace, document_id=doc_id)
         if doc is None or doc["status"] == "deleted":
-            await repo.fail_job(pool, job_id=job_id, tenant=tenant,
+            await repo.fail_job(pool, job_id=job_id, workspace=workspace,
                                 document_id=doc_id,
                                 error="DOCUMENT_GONE: dokumen dihapus saat antre",
                                 retry_at=None, touch_document=False)
@@ -537,7 +537,7 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
                                None, [], id_key))
         if not chunks:
             await repo.fail_job(
-                pool, job_id=job_id, tenant=tenant, document_id=doc_id,
+                pool, job_id=job_id, workspace=workspace, document_id=doc_id,
                 error="EMPTY_DOCUMENT: tak ada teks terekstrak", retry_at=None)
             return "dead"
 
@@ -578,7 +578,7 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
         from app.infra.rag.pgvector import PgVectorStore
 
         dims = getattr(ctx.embed, "dims", 0) or len(vectors[0])
-        pg = PgVectorStore(pool, tenant=tenant,
+        pg = PgVectorStore(pool, workspace=workspace,
                            model=settings.RAG_EMBED_MODEL,
                            dim=dims,
                            version=getattr(ctx.embed, "version", "v1"))
@@ -592,7 +592,7 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
             q = QdrantStore(
                 ctx.qdrant,
                 collection_name(dims, settings.RAG_EMBED_MODEL),
-                tenant=tenant, model=settings.RAG_EMBED_MODEL,
+                workspace=workspace, model=settings.RAG_EMBED_MODEL,
                 dim=dims,
                 version=getattr(ctx.embed, "version", "v1"))
             await q.ensure_collection()  # idempotent (K8)
@@ -602,10 +602,10 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
             await q.upsert_chunks(doc_id=doc_id, chunks=rows)
 
         graph_meta = await _run_graph_stage(
-            ctx, tenant=tenant, job_id=job_id, doc_id=doc_id, rows=rows,
+            ctx, workspace=workspace, job_id=job_id, doc_id=doc_id, rows=rows,
             stage_fn=_stage)
 
-        finished = await repo.finish_job(pool, job_id=job_id, tenant=tenant,
+        finished = await repo.finish_job(pool, job_id=job_id, workspace=workspace,
                                          document_id=doc_id)
         if not finished:
             # Kalah race dengan delete (K4): chunk sudah terlanjur masuk —
@@ -617,32 +617,32 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
                 q2 = QdrantStore(
                     ctx.qdrant,
                     collection_name(dims, settings.RAG_EMBED_MODEL),
-                    tenant=tenant)
+                    workspace=workspace)
                 await q2.delete_document(doc_id=doc_id)
             if graph_meta.get("graph_status") not in (None, "disabled"):
                 from app.infra.rag.pg_graph import PgGraphStore
 
-                g2 = PgGraphStore(pool, tenant=tenant)
+                g2 = PgGraphStore(pool, workspace=workspace)
                 await g2.delete_subgraph(doc_id=doc_id)
             log.info("job %s: dokumen dihapus saat indexing → dibersihkan",
                      job_id)
             return "dead"
         await repo.set_document_status(
-            pool, tenant=tenant, document_id=doc_id, status="ready",
+            pool, workspace=workspace, document_id=doc_id, status="ready",
             meta_patch={"chunks": len(rows), **parsed_meta, **graph_meta})
-        await publish(ctx, tenant, job_id, "ingest_result", "done", 100)
+        await publish(ctx, workspace, job_id, "ingest_result", "done", 100)
         log.info("job %s done (%s, %d chunk)", job_id, doc_id, len(rows))
         return "done"
     except _OcrRequired as exc:
         from app.infra import ingest_repo as repo
 
-        await repo.fail_job(pool, job_id=job_id, tenant=tenant,
+        await repo.fail_job(pool, job_id=job_id, workspace=workspace,
                             document_id=doc_id,
                             error=f"OCR_REQUIRED: {exc}", retry_at=None)
         await repo.set_document_status(
-            pool, tenant=tenant, document_id=doc_id, status="failed",
+            pool, workspace=workspace, document_id=doc_id, status="failed",
             meta_patch={"ocr_required": True})
-        await publish(ctx, tenant, job_id, "ingest_error", "dead", 0)
+        await publish(ctx, workspace, job_id, "ingest_error", "dead", 0)
         return "dead"
     except Exception as exc:  # noqa: BLE001 - klasifikasikan semua
         from app.infra import ingest_repo as repo
@@ -653,15 +653,15 @@ async def _run_stages(ctx: WorkerCtx, job: dict, tenant: str,
         retry_at = (datetime.now(timezone.utc) + timedelta(
             seconds=compute_backoff(attempt_no))) if retry else None
         state = await repo.fail_job(
-            pool, job_id=job_id, tenant=tenant, document_id=doc_id,
+            pool, job_id=job_id, workspace=workspace, document_id=doc_id,
             error=f"{code}: {msg}", retry_at=retry_at)
         if state == "failed":
             # Status dokumen konsisten saat retryable (P10).
             await repo.set_document_status(
-                pool, tenant=tenant, document_id=doc_id, status="pending",
+                pool, workspace=workspace, document_id=doc_id, status="pending",
                 meta_patch={"retry_at": retry_at.isoformat(),
                             "last_error": f"{code}: {msg}"[:300]})
-        await publish(ctx, tenant, job_id, "ingest_error", state, 0)
+        await publish(ctx, workspace, job_id, "ingest_error", state, 0)
         log.warning("job %s → %s (%s)", job_id, state, code)
         return state
 
@@ -717,7 +717,7 @@ async def run_worker(settings, pool, *, worker_id: str,
             except asyncio.TimeoutError:
                 continue
             break
-        await publish(context, job["tenant"], job["id"],
+        await publish(context, job["workspace"], job["id"],
                       "ingest_started", "leased", 0)
         task = asyncio.create_task(_one(job))
         if max_jobs is not None and settings.WORKER_CONCURRENCY == 1:
@@ -729,7 +729,7 @@ async def release_all(pool, *, worker_id: str) -> int:
     """Lepas semua lease milik worker ini (shutdown graceful).
 
     Semua non-terminal (009: state tetap leased saat kerja; baris transition
-    ikut ter-cover). Tanpa SET LOCAL: klaim worker lintas-tenant by design
+    ikut ter-cover). Tanpa SET LOCAL: klaim worker lintas-workspace by design
     (fungsi klaim privileged; release milik sendiri via claimed_by).
     """
     async with pool.connection() as conn:

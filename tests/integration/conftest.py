@@ -3,7 +3,7 @@
 - Butuh `app-db` + `TEST_DATABASE_URL` (fallback `DATABASE_URL`).
   Tak terjangkau → SKIP (bukan fail) — agar mesin tanpa docker tetap hijau.
 - Windows: selector event-loop policy WAJIB (psycopg menolak Proactor).
-- Tiap test: tenant unik `it-<hex>` + cleanup best-effort → idempotent.
+- Tiap test: workspace unik `it-<hex>` + cleanup best-effort → idempotent.
 """
 
 import asyncio
@@ -144,9 +144,9 @@ async def embed_url() -> str:
     return require_embed()
 
 
-# --- v0.7: kebersihan queue worker (claim bersifat GLOBAL/lintas-tenant) ---
+# --- v0.7: kebersihan queue worker (claim bersifat GLOBAL/lintas-workspace) ---
 
-# Tenant milik test (semua modul). Job non-terminal dari run yang DIBATALKAN
+# Workspace milik test (semua modul). Job non-terminal dari run yang DIBATALKAN
 # (mis. test error di tengah) akan diklaim lebih dulu oleh `claim_job` —
 # FIFO benar, tapi membuat assertion "job pertama = job saya" rapuh.
 TEST_TENANT_PREFIXES = ("it-", "live-", "e2e-", "eval-")
@@ -154,14 +154,14 @@ TEST_TENANT_PREFIXES = ("it-", "live-", "e2e-", "eval-")
 
 async def purge_stale_test_jobs(pool, *, keep_document_id: str | None = None
                                 ) -> int:
-    """Tandai dead SEMUA job non-terminal milik tenant test.
+    """Tandai dead SEMUA job non-terminal milik workspace test.
 
     Wajib dipanggil test yang memakai `claim_job` (queue global). Hanya
-    menyentuh tenant ber-prefix test — data tenant nyata tak pernah disentuh.
+    menyentuh workspace ber-prefix test — data workspace nyata tak pernah disentuh.
     `keep_document_id` = dokumen milik test INI (jangan dibunuh; test lain
     memanggil purge SETELAH membuat dokumen+job-nya sendiri).
     """
-    clauses = " OR ".join(["tenant LIKE %s"] * len(TEST_TENANT_PREFIXES))
+    clauses = " OR ".join(["workspace LIKE %s"] * len(TEST_TENANT_PREFIXES))
     params: list = [p + "%" for p in TEST_TENANT_PREFIXES]
     keep = ""
     if keep_document_id:

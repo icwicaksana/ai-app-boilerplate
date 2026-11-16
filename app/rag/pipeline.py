@@ -99,9 +99,9 @@ def truncate_sentences(text: str, max_tokens: int, tok: TokenizerPort) -> str:
 
 
 class HybridRetriever:
-    """Implementasi tunggal `BoundRetriever` (dibangun SUDAH terikat tenant).
+    """Implementasi tunggal `BoundRetriever` (dibangun SUDAH terikat workspace).
 
-    `store` yang di-inject sudah bound (factory) — pipeline tak pernah tahu tenant.
+    `store` yang di-inject sudah bound (factory) — pipeline tak pernah tahu workspace.
     """
 
     def __init__(
@@ -241,7 +241,7 @@ class HybridRetriever:
             weighted = weighted[:self._graph_seed_top]
             cands = [n for n, _ in weighted]
             weights = dict(weighted)
-            # Resolve via adapter (alias tenant + keberadaan entity, F4):
+            # Resolve via adapter (alias workspace + keberadaan entity, F4):
             # confidence REAL = bobot-tier tertinggi yang match (pelajaran
             # F5 run 1: rasio match/request kolaps oleh recall-net token).
             try:

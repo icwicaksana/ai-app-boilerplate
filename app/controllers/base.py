@@ -34,12 +34,12 @@ class BaseController:
     def resolve_thread_config(
         self, identity: ThreadIdentity, req_thread_id: str | None
     ) -> tuple[str, dict]:
-        """Kosong → compose `tenant:user:sess-*`; isi → parse + cocok pemilik (403).
+        """Kosong → compose `workspace:user:sess-*`; isi → parse + cocok pemilik (403).
 
         Retry dengan id sama = lanjutkan thread, bukan eksekusi ganda.
         """
         if not (req_thread_id or "").strip():
-            thread_id = compose_thread_id(identity.tenant, identity.user)
+            thread_id = compose_thread_id(identity.workspace, identity.user)
         else:
             ensure_owner(identity, req_thread_id)  # raise 400/403 bila tak valid/asing
             thread_id = req_thread_id.strip().lower()

@@ -58,7 +58,7 @@ def test_canonical_json_deterministic():
 
 
 def test_audit_hash_chain_detects_tampering():
-    body1 = {"tenant": "t", "actor": "budi", "action": "approval_requested",
+    body1 = {"workspace": "t", "actor": "budi", "action": "approval_requested",
              "subject_type": "approval", "subject_id": "1",
              "payload": {"x": 1}, "request_id": "-"}
     h1 = compute_hash(GENESIS, body1)

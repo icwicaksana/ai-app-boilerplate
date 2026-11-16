@@ -38,18 +38,18 @@ class TurnManager:
         task = self._tasks.get(turn_id)
         return bool(task and not task.done())
 
-    async def start(self, *, tenant: str, turn_id: str,
+    async def start(self, *, workspace: str, turn_id: str,
                     first_event: dict[str, Any],
                     events: AsyncIterator[dict[str, Any]]) -> None:
         """Tulis event pertama (started) lalu jalankan producer di latar."""
-        await self.turnlog.create(tenant=tenant, turn_id=turn_id,
+        await self.turnlog.create(workspace=workspace, turn_id=turn_id,
                                   first_event=first_event)
         task = asyncio.create_task(
-            self._produce(tenant, turn_id, events), name=f"turn:{turn_id}")
+            self._produce(workspace, turn_id, events), name=f"turn:{turn_id}")
         self._tasks[turn_id] = task
         task.add_done_callback(lambda _t, tid=turn_id: self._tasks.pop(tid, None))
 
-    async def _produce(self, tenant: str, turn_id: str,
+    async def _produce(self, workspace: str, turn_id: str,
                        events: AsyncIterator[dict[str, Any]]) -> None:
         terminal = False
         try:
@@ -59,7 +59,7 @@ class TurnManager:
                 # "started tepat satu kali" tetap utuh.
                 if event.get("type") == "started":
                     continue
-                await self.turnlog.append(tenant=tenant, turn_id=turn_id,
+                await self.turnlog.append(workspace=workspace, turn_id=turn_id,
                                           event=event)
                 if is_terminal(event):
                     terminal = True
@@ -70,7 +70,7 @@ class TurnManager:
             log.exception("turn producer gagal turn=%s", turn_id)
             terminal = True
             try:
-                await self.turnlog.append(tenant=tenant, turn_id=turn_id, event={
+                await self.turnlog.append(workspace=workspace, turn_id=turn_id, event={
                     "type": "error", "title": "Stream Failed",
                     "status": 500, "code": "STREAM_FAILED",
                     "detail": f"{type(exc).__name__}: {exc}", "instance": "-",
@@ -79,12 +79,12 @@ class TurnManager:
                 log.exception("gagal menulis error terminal turn=%s", turn_id)
         finally:
             if terminal:
-                await self.turnlog.finish(tenant=tenant, turn_id=turn_id)
+                await self.turnlog.finish(workspace=workspace, turn_id=turn_id)
 
-    async def follow(self, *, tenant: str, turn_id: str, cursor: str = "0-0",
+    async def follow(self, *, workspace: str, turn_id: str, cursor: str = "0-0",
                      idle_timeout_s: float = 60.0) -> AsyncIterator[tuple[str, dict]]:
         async for item in self.turnlog.follow(
-                tenant=tenant, turn_id=turn_id, cursor=cursor,
+                workspace=workspace, turn_id=turn_id, cursor=cursor,
                 idle_timeout_s=idle_timeout_s):
             yield item
 

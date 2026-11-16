@@ -26,10 +26,10 @@ def test_ticket_key_prefix():
 async def test_ticket_issue_and_consume_once():
     cache = FakeCache()
     store = TicketStore(cache, ttl_seconds=30)
-    ticket, ttl = await store.issue(tenant="toko-a", user="budi")
+    ticket, ttl = await store.issue(workspace="toko-a", user="budi")
     assert ttl == 30 and ticket
     ident = await store.consume(ticket)
-    assert ident and ident.tenant == "toko-a" and ident.user == "budi"
+    assert ident and ident.workspace == "toko-a" and ident.user == "budi"
     # sekali pakai
     assert await store.consume(ticket) is None
 
@@ -47,7 +47,7 @@ async def test_ticket_without_cache_raises_on_issue():
 
     store = TicketStore(None, ttl_seconds=30)
     with pytest.raises(CacheUnavailable):
-        await store.issue(tenant="t", user="u")
+        await store.issue(workspace="t", user="u")
     assert await store.consume("apa-saja") is None
 
 
@@ -55,6 +55,6 @@ async def test_ticket_without_cache_raises_on_issue():
 async def test_ticket_cache_down_is_rejected_softly():
     cache = FakeCache()
     store = TicketStore(cache, ttl_seconds=30)
-    ticket, _ = await store.issue(tenant="t", user="u")
+    ticket, _ = await store.issue(workspace="t", user="u")
     cache.down = True
     assert await store.consume(ticket) is None  # fail-closed untuk auth

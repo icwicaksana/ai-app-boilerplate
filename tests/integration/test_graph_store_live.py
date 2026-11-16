@@ -24,34 +24,34 @@ async def stores(db_url, tag):
     pool = create_pool(settings)
     await open_pool(pool)
     await apply_rag_migration(pool)
-    tenants = {s: f"it-g08-{s}-{tag}" for s in ("a", "b")}
+    workspaces = {s: f"it-g08-{s}-{tag}" for s in ("a", "b")}
     ctx = {"pool": pool,
-           "a": PgGraphStore(pool, tenant=tenants["a"]),
-           "b": PgGraphStore(pool, tenant=tenants["b"])}
+           "a": PgGraphStore(pool, workspace=workspaces["a"]),
+           "b": PgGraphStore(pool, workspace=workspaces["b"])}
     yield ctx
     try:
         async with pool.connection() as conn:
-            for t in tenants.values():
+            for t in workspaces.values():
                 await conn.execute(
-                    "DELETE FROM kg_aliases WHERE tenant = %s", (t,))
+                    "DELETE FROM kg_aliases WHERE workspace = %s", (t,))
                 await conn.execute(
-                    "DELETE FROM kg_edges WHERE tenant = %s", (t,))
+                    "DELETE FROM kg_edges WHERE workspace = %s", (t,))
                 await conn.execute(
-                    "DELETE FROM kg_entities WHERE tenant = %s", (t,))
+                    "DELETE FROM kg_entities WHERE workspace = %s", (t,))
                 await conn.execute(
-                    "DELETE FROM documents WHERE tenant = %s", (t,))
+                    "DELETE FROM documents WHERE workspace = %s", (t,))
     finally:
         await close_pool(pool)
 
 
-async def _doc(pool, tenant: str, title: str) -> str:
+async def _doc(pool, workspace: str, title: str) -> str:
     doc_id = str(uuid.uuid4())
     async with pool.connection() as conn:
         await conn.execute(
-            "INSERT INTO documents (id, tenant, source_type, source_uri,"
+            "INSERT INTO documents (id, workspace, source_type, source_uri,"
             " title, bytes, sha256, status)"
             " VALUES (%s, %s, 'txt', %s, %s, 0, %s, 'ready')",
-            (doc_id, tenant, f"test://{doc_id}", title,
+            (doc_id, workspace, f"test://{doc_id}", title,
              hashlib.sha256(doc_id.encode()).hexdigest()))
     return doc_id
 
@@ -74,7 +74,7 @@ def _edge(src, dst, rel="memasok", conf=0.9, ord=0, acl="public"):
 @pytest.mark.asyncio
 async def test_upsert_dan_expand_1hop(stores):
     pool = stores["pool"]
-    doc = await _doc(pool, stores["a"]._tenant, "pemasok.md")
+    doc = await _doc(pool, stores["a"]._workspace, "pemasok.md")
     n_ent, n_edge = await stores["a"].upsert_subgraph(
         doc_id=doc,
         entities=[_ent("Kopi Arabika"), _ent("PT Sumber Rasa", "organisasi")],
@@ -93,7 +93,7 @@ async def test_upsert_dan_expand_1hop(stores):
 @pytest.mark.asyncio
 async def test_expand_2hop_dan_stitch_lintas_dok(stores):
     pool = stores["pool"]
-    t = stores["a"]._tenant
+    t = stores["a"]._workspace
     d1 = await _doc(pool, t, "d1.md")
     d2 = await _doc(pool, t, "d2.md")
     await stores["a"].upsert_subgraph(
@@ -114,9 +114,9 @@ async def test_expand_2hop_dan_stitch_lintas_dok(stores):
 
 
 @pytest.mark.asyncio
-async def test_isolasi_tenant_silang(stores):
+async def test_isolasi_workspace_silang(stores):
     pool = stores["pool"]
-    doc = await _doc(pool, stores["b"]._tenant, "rahasia.md")
+    doc = await _doc(pool, stores["b"]._workspace, "rahasia.md")
     await stores["b"].upsert_subgraph(
         doc_id=doc, entities=[_ent("Rahasia Dagang")],
         edges=[_edge("Rahasia Dagang", "X", rel="terkait_dengan")])
@@ -128,7 +128,7 @@ async def test_isolasi_tenant_silang(stores):
 @pytest.mark.asyncio
 async def test_filter_access_level(stores):
     pool = stores["pool"]
-    t = stores["a"]._tenant
+    t = stores["a"]._workspace
     doc = await _doc(pool, t, " campur.md")
     await stores["a"].upsert_subgraph(
         doc_id=doc,
@@ -148,7 +148,7 @@ async def test_filter_access_level(stores):
 @pytest.mark.asyncio
 async def test_hapus_dan_idempoten(stores):
     pool = stores["pool"]
-    t = stores["a"]._tenant
+    t = stores["a"]._workspace
     doc = await _doc(pool, t, "hapus.md")
     await stores["a"].upsert_subgraph(
         doc_id=doc, entities=[_ent("A"), _ent("B")],
@@ -170,7 +170,7 @@ async def test_hapus_dan_idempoten(stores):
 async def test_dedup_intra_batch_last_wins(stores):
     """Batch ganda (entity/edge sama 2x) = 1 baris, bukan crash 21000."""
     pool = stores["pool"]
-    t = stores["a"]._tenant
+    t = stores["a"]._workspace
     doc = await _doc(pool, t, "dedup.md")
     e1 = _ent("Ganda")
     e2 = _ent("Ganda")
@@ -186,7 +186,7 @@ async def test_dedup_intra_batch_last_wins(stores):
 @pytest.mark.asyncio
 async def test_alias_dan_resolve_seeds(stores):
     pool = stores["pool"]
-    t = stores["a"]._tenant
+    t = stores["a"]._workspace
     doc = await _doc(pool, t, "alias.md")
     await stores["a"].upsert_subgraph(
         doc_id=doc, entities=[_ent("Laptop"), _ent("Toko")],
@@ -197,14 +197,14 @@ async def test_alias_dan_resolve_seeds(stores):
         ["komputer jinjing", "toko", "tak-ada"]) == ["laptop", "toko"]
     hits = await stores["a"].expand(["komputer jinjing"], k=5)
     assert hits and "Laptop" in hits[0]["content"]
-    # Alias tenant lain tak terlihat.
+    # Alias workspace lain tak terlihat.
     assert await stores["b"].resolve_seeds(["komputer jinjing"]) == []
 
 
 @pytest.mark.asyncio
 async def test_validasi_dan_seed_kosong(stores):
     pool = stores["pool"]
-    t = stores["a"]._tenant
+    t = stores["a"]._workspace
     doc = await _doc(pool, t, "valid.md")
     with pytest.raises(ValueError, match="relasi tak dikenal"):
         await stores["a"].upsert_subgraph(
@@ -233,8 +233,8 @@ async def test_validasi_dan_seed_kosong(stores):
             doc_id=doc, entities=[_ent("A")], edges=[bad3])
     assert await stores["a"].expand([], k=5) == []
     assert await stores["a"].expand(["   "], k=5) == []
-    with pytest.raises(ValueError, match="wajib tenant"):
-        PgGraphStore(pool, tenant="")
+    with pytest.raises(ValueError, match="wajib workspace"):
+        PgGraphStore(pool, workspace="")
     with pytest.raises(ValueError, match="≥ 1"):
         await stores["a"].expand(["a"], k=0)
     with pytest.raises(ValueError, match="max_hops"):

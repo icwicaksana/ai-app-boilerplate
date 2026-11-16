@@ -336,15 +336,15 @@ def filter_facts_for_prompt(facts: list[str]) -> tuple[list[str], int]:
     return kept, dropped
 
 
-def namespace_for(tenant: str, user: str) -> tuple[str, str, str, str]:
+def namespace_for(workspace: str, user: str) -> tuple[str, str, str, str]:
     """Namespace kanonis (BEKU): `("tenants", t, "users", u)`.
 
     Menolak kosong/None (defense-in-depth bila validasi header lolos).
     Lowercase defensif: namespace Postgres case-sensitive.
     """
-    if not tenant or not user:
-        raise ValueError("namespace butuh tenant+user tak kosong.")
-    t = canon_segment(tenant, "tenant")
+    if not workspace or not user:
+        raise ValueError("namespace butuh workspace+user tak kosong.")
+    t = canon_segment(workspace, "workspace")
     u = canon_segment(user, "user")
     return ("tenants", t, "users", u)
 
@@ -396,11 +396,11 @@ class FactQuotaError(ValueError):
 class MemoryStore:
     """Wrapper store yang terkunci ke 1 user. Murah (tanpa I/O saat init)."""
 
-    def __init__(self, raw_store: Any, tenant: str, user: str):
-        if not tenant or not user:
-            raise ValueError("MemoryStore butuh tenant+user tak kosong.")
+    def __init__(self, raw_store: Any, workspace: str, user: str):
+        if not workspace or not user:
+            raise ValueError("MemoryStore butuh workspace+user tak kosong.")
         self._store = raw_store
-        self.namespace = namespace_for(tenant, user)
+        self.namespace = namespace_for(workspace, user)
 
     async def _read_profile_raw(self) -> dict[str, Any]:
         """Baca profil TANPA fail-soft (raise bila gagal). Untuk jalur tulis."""

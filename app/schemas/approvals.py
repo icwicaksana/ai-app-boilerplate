@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class ApprovalResponse(BaseModel):
     id: int
-    tenant: str
+    workspace: str
     thread_id: str
     interrupt_id: str
     agent: str

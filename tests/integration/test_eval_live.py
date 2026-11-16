@@ -22,19 +22,19 @@ DOC_A2 = ("## Daftar Harga\n\n| Produk | Harga |\n|---|---|\n"
 DOC_B1 = ("## Promo Member\n\nDiskon member 10 persen setiap hari Jumat.\n").encode()
 
 GOLD = [
-    # (tenant, pertanyaan, ekspektasi_sumber, jawab?)
+    # (workspace, pertanyaan, ekspektasi_sumber, jawab?)
     ("a", "Berapa lama masa retur barang?", "kebijakan.md", True),
     ("a", "Garansi laptop berapa bulan?", "kebijakan.md", True),
     ("a", "Minimal belanja berapa agar gratis ongkir?", "kebijakan.md", True),
     ("a", "Berapa harga Kopi Arabika 200 gram?", "harga.md", True),
-    ("a", "Kapan ada diskon member?", None, False),  # hanya di tenant B
+    ("a", "Kapan ada diskon member?", None, False),  # hanya di workspace B
     ("a", "Jadwal kereta ke Surabaya?", None, False),  # tak ada di mana pun
     ("b", "Kapan ada diskon member?", "promo.md", True),
-    ("b", "Berapa harga Kopi Arabika?", None, False),  # hanya di tenant A
+    ("b", "Berapa harga Kopi Arabika?", None, False),  # hanya di workspace A
 ]
 
 
-async def _seed_eval(pool, settings, tenant: str, docs: list):
+async def _seed_eval(pool, settings, workspace: str, docs: list):
     from pathlib import Path
 
     from app.infra import ingest_repo as repo
@@ -43,11 +43,11 @@ async def _seed_eval(pool, settings, tenant: str, docs: list):
     from app.workers.ingest import WorkerCtx, build_parsers, process_job
     from conftest import purge_stale_test_jobs
 
-    await purge_stale_test_jobs(pool)  # queue global: buang job basi tenant test
+    await purge_stale_test_jobs(pool)  # queue global: buang job basi workspace test
 
     async with pool.connection() as conn:
         await conn.execute(
-            "DELETE FROM documents WHERE tenant LIKE %s", (tenant + "%",))
+            "DELETE FROM documents WHERE workspace LIKE %s", (workspace + "%",))
     embed = InfinityEmbeddings(settings.RAG_EMBED_BASE_URL, "BAAI/bge-m3",
                                1024, timeout_ms=120_000)
     try:
@@ -56,16 +56,16 @@ async def _seed_eval(pool, settings, tenant: str, docs: list):
                         embed=embed, tok=BgeTokenizer(cache_dir=".hf-cache"),
                         qdrant=None, cache=None, parsers=parsers, ocr=ocr)
         for title, blob, preset in docs:
-            rel = f"{tenant}/{title}.bin"
+            rel = f"{workspace}/{title}.bin"
             target = Path(settings.RAG_STORAGE_DIR) / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(blob)
             doc = await repo.create_document(
-                pool, tenant=tenant, source_type="md", source_uri=rel,
+                pool, workspace=workspace, source_type="md", source_uri=rel,
                 title=title, lang="id", size_bytes=len(blob),
                 sha256=hashlib.sha256(blob).hexdigest(), parser="auto",
                 chunk_preset=preset, created_by="eval")
-            job = await repo.create_job(pool, tenant=tenant,
+            job = await repo.create_job(pool, workspace=workspace,
                                         document_id=str(doc["id"]))
             claimed = await repo.claim_job(pool, worker_id="live-eval")
             assert claimed is not None and claimed["id"] == job["id"]
@@ -78,7 +78,7 @@ async def _seed_eval(pool, settings, tenant: str, docs: list):
 async def test_live_eval_retrieval_gold(db_url, embed_url, tag, tmp_path):
     from app.core.config import Settings
     from app.infra.postgres import close_pool, create_pool, open_pool
-    from app.infra.rag.factory import init_rag, retriever_for_tenant
+    from app.infra.rag.factory import init_rag, retriever_for_workspace
     from app.infra.rag_migrate import apply_rag_migration
 
     ta, tb = f"it-ea-{tag}", f"it-eb-{tag}"
@@ -97,21 +97,21 @@ async def test_live_eval_retrieval_gold(db_url, embed_url, tag, tmp_path):
         clients = await init_rag(settings, pool)
         try:
             hits, total = 0, 0
-            for tenant_key, q, expect_source, answerable in GOLD:
-                tenant = ta if tenant_key == "a" else tb
-                r = retriever_for_tenant(settings, clients, pool,
-                                         tenant=tenant)
+            for workspace_key, q, expect_source, answerable in GOLD:
+                workspace = ta if workspace_key == "a" else tb
+                r = retriever_for_workspace(settings, clients, pool,
+                                         workspace=workspace)
                 res = await r.search(q, k=3)
                 total += 1
                 if not answerable:
                     assert res["status"] == "no_evidence", (q, res["status"])
                     assert res["chunks"] == []
-                    # Isolasi: sumber tenant lain TAK BOLEH muncul.
+                    # Isolasi: sumber workspace lain TAK BOLEH muncul.
                     continue
                 got = [c["source"] for c in res["chunks"]]
                 assert res["status"] == "ok", (q, res)
                 assert expect_source in got, (q, got)
-                # Isolasi: semua chunk dari tenant penanya.
+                # Isolasi: semua chunk dari workspace penanya.
                 assert all(c["metadata"].get("source_type") == "md"
                            for c in res["chunks"])
                 hits += 1
@@ -154,7 +154,7 @@ async def test_live_eval_jawaban_llm(db_url, embed_url, tag, tmp_path):
     from app.core.config import Settings
     from app.infra.llm import get_llm
     from app.infra.postgres import close_pool, create_pool, open_pool
-    from app.infra.rag.factory import init_rag, retriever_for_tenant
+    from app.infra.rag.factory import init_rag, retriever_for_workspace
     from app.infra.rag_migrate import apply_rag_migration
     from app.rag import citations as C
     from app.rag.grounding import REFUSAL_ID
@@ -173,8 +173,8 @@ async def test_live_eval_jawaban_llm(db_url, embed_url, tag, tmp_path):
             ("harga.md", DOC_A2, "markdown")])
         clients = await init_rag(settings, pool)
         try:
-            retriever = retriever_for_tenant(settings, clients, pool,
-                                             tenant=ta)
+            retriever = retriever_for_workspace(settings, clients, pool,
+                                             workspace=ta)
             ctx = AgentContext(settings=settings,
                                checkpointer=InMemorySaver(), runner=Runner(),
                                session_id=f"{ta}:u:s", retriever=retriever)

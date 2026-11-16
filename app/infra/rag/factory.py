@@ -2,7 +2,7 @@
 
 - Lifespan: `init_rag()` membangun clients + probe dims + validasi backend
   (fail-fast dengan pesan aksi) → simpan di `app.state`.
-- Request: `retriever_for_tenant()` mengikat tenant dari JWT → `HybridRetriever`.
+- Request: `retriever_for_workspace()` mengikat workspace dari JWT → `HybridRetriever`.
 """
 
 from __future__ import annotations
@@ -28,9 +28,9 @@ class RagClients:
         self.tok = tok
         self.qdrant = qdrant  # AsyncQdrantClient | None
         self.dims = dims
-        # EntityExtractor | None (jasa model tenant-agnostik, pola embed).
-        # GraphStore TIDAK di sini: tenant-bound, dibangun per-request
-        # di retriever_for_tenant (pola VectorStore, D2).
+        # EntityExtractor | None (jasa model workspace-agnostik, pola embed).
+        # GraphStore TIDAK di sini: workspace-bound, dibangun per-request
+        # di retriever_for_workspace (pola VectorStore, D2).
         self.extractor = extractor
 
     async def aclose(self) -> None:
@@ -145,7 +145,7 @@ async def init_rag(settings: Settings, pool,
                     f"Detail: {type(exc).__name__}") from exc
             probe = QdrantStore(qdrant_client,
                                 collection_name(dims, settings.RAG_EMBED_MODEL),
-                                tenant="__probe__")
+                                workspace="__probe__")
             await probe.ensure_collection()
             try:
                 col = await qdrant_client.get_collection(probe._collection)
@@ -216,7 +216,7 @@ def _build_extractor(settings: Settings):
                 get_llm(settings, model=l3_model), model=l3_model,
                 version=(settings.GRAPH_L3_VERSION or "").strip() or "v1",
                 max_tokens_in=settings.GRAPH_L3_MAX_TOKENS_IN,
-                daily_quota=settings.GRAPH_L3_DAILY_QUOTA_PER_TENANT,
+                daily_quota=settings.GRAPH_L3_DAILY_QUOTA_PER_WORKSPACE,
                 breaker_minutes=settings.GRAPH_L3_BREAKER_MINUTES,
                 cache_ttl_days=settings.GRAPH_L3_CACHE_TTL_DAYS)
         ext = LayeredExtractor(
@@ -264,9 +264,9 @@ async def _validate_pg_triples(settings: Settings, pool, dims: int) -> None:
                 "Reindex eksplisit (D4) atau set RAG_ALLOW_MIXED=1 sementara.")
 
 
-def retriever_for_tenant(settings: Settings, clients: RagClients | None,
-                         pool, *, tenant: str) -> HybridRetriever:
-    """Bangun `HybridRetriever` terikat tenant (D2). Dipanggil per-request
+def retriever_for_workspace(settings: Settings, clients: RagClients | None,
+                         pool, *, workspace: str) -> HybridRetriever:
+    """Bangun `HybridRetriever` terikat workspace (D2). Dipanggil per-request
     dari `ThreadIdentity` JWT — BUKAN dari body (dependencies)."""
     if clients is None:
         from app.core.errors import EmbeddingUnavailableError
@@ -278,11 +278,11 @@ def retriever_for_tenant(settings: Settings, clients: RagClients | None,
         store = QdrantStore(
             clients.qdrant,
             collection_name(clients.dims, settings.RAG_EMBED_MODEL),
-            tenant=tenant, model=settings.RAG_EMBED_MODEL,
+            workspace=workspace, model=settings.RAG_EMBED_MODEL,
             dim=clients.dims)
     else:
         store = PgVectorStore(
-            pool, tenant=tenant, model=settings.RAG_EMBED_MODEL,
+            pool, workspace=workspace, model=settings.RAG_EMBED_MODEL,
             dim=clients.dims)
     graph = None
     if settings.GRAPH_ENABLED:
@@ -290,7 +290,7 @@ def retriever_for_tenant(settings: Settings, clients: RagClients | None,
 
         ext = clients.extractor
         graph = PgGraphStore(
-            pool, tenant=tenant,
+            pool, workspace=workspace,
             model=ext.model if ext is not None else "",
             version=ext.version if ext is not None else "",
             timeout_ms=settings.GRAPH_TIMEOUT_MS)

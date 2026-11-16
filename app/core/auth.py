@@ -83,12 +83,12 @@ async def revoke(cache: CacheClient | None, claims: TokenClaims) -> bool:
 def _claims_to_identity(claims: TokenClaims) -> ThreadIdentity:
     """Validasi klaim jadi ThreadIdentity kanonis (pola sama seperti header)."""
     try:
-        tenant = canon_segment(claims.tenant, "tenant")
+        workspace = canon_segment(claims.workspace, "workspace")
         user = canon_segment(claims.subject, "user")
     except Exception as exc:
         raise InvalidTokenError(
             "Klaim token tak memenuhi format identitas.") from exc
-    return ThreadIdentity(tenant=tenant, user=user)
+    return ThreadIdentity(workspace=workspace, user=user)
 
 
 async def resolve_claims(request: Request, settings: Settings,
@@ -118,11 +118,11 @@ async def resolve_identity(request: Request, settings: Settings,
         if not settings.AUTH_ALLOW_TRUSTED_HEADERS:
             raise AuthNotConfiguredError()
         try:
-            tenant = canon_segment(request.headers.get("X-Tenant-ID"), "tenant")
+            workspace = canon_segment(request.headers.get("X-Tenant-ID"), "workspace")
             user = canon_segment(request.headers.get("X-User-ID"), "user")
         except Exception as exc:
             raise InvalidIdentityError(str(exc)) from exc
-        return ThreadIdentity(tenant=tenant, user=user)
+        return ThreadIdentity(workspace=workspace, user=user)
     claims = await resolve_claims(request, settings, cache)
     return _claims_to_identity(claims)
 

@@ -56,15 +56,15 @@ def client(monkeypatch):
         yield c
 
 
-def _token(tenant="toko-a", user="budi") -> str:
-    tok, _ = create_access_token(get_settings(), tenant=tenant, user=user,
+def _token(workspace="toko-a", user="budi") -> str:
+    tok, _ = create_access_token(get_settings(), workspace=workspace, user=user,
                                  scopes=("chat",))
     return tok
 
 
-def _ticket(client, tenant="toko-a", user="budi") -> str:
+def _ticket(client, workspace="toko-a", user="budi") -> str:
     res = client.post("/api/v1/realtime/ticket",
-                      headers={"Authorization": f"Bearer {_token(tenant, user)}"})
+                      headers={"Authorization": f"Bearer {_token(workspace, user)}"})
     assert res.status_code == 200, res.text
     return res.json()["ticket"]
 

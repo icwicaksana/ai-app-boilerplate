@@ -21,7 +21,7 @@ async def test_live_reindex_cocok_dan_bersihkan_orphan(db_url, tag):
     from app.infra.rag.pgvector import PgVectorStore
     from app.infra.rag.qdrant import QdrantStore, collection_name
     from app.infra.rag_migrate import apply_rag_migration
-    from app.workers.reindex import reindex_tenant
+    from app.workers.reindex import reindex_workspace
 
     url = (os.environ.get("TEST_QDRANT_URL")
            or os.environ.get("QDRANT_URL", "http://localhost:6333")).strip()
@@ -35,7 +35,7 @@ async def test_live_reindex_cocok_dan_bersihkan_orphan(db_url, tag):
     except Exception:
         pytest.skip("Qdrant tak terjangkau")
 
-    tenant = f"it-rx-{tag}"
+    workspace = f"it-rx-{tag}"
     collection = f"rx_{tag}_{collection_name(1024, 'fake-model')}"
     settings = Settings(_env_file=None, DATABASE_URL=db_url,
                         DB_POOL_MIN=1, DB_POOL_MAX=5)
@@ -43,7 +43,7 @@ async def test_live_reindex_cocok_dan_bersihkan_orphan(db_url, tag):
     await open_pool(pool)
     try:
         await apply_rag_migration(pool)
-        qstore = QdrantStore(client, collection, tenant=tenant,
+        qstore = QdrantStore(client, collection, workspace=workspace,
                              model="fake-model", dim=1024, version="t")
         await qstore.ensure_collection()
 
@@ -62,15 +62,15 @@ async def test_live_reindex_cocok_dan_bersihkan_orphan(db_url, tag):
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (tenant,))
+                    (workspace,))
                 await conn.execute(
-                    "INSERT INTO documents (id, tenant, source_type,"
+                    "INSERT INTO documents (id, workspace, source_type,"
                     " source_uri, title, bytes, sha256, status)"
                     " VALUES (%s, %s, 'txt', 'test://x', 'rx.txt', 3,"
                     " %s, 'ready')",
-                    (doc_id, tenant,
+                    (doc_id, workspace,
                      hashlib.sha256(doc_id.encode()).hexdigest()))
-        pg = PgVectorStore(pool, tenant=tenant, model="fake-model", dim=1024,
+        pg = PgVectorStore(pool, workspace=workspace, model="fake-model", dim=1024,
                            version="t")
         vecs = [_vec("rx-0"), _vec("rx-1")]
         await pg.upsert_chunks(doc_id=doc_id, chunks=[
@@ -81,16 +81,16 @@ async def test_live_reindex_cocok_dan_bersihkan_orphan(db_url, tag):
         await client.upsert(collection, [models.PointStruct(
             id="00000000-0000-0000-0000-00000000ffff",
             vector=[0.0] * 1024,
-            payload={"tenant": tenant, "document_id": doc_id, "ord": 99,
+            payload={"workspace": workspace, "document_id": doc_id, "ord": 99,
                      "content": "orphan"})], wait=True)
 
-        rep = await reindex_tenant(pool, client, collection, tenant=tenant)
+        rep = await reindex_workspace(pool, client, collection, workspace=workspace)
         assert rep["pg"] == 2, rep
         assert rep["upserted"] == 2, rep
         assert rep["deleted"] == 1, rep
         assert rep["match"] is True
 
-        rep2 = await reindex_tenant(pool, client, collection, tenant=tenant,
+        rep2 = await reindex_workspace(pool, client, collection, workspace=workspace,
                                     dry_run=True)
         assert rep2["match"] is True and rep2["upserted"] == 0
 
@@ -104,7 +104,7 @@ async def test_live_reindex_cocok_dan_bersihkan_orphan(db_url, tag):
         try:
             async with pool.connection() as conn:
                 await conn.execute(
-                    "DELETE FROM documents WHERE tenant = %s", (tenant,))
+                    "DELETE FROM documents WHERE workspace = %s", (workspace,))
         finally:
             await close_pool(pool)
 

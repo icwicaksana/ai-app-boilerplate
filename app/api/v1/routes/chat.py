@@ -77,7 +77,7 @@ async def stream_chat(
 
     turn_id = new_turn_id()
     await turns.start(
-        tenant=identity.tenant, turn_id=turn_id,
+        workspace=identity.workspace, turn_id=turn_id,
         first_event=StreamStarted(turn_id=turn_id).model_dump(mode="json"),
         events=ctrl.stream(req, identity, request_id=request_id))
 
@@ -85,7 +85,7 @@ async def stream_chat(
         token = request_id_ctx.set(request_id)
         try:
             async for entry_id, event in turns.follow(
-                    tenant=identity.tenant, turn_id=turn_id):
+                    workspace=identity.workspace, turn_id=turn_id):
                 if await request.is_disconnected():
                     break
                 await on_event(event)
@@ -114,13 +114,13 @@ async def resume_stream(
 ) -> StreamingResponse:
     """Resume turn: replay dari cursor klien lalu lanjut sampai terminal."""
     if not turns.enabled or not await turns.turnlog.exists(
-            tenant=identity.tenant, turn_id=turn_id):
+            workspace=identity.workspace, turn_id=turn_id):
         raise StreamGoneError(turn_id)
     cursor = (last_event_id or "0-0").strip() or "0-0"
 
     async def tail():
         async for entry_id, event in turns.follow(
-                tenant=identity.tenant, turn_id=turn_id, cursor=cursor):
+                workspace=identity.workspace, turn_id=turn_id, cursor=cursor):
             if await request.is_disconnected():
                 break
             yield _sse(entry_id, event)

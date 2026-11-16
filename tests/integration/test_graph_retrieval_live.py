@@ -17,13 +17,13 @@ async def test_live_retrieval_graph_on(db_url, embed_url, tag):
     from app.infra import ingest_repo as repo
     from app.infra.postgres import close_pool, create_pool, open_pool
     from app.infra.rag.extract.stub import StubExtractor
-    from app.infra.rag.factory import init_rag, retriever_for_tenant
+    from app.infra.rag.factory import init_rag, retriever_for_workspace
     from app.infra.rag.infinity import InfinityEmbeddings
     from app.infra.rag.tokenizer import BgeTokenizer
     from app.infra.rag_migrate import apply_rag_migration
     from app.workers.ingest import WorkerCtx, build_parsers, process_job
 
-    tenant = f"it-g08r-{tag}"
+    workspace = f"it-g08r-{tag}"
     blob_root = Path(".test-blobs").resolve()
     settings = Settings(
         _env_file=None, DATABASE_URL=db_url, DB_POOL_MIN=1, DB_POOL_MAX=5,
@@ -37,16 +37,16 @@ async def test_live_retrieval_graph_on(db_url, embed_url, tag):
     try:
         blob = ("PT Sumber Rasa memasok Kopi Arabika.\n\n"
                 "Kopi Arabika dipakai di Menu Es Kopi Susu.\n").encode()
-        rel = f"{tenant}/doc.bin"
+        rel = f"{workspace}/doc.bin"
         target = blob_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(blob)
         doc = await repo.create_document(
-            pool, tenant=tenant, source_type="md", source_uri=rel,
+            pool, workspace=workspace, source_type="md", source_uri=rel,
             title="resto.md", lang="id", size_bytes=len(blob),
-            sha256=hashlib.sha256(blob + tenant.encode()).hexdigest(),
+            sha256=hashlib.sha256(blob + workspace.encode()).hexdigest(),
             parser="auto", chunk_preset="markdown", created_by="g08r")
-        job = await repo.create_job(pool, tenant=tenant,
+        job = await repo.create_job(pool, workspace=workspace,
                                     document_id=str(doc["id"]))
         claimed = await repo.claim_job(pool, worker_id="g08r")
         parsers, ocr = build_parsers(settings)
@@ -60,8 +60,8 @@ async def test_live_retrieval_graph_on(db_url, embed_url, tag):
         clients = await init_rag(settings, pool)
         assert clients is not None and clients.extractor is not None
         try:
-            retr = retriever_for_tenant(settings, clients, pool,
-                                        tenant=tenant)
+            retr = retriever_for_workspace(settings, clients, pool,
+                                        workspace=workspace)
             res = await retr.search("PT Sumber Rasa memasok apa?")
             kinds = [c.get("kind") or "vector" for c in res["chunks"]]
             assert "graph" in kinds
@@ -82,7 +82,7 @@ async def test_live_retrieval_graph_on(db_url, embed_url, tag):
         try:
             async with pool.connection() as conn:
                 await conn.execute(
-                    "DELETE FROM documents WHERE tenant = %s", (tenant,))
+                    "DELETE FROM documents WHERE workspace = %s", (workspace,))
         finally:
             await close_pool(pool)
-        shutil.rmtree(blob_root / tenant, ignore_errors=True)
+        shutil.rmtree(blob_root / workspace, ignore_errors=True)

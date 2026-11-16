@@ -58,7 +58,7 @@ async def create_ticket(
     """Terbitkan ticket sekali pakai untuk handshake WS."""
     cache = getattr(request.app.state, "cache", None)
     store = TicketStore(cache, settings.WS_TICKET_TTL_SECONDS)
-    ticket, ttl = await store.issue(tenant=identity.tenant, user=identity.user)
+    ticket, ttl = await store.issue(workspace=identity.workspace, user=identity.user)
     return {"ticket": ticket, "expires_in": ttl,
             "ws_url": f"{settings.API_V1_PREFIX}/ws/chat?ticket={ticket}",
             "subprotocol": SUBPROTOCOL}
@@ -129,9 +129,9 @@ class _Connection:
                 msg = await self.ws.receive_json()
                 await self._handle(msg)
         except WebSocketDisconnect:
-            log.info("WS disconnect tenant=%s user=%s", *self._id())
+            log.info("WS disconnect workspace=%s user=%s", *self._id())
         except Exception:
-            log.exception("WS loop gagal tenant=%s user=%s", *self._id())
+            log.exception("WS loop gagal workspace=%s user=%s", *self._id())
         finally:
             await self._cleanup()
 
@@ -148,7 +148,7 @@ class _Connection:
         await self.ws.close(code=CLOSE_AUTH_EXPIRED)
 
     def _id(self) -> tuple[str, str]:
-        return self.identity.tenant, self.identity.user
+        return self.identity.workspace, self.identity.user
 
     async def _cleanup(self) -> None:
         if self.run_task and not self.run_task.done():
@@ -239,7 +239,7 @@ class _Connection:
                              "status": 410, "title": "Gone",
                              "detail": "Turn tidak tersedia.", "instance": "-"})
             return
-        if not await self.turns.turnlog.exists(tenant=self.identity.tenant,
+        if not await self.turns.turnlog.exists(workspace=self.identity.workspace,
                                                turn_id=turn_id):
             await self._put({"type": "error", "code": "STREAM_GONE",
                              "status": 410, "title": "Gone",
@@ -249,7 +249,7 @@ class _Connection:
 
         async def _pump() -> None:
             async for _rid, event in self.turns.follow(
-                    tenant=self.identity.tenant, turn_id=turn_id, cursor=cursor):
+                    workspace=self.identity.workspace, turn_id=turn_id, cursor=cursor):
                 await self._put(event)
 
         self.run_task = asyncio.create_task(_pump())
@@ -292,7 +292,7 @@ class _Connection:
     async def _presence(self, offline: bool = False) -> None:
         if self.cache is None:
             return
-        key = f"ws:presence:{self.identity.tenant}:{self.identity.user}"
+        key = f"ws:presence:{self.identity.workspace}:{self.identity.user}"
         try:
             if offline:
                 await self.cache.delete(key)

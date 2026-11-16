@@ -1,6 +1,6 @@
 """RagChatAgent: ReAct chat + tool `search_knowledge_base` (D13).
 
-- Tool factory-bound ke retriever tenant (bukan registry) — pola MemoryTool.
+- Tool factory-bound ke retriever workspace (bukan registry) — pola MemoryTool.
 - Reformulasi query di level PROMPT (multi-turn coreference, D9): LLM
   memformulasikan ulang pertanyaan berklausa-gantung menjadi mandiri SEBELUM
   memanggil tool, dengan preservasi entitas/angka.

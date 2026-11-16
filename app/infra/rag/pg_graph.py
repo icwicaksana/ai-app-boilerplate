@@ -1,8 +1,8 @@
 """`GraphStore` PG-native (v0.8 D1/D3): 2 tabel + frontier BFS bounded.
 
 Aturan keras (meniru `pgvector.py` + DESIGN §2/§4):
-- Instance DIBANGUN sudah terikat tenant (factory). Semua SQL memakai
-  `WHERE tenant = %s` eksplisit + `SET LOCAL app.current_tenant`.
+- Instance DIBANGUN sudah terikat workspace (factory). Semua SQL memakai
+  `WHERE workspace = %s` eksplisit + `SET LOCAL app.current_tenant`.
 - `SET LOCAL` hanya dalam `conn.transaction()` eksplisit (pool autocommit!).
 - Traversal = BFS iteratif bounded di Python, BUKAN recursive CTE
   (pelajaran LightRAG #3103: RCTE timeout di hub).
@@ -46,7 +46,7 @@ _INSERT_CHUNK_ROWS = 500  # multi-row VALUES di-chunk (limit 65535 param PG)
 
 
 class PgGraphStore:
-    """Adapter graph PG-native, terikat 1 tenant (D2)."""
+    """Adapter graph PG-native, terikat 1 workspace (D2)."""
 
     backend_name = "pggraph"
 
@@ -54,16 +54,16 @@ class PgGraphStore:
         self,
         pool: AsyncConnectionPool,
         *,
-        tenant: str,
+        workspace: str,
         model: str = "fastino/gliner2.5-multi-v1",
         version: str = "v1",
         onto_version: str = ONTO_VERSION,
         timeout_ms: int = 800,
     ) -> None:
-        if not tenant:
-            raise ValueError("PgGraphStore wajib tenant (factory-bound, D2).")
+        if not workspace:
+            raise ValueError("PgGraphStore wajib workspace (factory-bound, D2).")
         self._pool = pool
-        self._tenant = tenant
+        self._workspace = workspace
         self._model = model
         self._version = version
         self._onto = onto_version
@@ -98,17 +98,17 @@ class PgGraphStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                    (f"kg:{self._tenant}:{doc_id}",))
+                    (f"kg:{self._workspace}:{doc_id}",))
                 # Rebuild idempoten per-dokumen (D10, pola K9 chunks).
                 await conn.execute(
-                    "DELETE FROM kg_edges WHERE tenant = %s AND document_id = %s",
-                    (self._tenant, doc_id))
+                    "DELETE FROM kg_edges WHERE workspace = %s AND document_id = %s",
+                    (self._workspace, doc_id))
                 await conn.execute(
-                    "DELETE FROM kg_entities WHERE tenant = %s AND document_id = %s",
-                    (self._tenant, doc_id))
+                    "DELETE FROM kg_entities WHERE workspace = %s AND document_id = %s",
+                    (self._workspace, doc_id))
                 n_ent = await self._insert_entities(conn, doc_id, entities)
                 n_edge = await self._insert_edges(conn, doc_id, edges)
         return n_ent, n_edge
@@ -120,7 +120,7 @@ class PgGraphStore:
         uniq = {e["norm"]: e for e in entities
                 if (e.get("norm") or "").strip()}
         rows = [(
-            self._tenant, doc_id, e["norm"], e.get("name") or e["norm"],
+            self._workspace, doc_id, e["norm"], e.get("name") or e["norm"],
             e["type"], self._onto,
         ) for e in uniq.values()]
         for i in range(0, len(rows), _INSERT_CHUNK_ROWS):
@@ -128,7 +128,7 @@ class PgGraphStore:
             vals = ",".join(["(%s,%s,%s,%s,%s,%s)"] * len(part))
             flat = [v for r in part for v in r]
             await conn.execute(
-                f"INSERT INTO kg_entities (tenant, document_id, norm, name,"
+                f"INSERT INTO kg_entities (workspace, document_id, norm, name,"
                 f" type, onto_version) VALUES {vals}"
                 f" ON CONFLICT (document_id, norm) DO UPDATE SET"
                 f" name = EXCLUDED.name, type = EXCLUDED.type,"
@@ -141,7 +141,7 @@ class PgGraphStore:
         uniq = {(e["src_norm"], e["dst_norm"], e["relation"]): e
                 for e in edges}
         rows = [(
-            self._tenant, doc_id, e["src_norm"], e["dst_norm"],
+            self._workspace, doc_id, e["src_norm"], e["dst_norm"],
             e["relation"], e.get("confidence"),
             e.get("layer") or "L2",
             e.get("coref_resolved", True),
@@ -155,7 +155,7 @@ class PgGraphStore:
                             * len(part))
             flat = [v for r in part for v in r]
             await conn.execute(
-                f"INSERT INTO kg_edges (tenant, document_id, src_norm, dst_norm,"
+                f"INSERT INTO kg_edges (workspace, document_id, src_norm, dst_norm,"
                 f" relation, confidence, layer, coref_resolved, access_level,"
                 f" chunk_id, chunk_ord, chunk_row_id, onto_version)"
                 f" VALUES {vals}"
@@ -177,24 +177,24 @@ class PgGraphStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 # Lock SAMA dengan upsert: cegah interleave
                 # upsert.DELETE → delete.DELETE → upsert.INSERT (graph bangkit).
                 await conn.execute(
                     "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                    (f"kg:{self._tenant}:{doc_id}",))
+                    (f"kg:{self._workspace}:{doc_id}",))
                 cur = await conn.execute(
-                    "DELETE FROM kg_edges WHERE tenant = %s AND document_id = %s",
-                    (self._tenant, doc_id))
+                    "DELETE FROM kg_edges WHERE workspace = %s AND document_id = %s",
+                    (self._workspace, doc_id))
                 n_edge = cur.rowcount or 0
                 cur = await conn.execute(
-                    "DELETE FROM kg_entities WHERE tenant = %s"
+                    "DELETE FROM kg_entities WHERE workspace = %s"
                     " AND document_id = %s",
-                    (self._tenant, doc_id))
+                    (self._workspace, doc_id))
                 return (cur.rowcount or 0), n_edge
 
     async def upsert_aliases(self, aliases: dict[str, str]) -> int:
-        """Tulis alias tenant. Norm dinormalisasi ulang (sumber tunggal)."""
+        """Tulis alias workspace. Norm dinormalisasi ulang (sumber tunggal)."""
         pairs = [(normalize_entity(a), normalize_entity(c))
                  for a, c in (aliases or {}).items()]
         pairs = [(a, c) for a, c in pairs if a and c and a != c]
@@ -204,13 +204,13 @@ class PgGraphStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 vals = ",".join(["(%s,%s,%s)"] * len(pairs))
-                flat = [v for a, c in pairs for v in (self._tenant, a, c)]
+                flat = [v for a, c in pairs for v in (self._workspace, a, c)]
                 await conn.execute(
-                    "INSERT INTO kg_aliases (tenant, alias_norm,"
+                    "INSERT INTO kg_aliases (workspace, alias_norm,"
                     " canonical_norm) VALUES " + vals +
-                    " ON CONFLICT (tenant, alias_norm) DO UPDATE SET"
+                    " ON CONFLICT (workspace, alias_norm) DO UPDATE SET"
                     " canonical_norm = EXCLUDED.canonical_norm",
                     flat)
         return len(pairs)
@@ -220,11 +220,11 @@ class PgGraphStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 cur = await conn.execute(
                     "SELECT alias_norm, canonical_norm FROM kg_aliases"
-                    " WHERE tenant = %s",
-                    (self._tenant,))
+                    " WHERE workspace = %s",
+                    (self._workspace,))
                 return {r["alias_norm"]: r["canonical_norm"]
                         for r in await cur.fetchall()}
 
@@ -238,19 +238,19 @@ class PgGraphStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 cur = await conn.execute(
                     "SELECT alias_norm, canonical_norm FROM kg_aliases"
-                    " WHERE tenant = %s AND alias_norm = ANY(%s)",
-                    (self._tenant, norms))
+                    " WHERE workspace = %s AND alias_norm = ANY(%s)",
+                    (self._workspace, norms))
                 alias = {r["alias_norm"]: r["canonical_norm"]
                          for r in await cur.fetchall()}
                 canon = sorted({alias.get(n, n) for n in norms})
                 cur = await conn.execute(
                     "SELECT DISTINCT norm FROM kg_entities"
-                    " WHERE tenant = %s AND norm = ANY(%s)"
+                    " WHERE workspace = %s AND norm = ANY(%s)"
                     " AND onto_version = %s",
-                    (self._tenant, canon, self._onto))
+                    (self._workspace, canon, self._onto))
                 matched = {r["norm"] for r in await cur.fetchall()}
         return [n for n in canon if n in matched]
 
@@ -259,14 +259,14 @@ class PgGraphStore:
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
-                    (self._tenant,))
+                    (self._workspace,))
                 cur = await conn.execute(
-                    "SELECT COUNT(*) AS n FROM kg_entities WHERE tenant = %s",
-                    (self._tenant,))
+                    "SELECT COUNT(*) AS n FROM kg_entities WHERE workspace = %s",
+                    (self._workspace,))
                 n_ent = (await cur.fetchone())["n"]
                 cur = await conn.execute(
-                    "SELECT COUNT(*) AS n FROM kg_edges WHERE tenant = %s",
-                    (self._tenant,))
+                    "SELECT COUNT(*) AS n FROM kg_edges WHERE workspace = %s",
+                    (self._workspace,))
                 n_edge = (await cur.fetchone())["n"]
         return {"extractor": self._model, "extractor_version": self._version,
                 "onto_version": self._onto, "entity_count": n_ent,
@@ -308,7 +308,7 @@ class PgGraphStore:
                 async with conn.transaction():
                     await conn.execute(
                         "SELECT set_config('app.current_tenant', %s, true)",
-                        (self._tenant,))
+                        (self._workspace,))
                     await conn.execute(
                         f"SET LOCAL statement_timeout = {int(self._timeout_ms)}")
                     found = await self._seed_lookup(conn, norms)
@@ -336,8 +336,8 @@ class PgGraphStore:
     async def _seed_lookup(self, conn, norms: list[str]) -> set[str]:
         cur = await conn.execute(
             "SELECT DISTINCT norm FROM kg_entities"
-            " WHERE tenant = %s AND norm = ANY(%s) AND onto_version = %s",
-            (self._tenant, norms, self._onto))
+            " WHERE workspace = %s AND norm = ANY(%s) AND onto_version = %s",
+            (self._workspace, norms, self._onto))
         return {r["norm"] for r in await cur.fetchall()}
 
     async def _bfs(self, conn, frontier: list[str], *, max_hops: int,
@@ -419,11 +419,11 @@ class PgGraphStore:
                 f"  SELECT id, src_norm, dst_norm, relation, confidence,"
                 f"   layer, coref_resolved, document_id, chunk_id,"
                 f"   chunk_ord, chunk_row_id, access_level"
-                f"  FROM kg_edges e WHERE tenant = %s AND {join_col} = f.n"
+                f"  FROM kg_edges e WHERE workspace = %s AND {join_col} = f.n"
                 f"  AND onto_version = %s{access_sql}"
                 f"  LIMIT {int(fanout)}"
                 f") e LIMIT {_GLOBAL_EDGE_CAP}",
-                (frontier, self._tenant, self._onto, *access_params))
+                (frontier, self._workspace, self._onto, *access_params))
             for r in await cur.fetchall():
                 d = dict(r)
                 # Arah maju: frontier=src, tetangga=dst. Arah balik:
@@ -449,17 +449,17 @@ class PgGraphStore:
             return {}
         cur = await conn.execute(
             "SELECT DISTINCT ON (norm) norm, name FROM kg_entities"
-            " WHERE tenant = %s AND norm = ANY(%s)"
+            " WHERE workspace = %s AND norm = ANY(%s)"
             " ORDER BY norm, document_id",
-            (self._tenant, list(norms)))
+            (self._workspace, list(norms)))
         return {r["norm"]: r["name"] for r in await cur.fetchall()}
 
     async def _fetch_titles(self, conn, doc_ids: set) -> dict[str, str]:
         if not doc_ids:
             return {}
         cur = await conn.execute(
-            "SELECT id, title FROM documents WHERE tenant = %s AND id = ANY(%s)",
-            (self._tenant, list(doc_ids)))
+            "SELECT id, title FROM documents WHERE workspace = %s AND id = ANY(%s)",
+            (self._workspace, list(doc_ids)))
         return {str(r["id"]): r["title"] for r in await cur.fetchall()}
 
     async def _fetch_contents(self, conn, row_ids: set) -> dict[str, str]:
@@ -467,8 +467,8 @@ class PgGraphStore:
         if not row_ids:
             return {}
         cur = await conn.execute(
-            "SELECT id, content FROM chunks WHERE tenant = %s AND id = ANY(%s)",
-            (self._tenant, list(row_ids)))
+            "SELECT id, content FROM chunks WHERE workspace = %s AND id = ANY(%s)",
+            (self._workspace, list(row_ids)))
         return {str(r["id"]): r["content"] for r in await cur.fetchall()}
 
     def _to_hits(self, paths: list[dict], names: dict[str, str],

@@ -44,8 +44,8 @@ class ChatController(BaseController):
         # MemoryStore dibungkus per-request (namespace terkunci ke user thread ini).
         memory = None
         if self.store is not None:
-            tenant, user, _ = parse_thread_id(thread_id)  # sudah valid (resolve dulu)
-            memory = MemoryStore(self.store, tenant, user)
+            workspace, user, _ = parse_thread_id(thread_id)  # sudah valid (resolve dulu)
+            memory = MemoryStore(self.store, workspace, user)
         agent_cls = CHAT_AGENTS[agent_name]
         retriever = self._retriever_for(agent_cls, thread_id)
         ctx = AgentContext(
@@ -56,9 +56,9 @@ class ChatController(BaseController):
         return agent_cls(ctx)
 
     def _retriever_for(self, agent_cls, thread_id: str):
-        """Retriever tenant-bound untuk agen NEEDS_RETRIEVER (D2, v0.7).
+        """Retriever workspace-bound untuk agen NEEDS_RETRIEVER (D2, v0.7).
 
-        Tenant dari thread_id tervalidasi (= tenant JWT, via resolve dulu).
+        Workspace dari thread_id tervalidasi (= workspace JWT, via resolve dulu).
         RAG mati → 503 jelas (bukan agen bisu).
         """
         from app.core.errors import EmbeddingUnavailableError
@@ -68,11 +68,11 @@ class ChatController(BaseController):
         if self.pool is None or self.rag is None:
             raise EmbeddingUnavailableError(
                 "RAG tak tersedia (lifespan RAG gagal/nonaktif).")
-        from app.infra.rag.factory import retriever_for_tenant
+        from app.infra.rag.factory import retriever_for_workspace
 
-        tenant, _, _ = parse_thread_id(thread_id)
-        return retriever_for_tenant(self.settings, self.rag, self.pool,
-                                    tenant=tenant)
+        workspace, _, _ = parse_thread_id(thread_id)
+        return retriever_for_workspace(self.settings, self.rag, self.pool,
+                                    workspace=workspace)
 
     async def stream(self, req: ChatRequest, identity: ThreadIdentity, *,
                      request_id: str = "-"):

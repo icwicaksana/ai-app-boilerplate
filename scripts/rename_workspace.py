@@ -69,8 +69,11 @@ RULES: tuple[tuple[str, str], ...] = (
     ("TENANT", "WORKSPACE"),
 )
 
-TIER_A_DIRS = ("app",)
+TIER_A_DIRS = ("app", "tests")
 TIER_A_SUFFIXES = {".py"}
+# Jangkar kontrak beku: DILARANG disentuh oleh alat rename (lihat
+# Docs/RENAME-V081.md §2 K4). Ia harus hijau sebelum & sesudah rename.
+TIER_A_SKIP = {"tests/test_frozen_contract.py"}
 
 
 def _protect(text: str) -> tuple[str, list[str]]:
@@ -112,8 +115,12 @@ def iter_files():
     for d in TIER_A_DIRS:
         base = ROOT / d
         for f in base.rglob("*"):
-            if f.is_file() and f.suffix in TIER_A_SUFFIXES:
-                yield f
+            if not (f.is_file() and f.suffix in TIER_A_SUFFIXES):
+                continue
+            rel = f.relative_to(ROOT).as_posix()
+            if rel in TIER_A_SKIP:
+                continue
+            yield f
 
 
 def main(argv: list[str]) -> int:

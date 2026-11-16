@@ -2,7 +2,7 @@
 
 - Format: `^[a-z0-9-]{3,32}:[a-z0-9-_]{1,64}:[a-z0-9-]{4,64}$`.
 - Normalisasi: lowercase dulu, baru validasi (header `Toko-A` → `toko-a`).
-- v0.3: tenant/user dari header tepercaya (`X-Tenant-ID`/`X-User-ID`). v0.4 dari JWT.
+- v0.3: workspace/user dari header tepercaya (`X-Tenant-ID`/`X-User-ID`). v0.4 dari JWT.
 - Format lama (`thr-xxx`, `run-xxx`, uuid polos) DITOLAK 400 — tanpa pengecualian.
 
 Satu-satunya tempat parse/susun thread-ID. Controller/route dilarang regex sendiri.
@@ -14,10 +14,10 @@ import re
 import uuid
 from dataclasses import dataclass
 
-from app.core.errors import CrossTenantError, InvalidThreadIdError
+from app.core.errors import CrossWorkspaceError, InvalidThreadIdError
 
 THREAD_RE = re.compile(r"^[a-z0-9-]{3,32}:[a-z0-9-_]{1,64}:[a-z0-9-]{4,64}$")
-TENANT_RE = re.compile(r"^[a-z0-9-]{3,32}$")
+WORKSPACE_RE = re.compile(r"^[a-z0-9-]{3,32}$")
 USER_RE = re.compile(r"^[a-z0-9-_]{1,64}$")
 SESSION_RE = re.compile(r"^[a-z0-9-]{4,64}$")
 
@@ -26,13 +26,13 @@ SESSION_RE = re.compile(r"^[a-z0-9-]{4,64}$")
 class ThreadIdentity:
     """Siapa pemanggil (dari header tepercaya). v0.4: dari klaim JWT."""
 
-    tenant: str
+    workspace: str
     user: str
 
     def __str__(self) -> str:
-        # Format "tenant:user" untuk log server (log = privat ops, butuh ini
+        # Format "workspace:user" untuk log server (log = privat ops, butuh ini
         # untuk korelasi; JANGAN tampilkan ke klien lain / respons publik).
-        return f"{self.tenant}:{self.user}"
+        return f"{self.workspace}:{self.user}"
 
 
 def canon_segment(value: str | None, name: str) -> str:
@@ -41,7 +41,7 @@ def canon_segment(value: str | None, name: str) -> str:
     Satu-satunya tempat normalisasi case/whitespace — pemanggil (termasuk
     `namespace_for` di infra/memory) dilarang `.strip().lower()` sendiri.
     """
-    seg_re = {"tenant": TENANT_RE, "user": USER_RE, "session": SESSION_RE}.get(name)
+    seg_re = {"workspace": WORKSPACE_RE, "user": USER_RE, "session": SESSION_RE}.get(name)
     if seg_re is None:
         raise ValueError(f"segmen identitas tak dikenal: {name!r}")
     seg = (value or "").strip().lower()
@@ -53,25 +53,25 @@ def canon_segment(value: str | None, name: str) -> str:
 
 
 def parse_thread_id(raw: str) -> tuple[str, str, str]:
-    """Parse + validasi → (tenant, user, session). Raise InvalidThreadIdError."""
+    """Parse + validasi → (workspace, user, session). Raise InvalidThreadIdError."""
     tid = (raw or "").strip().lower()
     if not THREAD_RE.match(tid):
         raise InvalidThreadIdError(raw or "")
-    tenant, user, session = tid.split(":")
-    return tenant, user, session
+    workspace, user, session = tid.split(":")
+    return workspace, user, session
 
 
-def compose_thread_id(tenant: str, user: str, session: str | None = None) -> str:
+def compose_thread_id(workspace: str, user: str, session: str | None = None) -> str:
     """Susun ID kanonis. session kosong → `sess-<12hex>` dari server."""
-    t = canon_segment(tenant, "tenant")
+    t = canon_segment(workspace, "workspace")
     u = canon_segment(user, "user")
     s = canon_segment(session, "session") if session else f"sess-{uuid.uuid4().hex[:12]}"
     return f"{t}:{u}:{s}"
 
 
 def ensure_owner(identity: ThreadIdentity, thread_id: str) -> tuple[str, str, str]:
-    """Parse + pastikan thread milik pemanggil. Beda tenant/user → 403."""
-    tenant, user, session = parse_thread_id(thread_id)
-    if tenant != identity.tenant or user != identity.user:
-        raise CrossTenantError()
-    return tenant, user, session
+    """Parse + pastikan thread milik pemanggil. Beda workspace/user → 403."""
+    workspace, user, session = parse_thread_id(thread_id)
+    if workspace != identity.workspace or user != identity.user:
+        raise CrossWorkspaceError()
+    return workspace, user, session

@@ -9,7 +9,7 @@ pytestmark = pytest.mark.integration
 async def test_live_init_rag_penuh(db_url, embed_url):
     from app.core.config import Settings
     from app.infra.postgres import close_pool, create_pool, open_pool
-    from app.infra.rag.factory import init_rag, retriever_for_tenant
+    from app.infra.rag.factory import init_rag, retriever_for_workspace
     from app.rag.pipeline import HybridRetriever
 
     settings = Settings(_env_file=None, DATABASE_URL=db_url,
@@ -23,7 +23,7 @@ async def test_live_init_rag_penuh(db_url, embed_url):
         assert clients.dims == 1024
         assert clients.qdrant is None  # default pgvector
         assert clients.tok.count("Denda 2% per bulan.") > 3
-        r = retriever_for_tenant(settings, clients, pool, tenant="it-factory")
+        r = retriever_for_workspace(settings, clients, pool, workspace="it-factory")
         assert isinstance(r, HybridRetriever)
         await clients.aclose()
     finally:

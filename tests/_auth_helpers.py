@@ -40,17 +40,17 @@ def app_with_settings(**kw) -> FastAPI:
     return app
 
 
-def bearer(tenant: str = "toko-a", user: str = "budi",
+def bearer(workspace: str = "toko-a", user: str = "budi",
            scopes: tuple[str, ...] = ("chat", "jobs", "threads"),
            settings: Settings | None = None) -> dict[str, str]:
     s = settings or test_settings()
-    token, _ = create_access_token(s, tenant=tenant, user=user, scopes=scopes)
+    token, _ = create_access_token(s, workspace=workspace, user=user, scopes=scopes)
     return {"Authorization": f"Bearer {token}"}
 
 
-def auth_headers(tenant: str = "toko-a", user: str = "budi",
+def auth_headers(workspace: str = "toko-a", user: str = "budi",
                  request_id: str | None = None) -> dict[str, str]:
-    headers = bearer(tenant=tenant, user=user)
+    headers = bearer(workspace=workspace, user=user)
     if request_id:
         headers["X-Request-ID"] = request_id
     return headers

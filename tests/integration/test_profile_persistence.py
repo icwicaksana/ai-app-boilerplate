@@ -29,7 +29,7 @@ def _counter_graph(checkpointer):
 
 @pytest.mark.asyncio
 async def test_profile_cross_thread_and_restart(db_url, tag):
-    tenant, user = f"it-{tag}", "budi"
+    workspace, user = f"it-{tag}", "budi"
 
     async def fresh_pool():
         settings = Settings(_env_file=None, DATABASE_URL=db_url,
@@ -41,13 +41,13 @@ async def test_profile_cross_thread_and_restart(db_url, tag):
     # --- sesi 1: tulis profil + 1 thread ---
     pool1, cp1, store1 = await fresh_pool()
     try:
-        mem1 = MemoryStore(store1, tenant, user)
+        mem1 = MemoryStore(store1, workspace, user)
         await mem1.put_profile({"nama": "Budi", "diet": "vegetarian"})
         g1 = _counter_graph(cp1)
-        t1 = f"{tenant}:{user}:sess-1"
+        t1 = f"{workspace}:{user}:sess-1"
         await g1.ainvoke({"count": 41}, config={"configurable": {"thread_id": t1}})
         # lintas thread (pool sama): profil terbaca instance baru
-        mem1b = MemoryStore(store1, tenant, user)
+        mem1b = MemoryStore(store1, workspace, user)
         assert (await mem1b.get_profile())["diet"] == "vegetarian"
     finally:
         await close_pool(pool1)  # simulasi restart server
@@ -55,7 +55,7 @@ async def test_profile_cross_thread_and_restart(db_url, tag):
     # --- sesi 2 (pool baru): profil + history utuh, thread lanjut ---
     pool2, cp2, store2 = await fresh_pool()
     try:
-        mem2 = MemoryStore(store2, tenant, user)
+        mem2 = MemoryStore(store2, workspace, user)
         assert await mem2.get_profile() == {"nama": "Budi", "diet": "vegetarian"}
         g2 = _counter_graph(cp2)
         snap = await g2.aget_state({"configurable": {"thread_id": t1}})

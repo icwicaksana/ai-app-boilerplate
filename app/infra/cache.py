@@ -13,8 +13,8 @@ Prinsip:
   untuk kebutuhan nanti (v0.7 RAG).
 
 Namespace key (satu Redis, prefix per fungsi — mudah diaudit via `KEYS`):
-- `rl:{scope}:{tenant}:{user}:{window}`  — counter rate-limit (TTL = window)
-- `idem:{tenant}:{user}:{key}`           — idempotency (TTL = 24 jam)
+- `rl:{scope}:{workspace}:{user}:{window}`  — counter rate-limit (TTL = window)
+- `idem:{workspace}:{user}:{key}`           — idempotency (TTL = 24 jam)
 - `jwt:deny:{jti}`                       — token yang di-revoke (TTL = sisa umur)
 """
 
@@ -53,12 +53,12 @@ class CacheUnavailable(RuntimeError):
 # Key builders — satu sumber, dipakai route/limiter/guard/tes.
 # ---------------------------------------------------------------------------
 
-def rate_limit_key(scope: str, tenant: str, user: str, window: int) -> str:
-    return f"{PREFIX_RL}:{scope}:{tenant}:{user}:{window}"
+def rate_limit_key(scope: str, workspace: str, user: str, window: int) -> str:
+    return f"{PREFIX_RL}:{scope}:{workspace}:{user}:{window}"
 
 
-def idempotency_key(tenant: str, user: str, key: str) -> str:
-    return f"{PREFIX_IDEM}:{tenant}:{user}:{key}"
+def idempotency_key(workspace: str, user: str, key: str) -> str:
+    return f"{PREFIX_IDEM}:{workspace}:{user}:{key}"
 
 
 def deny_key(jti: str) -> str:

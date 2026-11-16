@@ -17,5 +17,5 @@ class BaseState(TypedDict, total=False):
     """State minimal yang kompatibel dengan runner v0."""
 
     messages: Annotated[Sequence[BaseMessage], add_messages]
-    # Slot multi-tenant/auth (v1): isi dari controller, bukan dari LLM
+    # Slot multi-workspace/auth (v1): isi dari controller, bukan dari LLM
     metadata: dict[str, Any]

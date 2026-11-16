@@ -72,7 +72,7 @@ def _auth(client) -> dict:
 
     token, _ = create_access_token(
         client.app.state.test_settings,
-        tenant="toko-a", user="budi", scopes=("chat",))
+        workspace="toko-a", user="budi", scopes=("chat",))
     return {"Authorization": f"Bearer {token}"}
 
 

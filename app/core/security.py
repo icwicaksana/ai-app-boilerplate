@@ -73,7 +73,7 @@ class InvalidToken(TokenError):
 @dataclass(frozen=True)
 class TokenClaims:
     subject: str          # = user
-    tenant: str
+    workspace: str
     jti: str
     token_type: str
     scopes: tuple[str, ...] = field(default_factory=tuple)
@@ -101,7 +101,7 @@ def _secret(settings: Settings) -> str:
 def create_token(
     settings: Settings,
     *,
-    tenant: str,
+    workspace: str,
     user: str,
     token_type: str,
     ttl_seconds: int,
@@ -115,7 +115,7 @@ def create_token(
     jti = new_jti()
     payload = {
         "sub": user,
-        "tenant": tenant,
+        "workspace": workspace,
         "typ": token_type,
         "jti": jti,
         "scope": " ".join(scopes),
@@ -125,23 +125,23 @@ def create_token(
     }
     token = jwt.encode(payload, _secret(settings), algorithm=ALGORITHM)
     claims = TokenClaims(
-        subject=user, tenant=tenant, jti=jti, token_type=token_type,
+        subject=user, workspace=workspace, jti=jti, token_type=token_type,
         scopes=tuple(scopes), issued_at=payload["iat"], expires_at=payload["exp"],
     )
     return token, claims
 
 
-def create_access_token(settings: Settings, *, tenant: str, user: str,
+def create_access_token(settings: Settings, *, workspace: str, user: str,
                         scopes: tuple[str, ...] = ()) -> tuple[str, TokenClaims]:
-    return create_token(settings, tenant=tenant, user=user,
+    return create_token(settings, workspace=workspace, user=user,
                         token_type=TYPE_ACCESS,
                         ttl_seconds=settings.ACCESS_TOKEN_TTL_SECONDS,
                         scopes=scopes)
 
 
-def create_refresh_token(settings: Settings, *, tenant: str, user: str,
+def create_refresh_token(settings: Settings, *, workspace: str, user: str,
                          scopes: tuple[str, ...] = ()) -> tuple[str, TokenClaims]:
-    return create_token(settings, tenant=tenant, user=user,
+    return create_token(settings, workspace=workspace, user=user,
                         token_type=TYPE_REFRESH,
                         ttl_seconds=settings.REFRESH_TOKEN_TTL_SECONDS,
                         scopes=scopes)
@@ -162,7 +162,7 @@ def decode_token(settings: Settings, token: str, *,
             _secret(settings),
             algorithms=[ALGORITHM],
             issuer=settings.JWT_ISSUER,
-            options={"require": ["exp", "iat", "jti", "sub", "typ", "tenant"]},
+            options={"require": ["exp", "iat", "jti", "sub", "typ", "workspace"]},
         )
     except jwt.ExpiredSignatureError as exc:
         raise TokenExpired("token kedaluwarsa") from exc
@@ -177,7 +177,7 @@ def decode_token(settings: Settings, token: str, *,
     scope_raw = payload.get("scope") or ""
     return TokenClaims(
         subject=str(payload["sub"]),
-        tenant=str(payload["tenant"]),
+        workspace=str(payload["workspace"]),
         jti=str(payload["jti"]),
         token_type=str(payload["typ"]),
         scopes=tuple(s for s in str(scope_raw).split(" ") if s),

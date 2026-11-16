@@ -20,7 +20,7 @@ HASH = hash_password(PASSWORD)
 
 
 def _user(**kw):
-    base = {"id": 1, "tenant": "toko-a", "username": "budi",
+    base = {"id": 1, "workspace": "toko-a", "username": "budi",
             "password_hash": HASH, "scopes": "chat jobs threads",
             "is_active": True}
     base.update(kw)
@@ -47,8 +47,8 @@ def client(monkeypatch, cache):
 
 @pytest.fixture
 def known_user(monkeypatch):
-    async def _get_user(pool, tenant, username):
-        if (tenant, username) == ("toko-a", "budi"):
+    async def _get_user(pool, workspace, username):
+        if (workspace, username) == ("toko-a", "budi"):
             return _user()
         return None
 
@@ -59,9 +59,9 @@ def known_user(monkeypatch):
     monkeypatch.setattr(users_repo, "mark_login", _mark_login)
 
 
-def _login(client, password=PASSWORD, username="budi", tenant="toko-a"):
+def _login(client, password=PASSWORD, username="budi", workspace="toko-a"):
     return client.post("/api/v1/auth/login",
-                       json={"tenant": tenant, "username": username,
+                       json={"workspace": workspace, "username": username,
                              "password": password})
 
 
@@ -90,7 +90,7 @@ def test_login_unknown_user_same_message(client, known_user):
 
 
 def test_login_inactive_user_rejected(client, monkeypatch):
-    async def _get_user(pool, tenant, username):
+    async def _get_user(pool, workspace, username):
         return _user(is_active=False)
 
     monkeypatch.setattr(users_repo, "get_user", _get_user)
@@ -100,7 +100,7 @@ def test_login_inactive_user_rejected(client, monkeypatch):
 
 def test_login_validation_422(client):
     res = client.post("/api/v1/auth/login",
-                      json={"tenant": "TOKO-A", "username": "budi", "password": "x"})
+                      json={"workspace": "TOKO-A", "username": "budi", "password": "x"})
     assert res.status_code == 422
     assert res.json()["code"] == "VALIDATION_ERROR"
 
@@ -111,7 +111,7 @@ def test_me_returns_claims(client, known_user):
                      headers={"Authorization": f"Bearer {tokens['access_token']}"})
     assert res.status_code == 200
     body = res.json()
-    assert body["tenant"] == "toko-a" and body["user"] == "budi"
+    assert body["workspace"] == "toko-a" and body["user"] == "budi"
     assert "chat" in body["scopes"] and body["expires_at"] > 0
 
 
