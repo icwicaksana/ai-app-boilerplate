@@ -1,0 +1,121 @@
+"""Satu-satunya tempat merakit `AgentContext` (v0.9 F0-5).
+
+MASALAH YANG DITUTUP
+    Dulu tiga jalur merakit context sendiri-sendiri:
+      * `ChatController`      -> store + retriever  (lengkap)
+      * `ApprovalService`     -> TANPA store/retriever
+      * `ThreadController`    -> TANPA store/retriever
+    Akibatnya graph yang dibangun ulang saat resume-approval / fork punya
+    skema tool BERBEDA dari graph yang di-interrupt: `search_knowledge_base`
+    dan tool memori hilang, `bound_tools` jadi `[]`, dan tidak ada satu pun
+    error. Tool tulis yang seharusnya butuh approval pun bisa ikut lepas.
+
+D11 TETAP DIHORMATI
+    Degradasi tanpa retriever itu DISENGAJA untuk jalur chat: RAG mati ->
+    chat tetap jalan. Jadi agen tidak boleh melempar. Yang boleh berbeda
+    adalah JALUR, bukan agen — karena itu mode ketiadaannya eksplisit:
+
+      "degrade"        -> retriever None, agen jalan apa adanya (chat D11)
+      "raise_embedding"-> EmbeddingUnavailableError / 503 (jalur chat ber-RAG)
+      "raise_binding"  -> AgentBindingError / 500 (resume & fork: wiring salah)
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from app.agents.AgentContext import AgentContext
+from app.core.errors import AgentBindingError, EmbeddingUnavailableError
+
+MissingRetriever = Literal["degrade", "raise_embedding", "raise_binding"]
+
+
+def _workspace_of(thread_id: str | None) -> str | None:
+    """Workspace dari thread_id tervalidasi; None bila tak ada/bukan format."""
+    if not thread_id:
+        return None
+    from app.core.threads import parse_thread_id
+
+    try:
+        workspace, _, _ = parse_thread_id(thread_id)
+    except Exception:
+        return None
+    return workspace
+
+
+def build_agent_context(
+    *,
+    settings,
+    checkpointer,
+    runner,
+    session_id: str | None = None,
+    store=None,
+    pool=None,
+    rag=None,
+    agent_cls=None,
+    missing_retriever: MissingRetriever = "degrade",
+) -> AgentContext:
+    """Rakit AgentContext lengkap untuk satu eksekusi agent.
+
+    `store` adalah PostgresStore mentah (bukan MemoryStore); MemoryStore
+    dibungkus per-user di sini supaya namespace terkunci ke thread ini.
+    """
+    memory = None
+    if store is not None:
+        workspace = _workspace_of(session_id)
+        if workspace is not None:
+            from app.infra.memory import MemoryStore
+
+            _, user, _ = _parts(session_id)
+            memory = MemoryStore(store, workspace, user)
+
+    retriever = _retriever_for(
+        agent_cls=agent_cls, settings=settings, pool=pool, rag=rag,
+        thread_id=session_id, missing_retriever=missing_retriever)
+
+    return AgentContext(
+        settings=settings,
+        checkpointer=checkpointer,
+        runner=runner,
+        session_id=session_id,
+        store=memory,
+        retriever=retriever,
+    )
+
+
+def _parts(thread_id: str):
+    from app.core.threads import parse_thread_id
+
+    return parse_thread_id(thread_id)
+
+
+def _retriever_for(*, agent_cls, settings, pool, rag, thread_id,
+                   missing_retriever: MissingRetriever):
+    """Retriever workspace-bound untuk agen NEEDS_RETRIEVER (D2, v0.7)."""
+    if agent_cls is None or not getattr(agent_cls, "NEEDS_RETRIEVER", False):
+        return None
+
+    if pool is None or rag is None:
+        if missing_retriever == "degrade":
+            return None
+        if missing_retriever == "raise_embedding":
+            raise EmbeddingUnavailableError(
+                "RAG tak tersedia (lifespan RAG gagal/nonaktif).")
+        raise AgentBindingError(
+            f"{getattr(agent_cls, '__name__', agent_cls)} membutuhkan "
+            f"retriever workspace-bound, tetapi jalur ini tidak "
+            f"menyediakannya (session={thread_id!r}). Jalur resume-approval "
+            f"dan fork thread WAJIB menyertakan pool+rag yang sama dengan "
+            f"jalur chat, kalau tidak graph dibangun ulang dengan skema tool "
+            f"berbeda dari graph yang di-interrupt.")
+
+    workspace = _workspace_of(thread_id)
+    if workspace is None:
+        if missing_retriever == "degrade":
+            return None
+        raise AgentBindingError(
+            f"thread_id tidak valid untuk membangun retriever: {thread_id!r}")
+
+    from app.infra.rag.factory import retriever_for_workspace
+
+    return retriever_for_workspace(settings, rag, pool, workspace=workspace)

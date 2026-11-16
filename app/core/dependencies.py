@@ -76,7 +76,9 @@ def get_approval_service(
     if pool is None or checkpointer is None:
         raise StorageUnavailableError(
             "Persistence belum siap (lifespan gagal/startup tak jalan).")
-    return ApprovalService(settings, pool, checkpointer)
+    return ApprovalService(settings, pool, checkpointer,
+                           store=getattr(request.app.state, "store", None),
+                           rag=getattr(request.app.state, "rag", None))
 async def get_thread_identity(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -157,7 +159,12 @@ def get_thread_controller(
     from app.controllers.ThreadController import ThreadController
 
     checkpointer, _ = _persistence(request)
-    return ThreadController(settings, checkpointer, get_runner())
+    # v0.9 F0-5: fork butuh binding yang sama dengan jalur chat, kalau tidak
+    # graph hasil fork punya skema tool berbeda (bound_tools=[]).
+    return ThreadController(settings, checkpointer, get_runner(),
+                            store=getattr(request.app.state, "store", None),
+                            pool=getattr(request.app.state, "pool", None),
+                            rag=getattr(request.app.state, "rag", None))
 
 
 def get_rag_clients(request: Request):

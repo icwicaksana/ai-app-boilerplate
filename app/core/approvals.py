@@ -64,11 +64,15 @@ class ApprovalExpiredError(AppError):
 
 class ApprovalService:
     def __init__(self, settings: Settings, pool, checkpointer,
-                 runner: Runner | None = None):
+                 runner: Runner | None = None, *, store=None, rag=None):
         self.settings = settings
         self.pool = pool
         self.checkpointer = checkpointer
         self.runner = runner or Runner(durability=settings.GRAPH_DURABILITY)
+        # v0.9 F0-5: dipakai _graph_for agar graph yang dibangun ulang saat
+        # resume identik dengan graph yang di-interrupt (skema tool sama).
+        self.store = store
+        self.rag = rag
 
     # --- perekaman ---
     async def record_interrupts(self, *, workspace: str, thread_id: str,
@@ -202,9 +206,17 @@ class ApprovalService:
         agent_cls = CHAT_AGENTS.get(agent_name)
         if agent_cls is None:
             raise AgentNotFoundError(agent_name)
-        ctx = AgentContext(settings=self.settings,
-                           checkpointer=self.checkpointer,
-                           runner=self.runner, session_id=thread_id)
+        # v0.9 F0-5: WAJIB lewat factory dengan binding lengkap. Dulu context
+        # dirakit di sini tanpa store/retriever sehingga graph resume punya
+        # skema tool berbeda dari graph yang di-interrupt (bound_tools=[]).
+        from app.agents.factory import build_agent_context
+
+        ctx = build_agent_context(
+            settings=self.settings, checkpointer=self.checkpointer,
+            runner=self.runner, session_id=thread_id,
+            store=self.store, pool=self.pool, rag=self.rag,
+            agent_cls=agent_cls, missing_retriever="raise_binding",
+        )
         agent: BaseChatAgent = agent_cls(ctx)
         return agent.graph
 
@@ -227,7 +239,10 @@ async def record_pending_approvals(app_or_request, *, identity, thread_id: str,
         return []
     from app.core.config import get_settings
 
-    svc = ApprovalService(get_settings(), pool, checkpointer)
+    svc = ApprovalService(
+        get_settings(), pool, checkpointer,
+        store=getattr(state, "store", None),
+        rag=getattr(state, "rag", None))
     try:
         return await svc.record_interrupts(
             workspace=identity.workspace, thread_id=thread_id, agent=agent,

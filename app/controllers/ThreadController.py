@@ -128,8 +128,10 @@ def _meta_of(tup, key: str):
 
 
 class ThreadController(BaseController):
-    def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None):
-        super().__init__(settings, checkpointer, runner or Runner())
+    def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None,
+                 *, store=None, pool=None, rag=None):
+        super().__init__(settings, checkpointer, runner or Runner(),
+                         store=store, pool=pool, rag=rag)
 
     async def _require_tuple(self, thread_id: str, checkpoint_id: str | None = None):
         """Tuple terbaru (atau 1 checkpoint spesifik). None/absen → 404.
@@ -249,20 +251,33 @@ class ThreadController(BaseController):
         tetap jalan sebagai operasi DB murni.
         """
         try:
-            ctx = AgentContext(
-                settings=self.settings, checkpointer=self.checkpointer,
-                runner=self.runner, session_id=new_thread,
-            )
+            ctx = self._fork_context(agent_cls, new_thread)
             return agent_cls(ctx).graph
         except (UpstreamAIError, ValueError):
             placeholder = self.settings.model_copy(update={
                 "LITELLM_API_KEY": "fork-tanpa-llm", "LITELLM_MODEL": "fork-tanpa-llm",
             })
-            ctx = AgentContext(
-                settings=placeholder, checkpointer=self.checkpointer,
-                runner=self.runner, session_id=new_thread,
-            )
+            ctx = self._fork_context(agent_cls, new_thread, settings=placeholder)
             return agent_cls(ctx).graph
+
+    def _fork_context(self, agent_cls, new_thread: str, *, settings=None):
+        """v0.9 F0-5: fork WAJIB memakai binding yang sama dengan jalur chat.
+
+        Dulu context dirakit di sini tanpa store/retriever, sehingga graph
+        hasil fork punya skema tool berbeda dari graph sumber (bound_tools=[]).
+        `missing_retriever="raise_binding"` membuat kesalahan wiring itu
+        berisik, bukan diam-diam.
+        """
+        from app.agents.factory import build_agent_context
+
+        return build_agent_context(
+            settings=settings or self.settings,
+            checkpointer=self.checkpointer,
+            runner=self.runner,
+            session_id=new_thread,
+            store=self.store, pool=self.pool, rag=self.rag,
+            agent_cls=agent_cls, missing_retriever="raise_binding",
+        )
 
     async def delete_thread(self, identity: ThreadIdentity, thread_id: str,
                             *, request_id: str = "-") -> None:
