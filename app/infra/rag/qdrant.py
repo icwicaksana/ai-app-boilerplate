@@ -115,7 +115,7 @@ class QdrantStore:
             raise ValueError(f"kunci filter tak dikenal: {sorted(bad)} "
                              f"(izinkan: {sorted(FILTER_KEYS)})")
         must: list[Any] = [
-            models.FieldCondition(key="tenant",
+            models.FieldCondition(key="workspace",
                                   match=models.MatchValue(value=self._workspace))]
         for key in sorted(filters or ()):
             must.append(models.FieldCondition(
@@ -194,7 +194,7 @@ class QdrantStore:
 
     async def delete_document(self, *, doc_id: str) -> int:
         filt = models.Filter(must=[
-            models.FieldCondition(key="tenant", match=models.MatchValue(
+            models.FieldCondition(key="workspace", match=models.MatchValue(
                 value=self._workspace)),
             models.FieldCondition(key="document_id", match=models.MatchValue(
                 value=doc_id))])
@@ -207,7 +207,7 @@ class QdrantStore:
 
     async def index_info(self) -> IndexInfo:
         filt = models.Filter(must=[models.FieldCondition(
-            key="tenant", match=models.MatchValue(value=self._workspace))])
+            key="workspace", match=models.MatchValue(value=self._workspace))])
         n = (await self._client.count(
             self._collection, count_filter=filt, exact=True)).count
         if n == 0:

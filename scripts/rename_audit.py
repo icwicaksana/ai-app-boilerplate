@@ -54,7 +54,6 @@ FROZEN_ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("komentar_prefix", re.compile(r'# "tenant:" sampai ada migrasi')),
     ("nama_berkas_migrasi", re.compile(
         r"014_rename_tenant_to_workspace\.sql")),
-    ("payload_qdrant", re.compile(r'key="tenant"')),
     ("kode_error", re.compile(r"CROSS_TENANT_DENIED")),
     ("out_param_fn", re.compile(r"job_tenant")),
     ("format_thread", re.compile(r"tenant:user:session")),

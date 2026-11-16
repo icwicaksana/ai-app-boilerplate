@@ -630,9 +630,10 @@ Mati default (`PHOENIX_ENABLED=false`): app jalan normal tanpa tracing.
 
      `Authorization: Bearer <access_token>`.
 
-   - transisi sementara (dev saja): `AUTH_MODE=trusted_headers` +
+   - **v0.8.1: jalur trust-header DIHAPUS TOTAL.** Tidak ada lagi
 
-     `AUTH_ALLOW_TRUSTED_HEADERS=true` (DITOLAK bila `ENVIRONMENT=prod`).
+     `AUTH_MODE=trusted_headers` / `AUTH_ALLOW_TRUSTED_HEADERS`; Settings
+     menolak keduanya. Satu-satunya mode auth = JWT Bearer.
 
 2. **`ENVIRONMENT`** baru (`dev|staging|prod`). `prod` mewajibkan: JWT_SECRET,
 
