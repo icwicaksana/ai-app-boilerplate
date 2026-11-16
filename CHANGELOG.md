@@ -11,6 +11,47 @@ Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 > ontologi `tenant:`, payload Qdrant) sengaja **dibekukan** sampai v0.8.2
 > karena butuh migrasi data — lihat `Docs/RENAME-V081.md`.
 
+## v0.8.3 (2026-11-16) — Contract-shrink: cabut jalur kompatibilitas
+
+**Konteks keputusan.** v0.8.2 menambahkan dual-read (klaim JWT, prefix
+ontologi, GUC RLS) dengan asumsi ada deployment berjalan yang tokennya terbit
+sebelum rename. Asumsi itu **salah**: template ini belum punya fork yang
+berjalan, jadi tidak ada token/data lama yang perlu dilayani. Jalur
+kompatibilitas yang tidak melayani apa pun hanya menambah permukaan yang bisa
+disalahgunakan — jadi dicabut.
+
+**JWT.** `decode_token` kembali menuntut klaim `workspace` lewat
+`options={"require": [...]}` (deklaratif, bukan cek manual). `legacy_claim`,
+`LEGACY_CLAIM_WORKSPACE`, `LEGACY_CLAIM_SUNSET`, dan date-bomb
+`tests/test_legacy_claim_sunset.py` dihapus. Konsekuensi yang diterima:
+token terbitan pra-v0.8.2 kini **401** — tidak ada yang terdampak.
+
+**Ontologi.** `LEGACY_EXT_PREFIXES`/`EXT_PREFIXES` dan `canonical_extension()`
+dihapus; `extension_suffix()` hanya mengenali `workspace:`. Data lama sudah
+dipindahkan migrasi 018 (KG kosong saat itu), jadi tidak ada yang jadi yatim.
+
+**RLS (migrasi 020).** Policy berhenti memakai
+`COALESCE(NULLIF(ws,''), NULLIF(tenant,''))` dan membaca **hanya**
+`current_setting('app.current_workspace', true)`. Fail-closed tetap terjaga:
+GUC tak diset → NULL → `workspace = NULL` = NULL (bukan TRUE) → 0 baris; GUC
+`''` → 0 baris. `ALTER POLICY` dipakai supaya tidak ada jendela RLS tanpa
+policy; preflight menolak drift (policy ≠ 8).
+
+**Teks user-facing.** Pesan error dan skema API yang masih menulis format
+thread `tenant:user:session` diperbarui ke `workspace:user:session`. Format
+kawatnya **tidak berubah** (tetap 3 segmen `a:b:c`, ADR-07).
+
+**Guard.** `FROZEN_ALLOWLIST` menyusut dari 10 entri menjadi **1**: nama
+berkas `014_rename_tenant_to_workspace.sql` pada daftar `MIGRATIONS` — satu-
+satunya yang tidak boleh di-rename karena versinya tercatat di
+`schema_migrations`. Di `app/` kini tersisa **tepat satu** kemunculan istilah
+lama, yaitu nama berkas itu.
+
+**Gate.** 709 unit hijau; guard exit 0; migrasi 007–020 tercatat; 8 policy
+`workspace_isolation` tanpa cabang GUC lama.
+
+
+
 ## v0.8.2 (2026-11-16) — Selesaikan Tier C: GUC, namespace, ontologi, kode error
 
 **Perbaikan regresi v0.8.1 (P1).** v0.8.1 mengganti klaim JWT `tenant` →

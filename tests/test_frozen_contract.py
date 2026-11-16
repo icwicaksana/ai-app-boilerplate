@@ -98,17 +98,16 @@ def test_namespace_memori_sudah_workspaces():
 
 # --- 6. Tier C DIBEKUKAN: prefix ontologi KG ------------------------------
 def test_prefix_ontologi_kanonis_workspace():
-    """v0.8.2 (2026-11-16): DIPENSIUNKAN — prefix kanonis kini 'workspace:'.
+    """v0.8.2 (2026-11-16): dipensiunkan — prefix kanonis kini 'workspace:'.
 
-    Alasan: migrasi 018 memindahkan nilai tersimpan, dan `canonical_extension`
-    menormalkan tulisan baru. Nilai lama tetap TERBACA lewat
-    LEGACY_EXT_PREFIXES (dual-read), diuji di tests/test_graph_pure.py.
-    Jangkar pengganti: kanonis baru + legacy masih dikenali.
+    v0.8.3 (2026-11-16): jalur baca legacy ikut dicabut karena tidak ada
+    deployment berjalan yang menyimpan data prefix lama; migrasi 018 sudah
+    memindahkan nilai yang ada. Jangkar: hanya prefix kanonis yang dikenali.
     """
     from app.rag import ontology
 
     assert ontology.WORKSPACE_EXT_PREFIX == "workspace:"
-    assert "tenant:" in ontology.LEGACY_EXT_PREFIXES
+    assert not hasattr(ontology, "LEGACY_EXT_PREFIXES")
 
 
 # --- 7. Identitas deterministik (bukan label — jangan di-rename) ----------

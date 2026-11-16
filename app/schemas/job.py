@@ -13,7 +13,7 @@ class JobRequest(BaseModel):
     thread_id: str | None = Field(
         default=None,
         description=(
-            "Format beku v0.3: 'tenant:user:session'. Kosong = server susun dari "
+            "Format beku v0.3: 'workspace:user:session'. Kosong = server susun dari "
             "identitas JWT. Wajib milik pemanggil (403 bila asing)."
         ),
     )

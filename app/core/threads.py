@@ -1,4 +1,4 @@
-"""Identitas thread kanonis v0.3+: `tenant:user:session` (BEKU permanen).
+"""Identitas thread kanonis v0.3+: `workspace:user:session` (BEKU permanen).
 
 - Format: `^[a-z0-9-]{3,32}:[a-z0-9-_]{1,64}:[a-z0-9-]{4,64}$`.
 - Normalisasi: lowercase dulu, baru validasi (header `Toko-A` → `toko-a`).

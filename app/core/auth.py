@@ -111,8 +111,8 @@ async def resolve_identity(request: Request, settings: Settings,
                            cache: CacheClient | None) -> ThreadIdentity:
     """Identitas pemanggil dari klaim JWT. Raise AppError (401/403/503).
 
-    v0.8.1: jalur `trusted_headers` (identitas dari header X-Tenant-ID /
-    X-User-ID) DIHAPUS TOTAL — header bisa dipalsukan siapa pun.
+    v0.8.1: jalur trust-header (identitas dari header yang dikirim
+    klien) DIHAPUS TOTAL — header bisa dipalsukan siapa pun.
     """
     claims = await resolve_claims(request, settings, cache)
     return _claims_to_identity(claims)

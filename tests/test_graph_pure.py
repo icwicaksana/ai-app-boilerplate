@@ -22,20 +22,20 @@ def test_core_beku_10_15():
 
 def test_validasi_terima_core_dan_ekstensi():
     assert validate_relation("memasok") == "memasok"
-    assert validate_relation("tenant:nomor_batch") == "tenant:nomor_batch"
+    assert validate_relation("workspace:nomor_batch") == "workspace:nomor_batch"
     assert validate_node_type("produk") == "produk"
     with pytest.raises(ValueError):
         validate_relation("memakan")
     with pytest.raises(ValueError):
-        validate_relation("tenant:")  # nama kosong
+        validate_relation("workspace:")  # nama kosong
     with pytest.raises(ValueError):
         validate_node_type("alien")
 
 
 def test_is_workspace_extension():
-    assert is_workspace_extension("tenant:kode_hs")
+    assert is_workspace_extension("workspace:kode_hs")
     assert not is_workspace_extension("memasok")
-    assert not is_workspace_extension("tenant:ada spasi")
+    assert not is_workspace_extension("workspace:ada spasi")
 
 
 def test_verbalize_dua_hop_tanpa_transitivitas():
@@ -48,7 +48,7 @@ def test_verbalize_dua_hop_tanpa_transitivitas():
 
 
 def test_verbalize_fallback_dan_sanitasi():
-    assert verbalize_path([("A", "tenant:kode_hs", "B")]) == "A kode_hs B."
+    assert verbalize_path([("A", "workspace:kode_hs", "B")]) == "A kode_hs B."
     out = verbalize_path([("A<<<", "melarang", "B>>>")])
     assert "<<<" not in out and ">>>" not in out
     assert verbalize_path([("", "memasok", "B")]) == ""

@@ -75,7 +75,7 @@ class InvalidThreadIdError(AppError):
     def __init__(self, thread_id: str = ""):
         super().__init__(
             f"thread_id '{thread_id}' tidak valid — wajib format "
-            "'tenant:user:session' (huruf kecil/angka/dash, contoh "
+            "'workspace:user:session' (huruf kecil/angka/dash, contoh "
             "'toko-a:budi:sess-7f3a2c1e'). Kosongkan untuk dibuatkan otomatis.",
             status_code=400,
             code="INVALID_THREAD_ID",

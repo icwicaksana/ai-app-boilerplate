@@ -23,13 +23,9 @@ RELATIONS = frozenset({
 })
 
 ESCAPE_RELATION = "related_to"
-# v0.8.2: prefix kanonis = "workspace:". Data lama tetap TERBACA lewat
-# LEGACY_EXT_PREFIXES sampai backfill selesai; tulis selalu kanonis lewat
-# canonical_extension(). Inilah satu-satunya tempat literal lama boleh
-# muncul di app/ (allowlist guard sempit).
+# Prefix ekstensi ontologi. Kanonis sejak v0.8.2; data lama sudah
+# dimigrasikan (migrasi 018), jadi tidak ada lagi jalur baca legacy.
 WORKSPACE_EXT_PREFIX = "workspace:"
-LEGACY_EXT_PREFIXES = ("tenant:",)
-EXT_PREFIXES = (WORKSPACE_EXT_PREFIX, *LEGACY_EXT_PREFIXES)
 
 
 def is_core_node_type(t: str) -> bool:
@@ -42,30 +38,17 @@ def is_core_relation(r: str) -> bool:
 
 def extension_suffix(name: str) -> str | None:
     """Suffix ekstensi (tanpa prefix) atau None bila bukan ekstensi valid."""
-    for p in EXT_PREFIXES:
-        if name.startswith(p):
-            rest = name[len(p):]
-            if rest and " " not in rest and "/" not in rest:
-                return rest
-            return None
+    if not name.startswith(WORKSPACE_EXT_PREFIX):
+        return None
+    rest = name[len(WORKSPACE_EXT_PREFIX):]
+    if rest and " " not in rest and "/" not in rest:
+        return rest
     return None
 
 
 def is_workspace_extension(name: str) -> bool:
-    """`workspace:xyz` (atau prefix legacy) valid."""
+    """`workspace:xyz` valid = prefix + nama non-kosong tanpa spasi/slash."""
     return extension_suffix(name) is not None
-
-
-def canonical_extension(name: str) -> str:
-    """Normalkan prefix lama -> kanonis. Non-ekstensi dikembalikan apa adanya.
-
-    Dipakai di batas TULIS supaya data baru tidak pernah tersimpan dengan
-    prefix lama (mencegah duplikat antara prefix legacy dan kanonis).
-    """
-    suffix = extension_suffix(name)
-    if suffix is None:
-        return name
-    return f"{WORKSPACE_EXT_PREFIX}{suffix}"
 
 
 def validate_relation(relation: str) -> str:

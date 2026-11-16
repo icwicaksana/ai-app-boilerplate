@@ -47,20 +47,11 @@ BUCKETS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # Setiap entri di sini adalah keputusan sadar, bukan kelalaian — dan guard
 # tetap menangkap pemakaian BARU di luar daftar ini.
 FROZEN_ALLOWLIST: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("prefix_ontologi", re.compile(
-        r'WORKSPACE_EXT_PREFIX\s*=\s*"tenant:"')),
-    ("komentar_prefix", re.compile(r'# "tenant:" sampai ada migrasi')),
     ("nama_berkas_migrasi", re.compile(
         r"014_rename_tenant_to_workspace\.sql")),
-    ("out_param_fn", re.compile(r"job_tenant")),
-    ("format_thread", re.compile(r"tenant:user:session")),
-    ("doc_penghapusan", re.compile(r"jalur `trusted_headers`")),
-    # v0.8.2 dual-read: literal lama hidup HANYA di satu baris definisi
-    # per modul. Guard tetap menangkap pemakaian baru di luar itu.
-    ("legacy_claim_def", re.compile(
-        r'LEGACY_CLAIM_WORKSPACE\s*=\s*"tenant"')),
-    ("legacy_ext_def", re.compile(
-        r'LEGACY_EXT_PREFIXES\s*=\s*\("tenant:",\)')),
+    # Satu-satunya literal tersisa di app/: nama berkas migrasi 014 pada
+    # daftar MIGRATIONS. Berkasnya TIDAK boleh di-rename — versinya tercatat
+    # di schema_migrations, jadi rename = drift skema permanen.
 )
 
 

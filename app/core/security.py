@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import jwt
 from pwdlib import PasswordHash
@@ -58,15 +58,8 @@ def verify_password(raw: str, hashed: str) -> bool:
 
 # --- token ---
 
-# --- Nama klaim identitas (v0.8.2: dual-read) -----------------------------
+# --- Nama klaim identitas ------------------------------------------------
 CLAIM_WORKSPACE = "workspace"
-# Nama lama (v0.3–v0.8.1). Diterima sebagai fallback sampai sunset.
-# Inilah SATU-SATUNYA tempat literal lama ini boleh muncul di app/ —
-# guard scripts/rename_audit.py mengizinkannya lewat allowlist sempit.
-LEGACY_CLAIM_WORKSPACE = "tenant"
-# Setelah tanggal ini tests/test_legacy_claim_sunset.py GAGAL. Date-bomb
-# memaksa pencabutan dual-read, bukan sekadar mengingatkan.
-LEGACY_CLAIM_SUNSET = date(2026, 11, 30)
 
 
 class TokenError(Exception):
@@ -90,9 +83,6 @@ class TokenClaims:
     scopes: tuple[str, ...] = field(default_factory=tuple)
     issued_at: int = 0
     expires_at: int = 0
-    # True = token terbit sebelum v0.8.2 (klaim masih memakai nama lama).
-    # Dipakai untuk telemetri pensiun; perilaku identik.
-    legacy_claim: bool = False
 
     @property
     def ttl_remaining(self) -> int:
@@ -176,26 +166,13 @@ def decode_token(settings: Settings, token: str, *,
             _secret(settings),
             algorithms=[ALGORITHM],
             issuer=settings.JWT_ISSUER,
-            options={"require": ["exp", "iat", "jti", "sub", "typ"]},
+            options={"require": ["exp", "iat", "jti", "sub", "typ",
+                                 CLAIM_WORKSPACE]},
         )
     except jwt.ExpiredSignatureError as exc:
         raise TokenExpired("token kedaluwarsa") from exc
     except jwt.InvalidTokenError as exc:
         raise InvalidToken(f"token tidak valid: {exc}") from exc
-
-    # v0.8.2 DUAL-READ: v0.8.1 mengganti nama klaim identitas TANPA fase
-    # transisi, sehingga token yang terbit sebelum deploy langsung ditolak
-    # 401. Di sini nama baru diutamakan, nama lama diterima sebagai fallback
-    # sampai LEGACY_CLAIM_SUNSET (ditegakkan tests/).
-    workspace = payload.get(CLAIM_WORKSPACE) or payload.get(LEGACY_CLAIM_WORKSPACE)
-    if not workspace:
-        # `require` tidak lagi memuat nama klaim identitas (dua nama sah),
-        # jadi ketiadaannya diperiksa di sini — jangan sampai token tanpa
-        # identitas lolos sebagai token "kosong".
-        raise InvalidToken(
-            f"klaim identitas ({CLAIM_WORKSPACE!r} / "
-            f"{LEGACY_CLAIM_WORKSPACE!r}) tidak ada")
-    legacy_claim = CLAIM_WORKSPACE not in payload
 
     if payload.get("typ") != expected_type:
         # Refresh dipakai sebagai access (atau sebaliknya) = tolak.
@@ -205,11 +182,10 @@ def decode_token(settings: Settings, token: str, *,
     scope_raw = payload.get("scope") or ""
     return TokenClaims(
         subject=str(payload["sub"]),
-        workspace=str(workspace),
+        workspace=str(payload[CLAIM_WORKSPACE]),
         jti=str(payload["jti"]),
         token_type=str(payload["typ"]),
         scopes=tuple(s for s in str(scope_raw).split(" ") if s),
         issued_at=int(payload.get("iat") or 0),
         expires_at=int(payload.get("exp") or 0),
-        legacy_claim=legacy_claim,
     )
