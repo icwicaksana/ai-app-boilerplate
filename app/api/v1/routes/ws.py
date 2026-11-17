@@ -290,10 +290,11 @@ class _Connection:
                              "status": exc.status_code, "title": exc.title,
                              "detail": exc.message, "instance": "-"})
             return
-        # R13 (sisi WS): validasi penuh SEBELUM turn dibuat — tanpa ini turn
-        # yatim + error datang sebagai event, bukan penolakan bersih.
+        # v1.0 R13 (sisi WS): preflight PENUH sebelum turn dibuat — resolve
+        # + build agen + guard interrupt. Gagal = frame error penolakan
+        # bersih (tanpa turn yatim), paritas JSON pre-start HTTP.
         try:
-            thread_id = ctrl.validate_before_stream(req, self.identity)
+            thread_id, _config, agent = await ctrl.preflight(req, self.identity)
         except AppError as exc:
             await self._put({"type": "error", "code": exc.code,
                              "status": exc.status_code, "title": exc.title,
@@ -302,7 +303,7 @@ class _Connection:
         if not getattr(self.turns, "enabled", False):
             # Tanpa cache: direct seperti HTTP (tak bisa resume).
             self.run_task = asyncio.create_task(
-                self._run_chat_direct(ctrl, req))
+                self._run_chat_direct(ctrl, req, agent))
             return
         # v1.0 R4: WS chat lewat TurnManager — disconnect = pump berhenti,
         # produsen jalan terus, resume via turn_id (paritas HTTP).
@@ -313,7 +314,8 @@ class _Connection:
                 owner=self.identity.user,
                 first_event=StreamStarted(turn_id=turn_id).model_dump(
                     mode="json"),
-                events=ctrl.stream(req, self.identity, request_id="ws"),
+                events=ctrl.stream(req, self.identity, request_id="ws",
+                                   agent=agent),
                 on_event=self._approval_hook(thread_id, req.agent))
         except CacheUnavailable:
             await self._put({"type": "error", "code": "STORAGE_UNAVAILABLE",
@@ -340,16 +342,21 @@ class _Connection:
 
         return _hook
 
-    async def _run_chat_direct(self, ctrl: ChatController, req: ChatRequest) -> None:
+    async def _run_chat_direct(self, ctrl: ChatController, req: ChatRequest,
+                               agent) -> None:
         """Jalur tanpa cache: pompa langsung (konsumen = produsen).
 
         Di sini _record per event BENAR (R3 tak berlaku: tak ada TurnLog).
         Disconnect = run dibatalkan (tak bisa resume — sama seperti HTTP).
+        Agen sudah hasil preflight (build 1x); validasi ulang ringan untuk
+        thread_id hook.
         """
         thread_id = ""
         try:
             thread_id = ctrl.validate_before_stream(req, self.identity)
-            async for event in ctrl.stream(req, self.identity, request_id="ws"):
+            agen = ctrl.stream(req, self.identity, request_id="ws",
+                               agent=agent)
+            async for event in agen:
                 await self._put(event)
                 await self._record(event, thread_id, req.agent)
         except AppError as exc:

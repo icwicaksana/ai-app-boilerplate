@@ -17,7 +17,10 @@ class _FakeChat(ChatController):
     def validate_before_stream(self, req, identity):
         return "toko-a:budi:sess-1"
 
-    async def stream(self, req, identity, *, request_id="-"):
+    async def preflight(self, req, identity):
+        return "toko-a:budi:sess-1", {}, self
+
+    async def stream(self, req, identity, *, request_id="-", agent=None):
         yield {"thread_id": "toko-a:budi:sess-1", "request_id": request_id,
                "type": "result", "status": "completed",
                "output": {"reply": "ok"}, "interrupt": None}

@@ -75,7 +75,10 @@ def _conn(cache, *, monkeypatch, stream_events, record_calls=None):
         def validate_before_stream(self, req, identity):
             return "toko-a:budi:sess-1"
 
-        async def stream(self, req, identity, *, request_id="-"):
+        async def preflight(self, req, identity):
+            return "toko-a:budi:sess-1", {}, self
+
+        async def stream(self, req, identity, *, request_id="-", agent=None):
             for e in stream_events:
                 await asyncio.sleep(0)
                 yield e

@@ -72,19 +72,23 @@ async def stream_chat(
     _rl=Depends(rate_limit_dependency("chat", "RATE_LIMIT_CHAT_PER_MIN")),
 ) -> StreamingResponse:
     request_id = get_request_id(request)
-    # Validasi SEBELUM StreamingResponse: 400/403/404 jadi JSON biasa.
-    thread_id = ctrl.validate_before_stream(req, identity)
+    # v1.0 R13: preflight PENUH sebelum turn ada — resolve + build agen +
+    # guard interrupt. Gagal = JSON (400/403/404/409/502/503), TANPA turn
+    # yatim dan TANPA kontrak started-gantung (beda cache on/off).
+    thread_id, _config, agent = await ctrl.preflight(req, identity)
     on_event = _approval_hook(request, identity, thread_id, req.agent, request_id)
 
     if not turns.enabled:  # cache nonaktif → streaming langsung (tanpa resume)
-        return _direct_stream(req, identity, ctrl, request_id, on_event, request)
+        return _direct_stream(req, identity, ctrl, request_id, on_event,
+                              request, agent)
 
     turn_id = new_turn_id()
     try:
         await turns.start(
             workspace=identity.workspace, turn_id=turn_id, owner=identity.user,
             first_event=StreamStarted(turn_id=turn_id).model_dump(mode="json"),
-            events=ctrl.stream(req, identity, request_id=request_id),
+            events=ctrl.stream(req, identity, request_id=request_id,
+                               agent=agent),
             on_event=on_event)  # v1.0 R3: hook di produsen
     except CacheUnavailable:
         # v1.0 S9: cache MATI di tengah (turns.enabled tapi tulis gagal) →
@@ -92,7 +96,8 @@ async def stream_chat(
         # bukan 500. Tanpa resume — klien diberi tahu via X-Degraded.
         log.warning("chat degradasi direct (turn log tak bisa ditulis)")
         report_degraded("turns", "create_gagal", request=request)
-        return _direct_stream(req, identity, ctrl, request_id, on_event, request)
+        return _direct_stream(req, identity, ctrl, request_id, on_event,
+                              request, agent)
 
     async def tail():
         token = request_id_ctx.set(request_id)
@@ -157,13 +162,16 @@ async def resume_stream(
 
 def _direct_stream(req: ChatRequest, identity: ThreadIdentity,
                    ctrl: ChatController, request_id: str,
-                   on_event: OnEvent, request: Request) -> StreamingResponse:
+                   on_event: OnEvent, request: Request,
+                   agent) -> StreamingResponse:
     """Fallback tanpa cache: perilaku v0.4 (tak bisa resume)."""
 
     async def event_gen():
         token = request_id_ctx.set(request_id)
         try:
-            async for event in ctrl.stream(req, identity, request_id=request_id):
+            stream = ctrl.stream(req, identity, request_id=request_id,
+                                 agent=agent)
+            async for event in stream:
                 if await request.is_disconnected():
                     break
                 await on_event(event)

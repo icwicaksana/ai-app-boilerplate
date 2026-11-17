@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
 
 from langchain_core.messages import HumanMessage
@@ -74,18 +75,34 @@ def _breaker_for(spec_name: str, tool_name: str) -> CircuitBreaker:
     return breaker
 
 
-def _wrap_tool(spec_name: str, orig, *, failures: list,
+#: Daftar failures milik INVOKASI berjalan (v1.0 R15). `delegate()` memasang
+#: list segar tiap dipanggil dan melepasnya di finally — kegagalan tool
+#: invokasi N tak pernah bocor ke laporan invokasi N+1 (bug v0.9: list
+#: build-time dibagi semua invokasi). ContextVar = aman untuk invokasi
+#: konkuren (tiap task punya konteks sendiri).
+_current_failures: ContextVar[list[ToolFailure] | None] = ContextVar(
+    "subagent_failures", default=None)
+
+
+def _wrap_tool(spec_name: str, orig, *,
                max_attempts: int = 3, base_delay_s: float = 0.5,
                attempt_timeout_s: float = 10.0,
                sleep: Callable[[float], Awaitable[None]] | None = None):
     """Bungkus tool child dengan retry transien + pencatatan kegagalan.
 
     Nama dan skema dipertahankan (middleware limit cocok by-name).
-    Kegagalan dicatat ke `failures` milik run ini, lalu di-raise lagi agar
-    loop agen melihat ToolMessage error (loop = retry lapis kedua).
+    Kegagalan dicatat ke `_current_failures` milik invokasi berjalan, lalu
+    di-raise lagi agar loop agen melihat ToolMessage error (loop = retry
+    lapis kedua). Di luar invokasi delegate (tak ada list terpasang):
+    tetap raise tanpa mencatat.
     """
     name = str(getattr(orig, "name", "?"))
     breaker = _breaker_for(spec_name, name)
+
+    def _record(failure: ToolFailure) -> None:
+        fails = _current_failures.get()
+        if fails is not None:
+            fails.append(failure)
 
     async def run(**kwargs: Any) -> Any:
         async def call() -> Any:
@@ -98,13 +115,13 @@ def _wrap_tool(spec_name: str, orig, *, failures: list,
                 attempt_timeout_s=attempt_timeout_s, sleep=sleep)
             return result
         except BreakerOpen as exc:
-            failures.append(ToolFailure(
+            _record(ToolFailure(
                 tool=name, error_class="breaker_open", attempts=0,
                 detail=str(exc)))
             raise
         except Exception as exc:  # noqa: BLE001 - klasifikasi + catat
             cls = error_class(exc)
-            failures.append(ToolFailure(
+            _record(ToolFailure(
                 tool=name, error_class=cls,
                 attempts=1 if cls == "permanent" else max_attempts,
                 detail=f"{type(exc).__name__}"))
@@ -217,9 +234,7 @@ def make_subagent_tool(
 
         model = get_llm(settings, session_id, streaming=False)
 
-    failures: list[ToolFailure] = []
-    wrapped = [_wrap_tool(spec_name, by_name[n], failures=failures,
-                          sleep=_sleep)
+    wrapped = [_wrap_tool(spec_name, by_name[n], sleep=_sleep)
                for n in spec.tools]
     child = create_agent(
         name=f"subagent-{spec.name}",
@@ -250,50 +265,62 @@ def make_subagent_tool(
         prompt = brief.task
         if brief.constraints:
             prompt += "\nSyarat:\n- " + "\n- ".join(brief.constraints)
+        fails: list[ToolFailure] = []  # v1.0 R15: segar per invokasi
+        token = _current_failures.set(fails)
         try:
-            async with asyncio.timeout(eff_timeout):
-                result = await child.ainvoke(
-                    {"messages": [HumanMessage(content=prompt)]},
-                    config={"tags": [SUBAGENT_TAG, f"subagent:{spec.name}"]},
-                )
-        except TimeoutError:
-            ms = int((time.perf_counter() - started) * 1000)
-            log.warning("subagent %s timeout (%ds)", spec.name, eff_timeout)
-            return Report(status="timeout", failures=(
-                ToolFailure(tool="*", error_class="timeout", attempts=1,
-                            detail=f"melebihi {eff_timeout} dtk"),),
-                          ms=ms).to_text()
-        except Exception as exc:  # noqa: BLE001 - fail-soft ke Report
-            ms = int((time.perf_counter() - started) * 1000)
-            log.exception("subagent %s gagal", spec.name)
-            fails = tuple(failures) or (ToolFailure(
-                tool="*", error_class=error_class(exc), attempts=1,
-                detail=type(exc).__name__),)
-            return Report(status="failed", failures=fails, ms=ms).to_text()
-
-        ms = int((time.perf_counter() - started) * 1000)
-        answer = _last_ai_text(result)
-        tokens = _sum_usage(result)
-        fails = list(failures)
-        if tokens > max_tokens:
-            fails.append(ToolFailure(
-                tool="*", error_class="budget", attempts=1,
-                detail=f"{tokens} token melebihi anggaran {max_tokens}"))
-        if not answer and not fails:
-            fails.append(ToolFailure(
-                tool="*", error_class="permanent", attempts=1,
-                detail="respons kosong"))
-        if not answer or fails:
-            status = "failed" if not answer else "partial"
-        else:
-            status = "ok"
-        log.info("subagent_end name=%s status=%s tokens=%d ms=%d",
-                 spec.name, status, tokens, ms)
-        return Report(status=status, answer=answer,
-                      failures=tuple(fails), tokens_used=tokens,
-                      ms=ms).to_text()
+            return await _delegate_run(
+                spec, child, prompt, eff_timeout, max_tokens, started, fails)
+        finally:
+            _current_failures.reset(token)
 
     return delegate
+
+
+async def _delegate_run(spec, child, prompt: str, eff_timeout: float,
+                        max_tokens: int, started: float,
+                        fails: list[ToolFailure]) -> str:
+    """Badan invokasi delegate (dipisah agar set/reset contextvar rapi)."""
+    try:
+        async with asyncio.timeout(eff_timeout):
+            result = await child.ainvoke(
+                {"messages": [HumanMessage(content=prompt)]},
+                config={"tags": [SUBAGENT_TAG, f"subagent:{spec.name}"]},
+            )
+    except TimeoutError:
+        ms = int((time.perf_counter() - started) * 1000)
+        log.warning("subagent %s timeout (%ds)", spec.name, eff_timeout)
+        return Report(status="timeout", failures=(
+            ToolFailure(tool="*", error_class="timeout", attempts=1,
+                        detail=f"melebihi {eff_timeout} dtk"),),
+                      ms=ms).to_text()
+    except Exception as exc:  # noqa: BLE001 - fail-soft ke Report
+        ms = int((time.perf_counter() - started) * 1000)
+        log.exception("subagent %s gagal", spec.name)
+        inv_fails = tuple(fails) or (ToolFailure(
+            tool="*", error_class=error_class(exc), attempts=1,
+            detail=type(exc).__name__),)
+        return Report(status="failed", failures=inv_fails, ms=ms).to_text()
+
+    ms = int((time.perf_counter() - started) * 1000)
+    answer = _last_ai_text(result)
+    tokens = _sum_usage(result)
+    if tokens > max_tokens:
+        fails.append(ToolFailure(
+            tool="*", error_class="budget", attempts=1,
+            detail=f"{tokens} token melebihi anggaran {max_tokens}"))
+    if not answer and not fails:
+        fails.append(ToolFailure(
+            tool="*", error_class="permanent", attempts=1,
+            detail="respons kosong"))
+    if not answer or fails:
+        status = "failed" if not answer else "partial"
+    else:
+        status = "ok"
+    log.info("subagent_end name=%s status=%s tokens=%d ms=%d",
+             spec.name, status, tokens, ms)
+    return Report(status=status, answer=answer,
+                  failures=tuple(fails), tokens_used=tokens,
+                  ms=ms).to_text()
 
 
 def _last_ai_text(result: Any) -> str:

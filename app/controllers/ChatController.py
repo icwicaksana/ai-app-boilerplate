@@ -65,8 +65,39 @@ class ChatController(BaseController):
             agent_cls=agent_cls, missing_retriever="raise_embedding",
         )
 
+    async def _has_pending_interrupt(self, agent, config: dict) -> bool:
+        """True bila thread menunggu approval. Tak terbaca → False.
+
+        Dibagi preflight (raise JSON pre-start) dan stream() (event pre-run).
+        """
+        graph = getattr(agent, "graph", None)
+        if graph is None or self.checkpointer is None:
+            return False
+        try:
+            snap = await graph.aget_state(config)
+        except Exception:
+            log.debug("cek interrupt pre-chat dilewati (state tak terbaca)",
+                      exc_info=True)
+            return False
+        return bool(getattr(snap, "interrupts", None))
+
+    async def preflight(self, req: ChatRequest, identity: ThreadIdentity):
+        """Validasi PENUH sebelum turn dibuat (v1.0 R13).
+
+        Resolve + agen-ada + build-agen (termasuk binding LLM/RAG — gagal
+        di sini = JSON 502/503, bukan turn yatim berisi error) + guard
+        interrupt (409). Return (thread_id, config, agent) — teruskan agent
+        ke stream() agar build hanya 1x.
+        """
+        thread_id, config = self.resolve_thread_config(identity, req.thread_id)
+        self._ensure_agent(req.agent)
+        agent = self._agent_for(thread_id, req.agent)
+        if await self._has_pending_interrupt(agent, config):
+            raise ThreadAwaitingApprovalError(thread_id)
+        return thread_id, config, agent
+
     async def stream(self, req: ChatRequest, identity: ThreadIdentity, *,
-                     request_id: str = "-"):
+                     request_id: str = "-", agent=None):
         started = time.perf_counter()
         terminal = "completed"  # status AKHIR untuk log (jangan selalu completed)
         try:
@@ -84,38 +115,32 @@ class ChatController(BaseController):
                                   status=exc.status_code, code=exc.code,
                                   request_id=request_id)}
             return
-        try:
-            agent = self._agent_for(thread_id, req.agent)
-        except UpstreamAIError as exc:
-            terminal = "error"
-            log.exception("chat init gagal (upstream)")
-            yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
-                detail=exc.message, title=exc.title, status=exc.status_code,
-                code=exc.code, request_id=request_id)}
-            return
-        except Exception as exc:
-            terminal = "error"
-            log.exception("chat init gagal")
-            yield {"thread_id": thread_id, "request_id": request_id, **stream_error_from(
-                exc, request_id=request_id)}
-            return
-        # v1.0 R2-guard: tolak input baru di thread yang menunggu approval
-        # (409 sebagai event pre-run, konsisten pola di atas). Tanpa graph /
-        # state tak terbaca → lewati (kompatibel fake + degradasi).
-        try:
-            graph = getattr(agent, "graph", None)
-            snap = await graph.aget_state(config) if graph is not None else None
-            if getattr(snap, "interrupts", None):
+        if agent is None:
+            try:
+                agent = self._agent_for(thread_id, req.agent)
+            except UpstreamAIError as exc:
                 terminal = "error"
-                exc = ThreadAwaitingApprovalError(thread_id)
-                yield {"thread_id": thread_id, "request_id": request_id,
-                       **stream_error(detail=exc.message, title=exc.title,
-                                      status=exc.status_code, code=exc.code,
-                                      request_id=request_id)}
+                log.exception("chat init gagal (upstream)")
+                yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
+                    detail=exc.message, title=exc.title, status=exc.status_code,
+                    code=exc.code, request_id=request_id)}
                 return
-        except Exception:
-            log.debug("cek interrupt pre-chat dilewati (state tak terbaca)",
-                      exc_info=True)
+            except Exception as exc:
+                terminal = "error"
+                log.exception("chat init gagal")
+                yield {"thread_id": thread_id, "request_id": request_id, **stream_error_from(
+                    exc, request_id=request_id)}
+                return
+        # v1.0 R2-guard (defense in depth; route/WS sudah preflight): tolak
+        # input baru di thread yang menunggu approval (409 pre-run).
+        if await self._has_pending_interrupt(agent, config):
+            terminal = "error"
+            exc = ThreadAwaitingApprovalError(thread_id)
+            yield {"thread_id": thread_id, "request_id": request_id,
+                   **stream_error(detail=exc.message, title=exc.title,
+                                  status=exc.status_code, code=exc.code,
+                                  request_id=request_id)}
+            return
         try:
             async for event in agent.stream_agent(req.input, config):
                 if event.get("type") == "error":
