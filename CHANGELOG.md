@@ -2,6 +2,46 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v0.9.0 (2026-11-17) — Skills on-demand + Subagents
+
+**Ringkasan.** Prosedur pindah dari system prompt ke file skill yang dimuat
+sesuai kebutuhan (hemat ~53% token prompt pada 6 skill), dan tugas riset
+berat bisa didelegasikan ke subagent berkonteks terpisah dengan kontrak
+Brief/Report. Kedua flag default **mati** — perilaku saat mati byte-identik
+v0.8.3 (dikunci snapshot hash). Tanpa migrasi DB, tanpa event SSE baru.
+
+**Skills.** Format `skills/<nama>/SKILL.md` + frontmatter
+`name/description/when_to_use/tags` (E01–E08, `SKILLS_STRICT` gagalkan boot
+bila rusak). Indeks 1-baris di akhir prompt (prefix-cache aman); tool
+`load_skill`/`read_skill_file` factory-bound ke registry boot; body di-quoting
+sebagai DATA (`app/core/untrusted.py`); dikecualikan dari pembersihan konteks
++ limit 10 (dulu 5). Lint: `python -m scripts.skills_lint`.
+
+**Subagents.** Roster statis di kode (`SUBAGENTS`); LLM hanya pilih kapan/
+siapa/Brief. `make_subagent_tool()` satu-satunya jalur sah: tag `subagent`,
+`disable_streaming`, rem tool-call, tolak tool approval-gated dan rekursi
+saat build (LOUD). Retry 3× transien + circuit breaker proses-lifetime;
+timeout 10s/attempt, 45s/run. Report `ok/partial/failed/timeout` — gagal
+tak boleh terlihat sukses. Nama tool `subagent__<nama>` (titik dua ditolak
+API OpenAI). Contoh hidup: `demo-stok`.
+
+**Keamanan & ketahanan.** `StreamPolicy` (filter event by tag, fail-closed) +
+regresi kebocoran token pada graph nyata. Factory agent tunggal menutup
+`bound_tools=[]` diam-diam di resume/fork (termasuk sumbu memori).
+`durability="sync"` jalur chat. Detail error 500 digenerikkan ke klien
+(`public_error_detail`). Health `checks.skills` fail-open.
+
+**Eval live** (`tests/integration/test_eval_skills_live.py`, 6 skill,
+deepseek-v4.1-flash): recall=1.00, presisi=1.00, 0 load di 18 adversarial,
+savings=0.53, keyword=1.00.
+
+**Docs.** `docs/SKILLS-V09.md` (operator), `docs/UPGRADE.md` (naik versi +
+rollback), `docs/FORK.md` (zona fork vs inti), `docs/V09-PLAN.md` (desain +
+keputusan K1–K12).
+
+**Upgrade.** Tarik tag, install (`PyYAML` baru), deploy — perilaku identik
+sampai flag dinyalakan. Rollback = deploy tag lama (tanpa state tersisa).
+
 > **Glosarium istilah (sejak v0.8.1).** Entri historis v0.3–v0.8 memakai
 > istilah **`tenant`**. Sejak v0.8.1 istilah itu diganti **`workspace`**
 > dengan semantik sama. Alasan: boilerplate ini **di-fork per klien**
