@@ -59,7 +59,11 @@ def test_delegasi_terikat_dan_indeks_di_akhir(monkeypatch):
         monkeypatch=monkeypatch)
     assert "subagent__cek" in agent.bound_tools
     prompt = captured["system_prompt"]
-    assert prompt.rstrip().rsplit("\n", 1)[-1].startswith("- cek:")
+    # Roster template berisi demo-stok + spec tes; indeks terurut alfabetis.
+    assert "- cek:" in prompt and "- demo-stok:" in prompt
+    assert prompt.index("- cek:") < prompt.index("- demo-stok:")
+    last = prompt.rstrip().rsplit("\n", 1)[-1]
+    assert last.startswith("- demo-stok:"), last
     assert "subagent__<nama>" in prompt
 
 
@@ -75,7 +79,11 @@ def test_flag_mati_roster_ada_tak_tersentuh(monkeypatch):
 
 def test_roster_kosong_flag_nyala_tak_tersentuh(monkeypatch):
     """Guard ganda sisi roster: flag nyala tapi roster kosong → jalur mati."""
-    assert SUBAGENTS == {}
+    import app.agents.subagents.registry as _reg
+
+    # Roster template berisi demo-stok; kosongkan untuk skenario ini.
+    # (build() import SUBAGENTS di dalam fungsi → patch berlaku.)
+    monkeypatch.setattr(_reg, "SUBAGENTS", {})
     agent, captured = _build_capture(
         "example_chat", settings=_settings(SUBAGENTS_ENABLED=True),
         monkeypatch=monkeypatch)

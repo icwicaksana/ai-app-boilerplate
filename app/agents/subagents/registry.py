@@ -12,6 +12,7 @@ nama di SUBAGENTS. Pola registry datar seperti ToolRegistry.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -31,9 +32,21 @@ class SubagentSpec:
 
 SUBAGENTS: dict[str, SubagentSpec] = {}
 
+#: Nama spec → nama tool `subagent__<nama>` harus lolos validator OpenAI
+#: (`^[a-zA-Z0-9_-]+$`). Lebih longgar dari E01 skill (boleh underscore
+#: dan huruf besar) karena nama spec bukan path direktori.
+SPEC_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
+
 
 def register(spec: SubagentSpec) -> SubagentSpec:
-    """Daftarkan spec. Nama duplikat = ValueError (fail-fast saat import)."""
+    """Daftarkan spec. Nama duplikat/tak valid = ValueError (fail-fast)."""
+    if not SPEC_NAME_RE.match(spec.name):
+        raise ValueError(
+            f"nama subagent tak valid: {spec.name!r} "
+            f"(huruf/angka/dash/underscore, maks 63).")
+    if not spec.description.strip() or not spec.when_to_use.strip():
+        raise ValueError(f"subagent '{spec.name}': description dan "
+                         f"when_to_use wajib diisi.")
     if spec.name in SUBAGENTS:
         raise ValueError(f"subagent '{spec.name}' sudah terdaftar.")
     SUBAGENTS[spec.name] = spec

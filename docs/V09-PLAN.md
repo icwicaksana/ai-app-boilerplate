@@ -39,7 +39,7 @@ setiap fork klien mewarisi rencana ini dan bisa menelusuri alasan keputusan.
 | `app/agents/tools/DelegationTool.py` | baru |
 | `app/agents/subagents/` | baru |
 | `app/schemas/subagent.py` | baru |
-| `app/scripts/{new_skill,new_subagent,skills_lint}.py` | baru |
+| `app/scripts/{new_skill,new_subagent,skills_lint}.py` | baru (pindah ke `scripts/` ikut konvensi repo: rename_audit dkk di akar) |
 | `app/controllers/runner.py` | ubah |
 | `app/controllers/ChatController.py` | ubah |
 | `app/core/approvals.py` | ubah |
