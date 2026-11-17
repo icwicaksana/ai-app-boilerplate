@@ -21,10 +21,8 @@ redis[hiredis]     # client async; Valkey wire-compatible (ADR-13)
 pwdlib[argon2]     # hash password Argon2id (passlib tak dirawat lagi)
 PyJWT              # JWT HS256, alg dipin
 
-# Test
-pytest
-pytest-asyncio
-fakeredis          # unit test cache tanpa Valkey (integrasi pakai Valkey asli)
+# Test/dev ADA DI requirements.dev.txt (install: lock runtime + dev lock).
+# Jangan tambah paket test di sini — Dockerfile hanya install lock runtime.
 
 # Observability Phoenix (opsional — app jalan tanpanya jika PHOENIX_ENABLED=false)
 # arize-phoenix-otel = paket ringan khusus kirim trace (pola resmi docs).

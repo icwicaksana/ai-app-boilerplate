@@ -39,14 +39,3 @@ class JobResponse(BaseModel):
     )
     interrupt: dict | None = None
     meta: ResponseMeta = Field(default_factory=ResponseMeta)
-
-
-class ResumeRequest(BaseModel):
-    approved: bool = Field(examples=[True])
-    values: dict[str, Any] = Field(default_factory=dict)
-
-
-class ResumeResponse(BaseModel):
-    thread_id: str
-    status: JobStatus = "completed"
-    output: dict[str, Any] = Field(default_factory=dict)

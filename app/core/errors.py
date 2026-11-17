@@ -47,16 +47,6 @@ class UpstreamAIError(AppError):
                          title="AI Upstream Error")
 
 
-class ResumeNotAvailableError(AppError):
-    def __init__(self):
-        super().__init__(
-            "Resume/HITL belum tersedia di v0 (HITL_ENABLED=false). Slot untuk v1.",
-            status_code=501,
-            code="RESUME_NOT_IMPLEMENTED",
-            title="Not Implemented",
-        )
-
-
 class StorageUnavailableError(AppError):
     def __init__(self, message: str = "Penyimpanan (Postgres) belum siap."):
         super().__init__(message, status_code=503, code="STORAGE_UNAVAILABLE",

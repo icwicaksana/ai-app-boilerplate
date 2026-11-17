@@ -294,7 +294,7 @@ Alur: `started` -> `token`* / `thinking`* / `tool_start` / `tool_end` -> `result
 
 | `POST /api/v1/jobs/{agent_name}` | Pipeline sync. `{"payload","thread_id?"}` -> `{"thread_id","status","output"}` |
 
-| `POST /api/v1/jobs/{thread_id}/resume` | STUB. Selalu `501`. Slot untuk HITL (`Command(resume=...)`). |
+> Resume approval: `POST /api/v1/approvals/{id}/decide` (stub `resume` 501 dihapus di v1.0 — K1).
 
 
 
@@ -540,7 +540,7 @@ tolak start (fail-fast).
 
 * Memori tanpa tool cek-dulu (dedup via injeksi + instruksi; revisit bila duplikat nyata).
 
-* HITL OFF: middleware + `resume.py` hanya stub.
+* HITL OFF: middleware tidak dipasang (stub `resume.py` dihapus di v1.0).
 
 * Single-gateway LiteLLM (cabang direct dihapus sejak v0.2).
 

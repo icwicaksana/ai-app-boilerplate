@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+# v1.0 B1: pin digest (bukan hanya tag) — build reproduksibel, base CVE terlacak.
+# Tag manusiawi: python:3.12-slim. Bump digest = keputusan sadar + rebuild + tests.
+FROM python:3.12-slim@sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -26,7 +28,10 @@ RUN pip install --no-cache-dir \
     "torch==${TORCH_VERSION}"
 
 COPY requirements.lock .
-RUN pip install --no-cache-dir -r requirements.lock
+# v1.0 B3: ARG TORCH_VERSION bukan kebebasan — harus sama dengan pin lock.
+# Tanpa assert ini, build ARG bisa menyimpang diam-diam dari lock teruji.
+RUN grep -q "^torch==${TORCH_VERSION}$" requirements.lock \
+    && pip install --no-cache-dir -r requirements.lock
 
 # Kode + MIGRASI. `migrations/` WAJIB: `rag_migrate` membaca
 # `<repo>/migrations/*.sql` relatif ke berkas modul — tanpa ini container

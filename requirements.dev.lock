@@ -1,0 +1,9 @@
+# LOCK DEV/TEST — diinstall DI ATAS requirements.lock:
+#   pip install -r requirements.lock -r requirements.dev.lock
+# Isi = closure dev minus closure runtime (pytest/pytest-asyncio/fakeredis
+# + deps eksklusifnya). Lihat Test/spike_v10/probe_deptree.py.
+fakeredis==2.40.0
+iniconfig==2.3.1
+pytest-asyncio==1.4.0
+pytest==9.1.1
+sortedcontainers==2.4.0

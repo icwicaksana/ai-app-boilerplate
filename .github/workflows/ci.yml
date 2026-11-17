@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (torch CPU dulu, cermin Dockerfile)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.15.0"
+          pip install -r requirements.lock -r requirements.dev.lock
+      - name: Unit tests
+        run: python -m pytest tests/ -q -p no:cacheprovider -m "not integration"
+      - name: Guard CI (anti-tenant)
+        run: python -m scripts.rename_audit --guard
+      - name: Lint skills
+        run: python -m scripts.skills_lint
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: CVE audit (runtime lock)
+        # filelock 3.32.7: 13 CVE tanpa fix 3.x; fix 4.x melanggar bound
+        # litellm<4.0 (bound vestigial — litellm tak mengimpor filelock sama
+        # sekali, diverifikasi grep v1.0). Risiko: lock file lokal saat unduh
+        # model (penyerang lokal). SUNSET: bump ke 4.x saat litellm melepas
+        # bound <4.0, lalu hapus daftar ignore ini.
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.lock \
+            --ignore-vuln CVE-2026-112907 --ignore-vuln CVE-2026-112908 \
+            --ignore-vuln CVE-2026-112909 --ignore-vuln CVE-2026-112910 \
+            --ignore-vuln CVE-2026-112911 --ignore-vuln CVE-2026-112912 \
+            --ignore-vuln CVE-2026-112913 --ignore-vuln CVE-2026-112915 \
+            --ignore-vuln CVE-2026-112935 --ignore-vuln CVE-2026-112936 \
+            --ignore-vuln CVE-2026-112938 --ignore-vuln CVE-2026-112939 \
+            --ignore-vuln CVE-2026-112940
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build (assert TORCH pin + digest di dalam)
+        run: docker build -t ai-app-boilerplate:ci .
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ai-app-boilerplate:ci
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json

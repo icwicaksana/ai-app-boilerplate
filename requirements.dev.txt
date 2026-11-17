@@ -1,0 +1,6 @@
+# v1.0 — dependensi DEV/TEST (langsung). Lock: requirements.dev.lock.
+# Install dev: pip install -r requirements.lock -r requirements.dev.lock
+# JANGAN dipakai Dockerfile (image prod = lock runtime saja).
+pytest
+pytest-asyncio
+fakeredis          # unit test cache tanpa Valkey (integrasi pakai Valkey asli)

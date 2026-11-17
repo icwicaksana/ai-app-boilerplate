@@ -9,7 +9,6 @@ from app.api.v1.routes import (
     documents,
     health,
     jobs,
-    resume,
     threads,
     ws,
 )
@@ -21,6 +20,5 @@ router.include_router(chat.router)
 router.include_router(ws.router)
 router.include_router(approvals.router)
 router.include_router(jobs.router)
-router.include_router(resume.router)
 router.include_router(threads.router)
 router.include_router(documents.router)
