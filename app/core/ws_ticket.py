@@ -37,6 +37,10 @@ class WsIdentity:
     workspace: str
     user: str
     thread_id: str | None = None
+    # v1.0 S6: scope diikat ke ticket (gate chat == HTTP) + jti untuk cek
+    # revoke berkala (logout di tengah koneksi memutus WS).
+    scopes: tuple[str, ...] = ()
+    jti: str | None = None
 
 
 class TicketStore:
@@ -45,14 +49,17 @@ class TicketStore:
         self.ttl = ttl_seconds
 
     async def issue(self, *, workspace: str, user: str,
-                    thread_id: str | None = None) -> tuple[str, int]:
+                    thread_id: str | None = None,
+                    scopes: tuple[str, ...] = (),
+                    jti: str | None = None) -> tuple[str, int]:
         """Terbitkan ticket baru. Raise CacheUnavailable bila cache mati."""
         if self.cache is None:
             raise CacheUnavailable("cache nonaktif — WebSocket tidak tersedia")
         ticket = secrets.token_urlsafe(32)
         await self.cache.set_json(
             ticket_key(ticket),
-            {"workspace": workspace, "user": user, "thread_id": thread_id},
+            {"workspace": workspace, "user": user, "thread_id": thread_id,
+             "scopes": list(scopes), "jti": jti},
             ttl_seconds=self.ttl)
         return ticket, self.ttl
 
@@ -74,9 +81,13 @@ class TicketStore:
             return None
         if not isinstance(data, dict) or not data.get("workspace") or not data.get("user"):
             return None
+        raw_scopes = data.get("scopes") or []
+        scopes = tuple(str(s) for s in raw_scopes) if isinstance(raw_scopes, list) else ()
         return WsIdentity(workspace=str(data["workspace"]), user=str(data["user"]),
                           thread_id=(str(data["thread_id"])
-                                     if data.get("thread_id") else None))
+                                     if data.get("thread_id") else None),
+                          scopes=scopes,
+                          jti=(str(data["jti"]) if data.get("jti") else None))
 
 
 def origin_allowed(origin: str | None, allowed: list[str]) -> bool:

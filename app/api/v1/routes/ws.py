@@ -26,10 +26,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
 from app.controllers.ChatController import ChatController
+from app.core.auth import is_revoked, require_scope
 from app.core.config import Settings, get_settings
 from app.core.dependencies import get_chat_controller, get_thread_identity
-from app.core.errors import AppError
+from app.core.errors import AppError, RateLimitedError, StorageUnavailableError
 from app.core.logging import get_logger
+from app.core.ratelimit import RateLimiter
 from app.core.threads import ThreadIdentity
 from app.core.turns import TurnManager
 from app.core.ws_ticket import TicketStore, origin_allowed
@@ -56,9 +58,22 @@ async def create_ticket(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     """Terbitkan ticket sekali pakai untuk handshake WS."""
+    from app.core.dependencies import get_current_claims
+
     cache = getattr(request.app.state, "cache", None)
+    # v1.0 S6: ticket = gerbang WS — batasi per user + wajib scope chat.
+    # (Router-level dep tak dipakai: ws_chat handshake tanpa Bearer.)
+    claims = await get_current_claims(request, settings, cache)
+    require_scope(claims, "chat")
+    decision = await RateLimiter(cache).check(
+        scope="ws_ticket", workspace=identity.workspace,
+        subject=identity.user, limit=settings.WS_TICKET_PER_MIN)
+    if not decision.allowed:
+        raise RateLimitedError(decision.retry_after, decision.limit)
     store = TicketStore(cache, settings.WS_TICKET_TTL_SECONDS)
-    ticket, ttl = await store.issue(workspace=identity.workspace, user=identity.user)
+    ticket, ttl = await store.issue(workspace=identity.workspace,
+                                    user=identity.user,
+                                    scopes=claims.scopes, jti=claims.jti)
     return {"ticket": ticket, "expires_in": ttl,
             "ws_url": f"{settings.API_V1_PREFIX}/ws/chat?ticket={ticket}",
             "subprotocol": SUBPROTOCOL}
@@ -91,13 +106,24 @@ async def ws_chat(websocket: WebSocket) -> None:
 # --- internal ---
 
 def _controller_for(ws: WebSocket, settings: Settings) -> ChatController:
-    """Bangun controller dari app.state (tanpa dependency injection manual)."""
-    from app.core.dependencies import get_chat_runner
+    """Bangun controller IDENTIK dengan jalur HTTP (v1.0 S7).
 
-    state = ws.app.state
-    return ChatController(settings, getattr(state, "checkpointer", None),
-                          get_chat_runner(), store=getattr(state, "store", None),
-                          skills=getattr(state, "skills", None))
+    Cermin get_chat_controller: guard checkpointer/store (503 eksplisit,
+    bukan jalan-diam-tanpa-persistensi) + wiring pool/rag/skills yang sama
+    (rag_chat via WS sebelumnya selalu kehilangan retriever).
+    """
+    from app.core.dependencies import (
+        _optional_pool,
+        _persistence,
+        get_chat_runner,
+        get_rag_clients,
+    )
+
+    checkpointer, store = _persistence(ws)  # type: ignore[arg-type]
+    return ChatController(settings, checkpointer, get_chat_runner(),
+                          store=store, pool=_optional_pool(ws),  # type: ignore[arg-type]
+                          rag=get_rag_clients(ws),  # type: ignore[arg-type]
+                          skills=getattr(ws.app.state, "skills", None))
 
 
 class _Connection:
@@ -172,16 +198,58 @@ class _Connection:
             if self.run_task and not self.run_task.done():
                 self.run_task.cancel()
                 await self._put({"type": "cancelled"})
-        elif kind == "chat":
-            await self._start_chat(msg)
-        elif kind == "resume":
-            await self._start_resume(msg)
+        elif kind in ("chat", "resume"):
+            # v1.0 S6: gate scope + rate-limit per pesan (paritas HTTP).
+            err = await self._gate(kind)
+            if err is not None:
+                await self._put(err)
+            elif kind == "chat":
+                await self._start_chat(msg)
+            else:
+                await self._start_resume(msg)
         else:
             await self._put({"type": "error", "code": "BAD_MESSAGE",
                              "status": 400, "title": "Bad Message",
                              "detail": f"Tipe pesan tak dikenal: {kind!r}",
                              "instance": "-"})
 
+    async def _gate(self, kind: str) -> dict | None:
+        """Frame error bila ditolak; None bila lolos. (v1.0 S6, teruji)."""
+        if "chat" not in (getattr(self.identity, "scopes", None) or ()):
+            return {"type": "error", "code": "FORBIDDEN", "status": 403,
+                    "title": "Forbidden",
+                    "detail": "Ticket tidak punya scope 'chat'.",
+                    "instance": "-"}
+        if not self.settings.RATE_LIMIT_ENABLED:
+            return None
+        limit = (self.settings.WS_CHAT_PER_MIN if kind == "chat"
+                 else self.settings.WS_RESUME_PER_MIN)
+        decision = await RateLimiter(self.cache).check(
+            scope=f"ws_{kind}", workspace=self.identity.workspace,
+            subject=self.identity.user, limit=limit)
+        if not decision.allowed:
+            log.warning("WS rate-limit ditolak kind=%s user=%s", kind,
+                        self.identity.user)
+            return {"type": "error", "code": "RATE_LIMITED", "status": 429,
+                    "title": "Too Many Requests",
+                    "detail": f"Terlalu banyak pesan {kind} "
+                              f"(limit {limit}/menit).",
+                    "retry_after": decision.retry_after, "instance": "-"}
+        return None
+
+    async def _auth_still_valid(self) -> bool:
+        """Cek revoke berkala (v1.0 S6): logout memutus WS ≤1 heartbeat.
+
+        Tanpa jti (ticket pra-v1.0, TTL 30 dtk) → anggap valid; koneksi
+        lama mati sendiri via watchdog umur maksimum.
+        """
+        jti = getattr(self.identity, "jti", None)
+        if not jti:
+            return True
+        try:
+            return not await is_revoked(self.cache, jti)
+        except Exception:
+            return True  # fail-open seperti HTTP (alarm di V1-B S9)
     async def _start_chat(self, msg: dict) -> None:
         if self.run_task and not self.run_task.done():
             await self._put({"type": "error", "code": "BUSY", "status": 409,
@@ -198,7 +266,14 @@ class _Connection:
                              "status": 422, "title": "Validation Error",
                              "detail": str(exc), "instance": "-"})
             return
-        ctrl = _controller_for(self.ws, self.settings)
+        ctrl = None
+        try:
+            ctrl = _controller_for(self.ws, self.settings)
+        except StorageUnavailableError as exc:
+            await self._put({"type": "error", "code": exc.code,
+                             "status": exc.status_code, "title": exc.title,
+                             "detail": exc.message, "instance": "-"})
+            return
         self.run_task = asyncio.create_task(self._run_chat(ctrl, req))
 
     async def _run_chat(self, ctrl: ChatController, req: ChatRequest) -> None:
@@ -285,6 +360,15 @@ class _Connection:
             try:
                 item = await asyncio.wait_for(self.queue.get(), timeout=interval)
             except asyncio.TimeoutError:
+                # v1.0 S6: cek revoke tiap heartbeat — logout memutus WS.
+                if not await self._auth_still_valid():
+                    log.info("WS ditutup: token di-revoke (logout) user=%s",
+                             self.identity.user)
+                    await self._send({"type": "auth_expired",
+                                      "reason": "token_revoked",
+                                      "close_code": CLOSE_AUTH_EXPIRED})
+                    await self.ws.close(code=CLOSE_AUTH_EXPIRED)
+                    return
                 await self._presence()  # refresh TTL presence
                 await self._send({"type": "heartbeat", "ts": int(time.time())})
                 continue

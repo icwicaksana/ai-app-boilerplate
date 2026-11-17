@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     WS_TICKET_TTL_SECONDS: int = Field(default=30, ge=5, le=300)
     WS_HEARTBEAT_SECONDS: int = Field(default=25, ge=5, le=120)
     WS_MAX_QUEUE: int = Field(default=256, ge=8, le=10_000)
+    # v1.0 S6: bucket rate-limit WS (terpisah dari HTTP karena transport beda).
+    WS_CHAT_PER_MIN: int = Field(default=20, ge=1, le=10000)
+    WS_RESUME_PER_MIN: int = Field(default=60, ge=1, le=10000)
+    WS_TICKET_PER_MIN: int = Field(default=10, ge=1, le=1000)
     # Batas umur koneksi: handshake hanya membuktikan identitas SEKALI, jadi
     # koneksi panjang wajib diputus berkala → klien minta ticket baru lalu
     # reconnect + `resume` (turn log) tanpa kehilangan token jawaban.
