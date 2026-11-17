@@ -48,8 +48,11 @@ class DocumentController:
 
     async def enqueue(self, *, workspace: str, user: str, filename: str,
                       blob: bytes, preset: str, ocr: str,
-                      lang: str = "id") -> dict:
+                      lang: str = "id", access_level: str = "public") -> dict:
         """Validasi → simpan blob → doc + job. Return {document_id, job_id}."""
+        from app.core.acl import normalize_level
+
+        access_level = normalize_level(access_level)
         if len(blob) > self.settings.RAG_MAX_UPLOAD_BYTES:
             raise PayloadTooLargeError(len(blob),
                                        self.settings.RAG_MAX_UPLOAD_BYTES)
@@ -78,7 +81,8 @@ class DocumentController:
                 title=filename or document_id, lang=lang,
                 size_bytes=len(blob), sha256=sha, parser="auto",
                 chunk_preset=preset, created_by=user,
-                meta={"mime": mime, "ocr": ocr}, document_id=document_id)
+                meta={"mime": mime, "ocr": ocr,
+                      "access_level": access_level}, document_id=document_id)
         except Exception:
             target.unlink(missing_ok=True)
             raise
@@ -210,12 +214,14 @@ class DocumentController:
         return await repo.get_job(self.pool, workspace=workspace, job_id=job_id)
 
     async def search(self, *, workspace: str, query: str, k: int,
-                     filters: dict | None, clients) -> dict:
+                     filters: dict | None, clients,
+                     clearance: str = "public") -> dict:
         """Debug retrieval: HybridRetriever penuh (workspace-bound, D2)."""
         from app.infra.rag.factory import retriever_for_workspace
 
         retriever = retriever_for_workspace(
-            self.settings, clients, self.pool, workspace=workspace)
+            self.settings, clients, self.pool, workspace=workspace,
+            clearance=clearance)
         res = await retriever.search(query, k=k, filters=filters)
         trace = res.get("trace") or {}
         counts = trace.get("counts", {})

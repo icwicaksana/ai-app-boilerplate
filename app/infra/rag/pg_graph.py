@@ -282,7 +282,10 @@ class PgGraphStore:
         if bad:
             raise ValueError(f"kunci filter graph tak dikenal: {sorted(bad)} "
                              f"(v0.8: {sorted(GRAPH_FILTER_KEYS)} saja)")
-        return " AND e.access_level = %s", [str(filters["access_level"])]
+        # v1.0 G6: IN-list (kolom NOT NULL — tanpa COALESCE).
+        val = filters["access_level"]
+        levels = (list(val) if isinstance(val, (list, tuple, set)) else [val])
+        return " AND e.access_level = ANY(%s)", [[str(v) for v in levels]]
 
     async def expand(self, seeds: list[str], *, k: int,
                      filters: dict[str, Any] | None = None,
@@ -324,6 +327,9 @@ class PgGraphStore:
                     # (defense-in-depth atas skew edge-vs-chunk/doc, mis.
                     # ACL berubah pasca-ingest atau data pra-backfill-021).
                     acl = (filters or {}).get("access_level")
+                    if acl is not None and not isinstance(
+                            acl, (list, tuple, set)):
+                        acl = [acl]
                     names = await self._fetch_names(
                         conn, {n for p in paths for n in p["nodes"]})
                     titles = await self._fetch_titles(
@@ -460,7 +466,7 @@ class PgGraphStore:
         return {r["norm"]: r["name"] for r in await cur.fetchall()}
 
     async def _fetch_titles(self, conn, doc_ids: set,
-                              acl: str | None = None) -> dict[str, str]:
+                              acl: list | None = None) -> dict[str, str]:
         if not doc_ids:
             return {}
         if acl is None:
@@ -474,12 +480,12 @@ class PgGraphStore:
             # public hilang total.)
             cur = await conn.execute(
                 "SELECT id, title FROM documents WHERE workspace = %s AND id = ANY(%s)"
-                " AND COALESCE(meta->>'access_level', 'public') = %s",
-                (self._workspace, list(doc_ids), str(acl)))
+                " AND COALESCE(meta->>'access_level', 'public') = ANY(%s)",
+                (self._workspace, list(doc_ids), [str(a) for a in acl]))
         return {str(r["id"]): r["title"] for r in await cur.fetchall()}
 
     async def _fetch_contents(self, conn, row_ids: set,
-                              acl: str | None = None) -> dict[str, str]:
+                              acl: list | None = None) -> dict[str, str]:
         """Isi chunk provenance per chunk_row_id (G2 union lengkap, 1 query)."""
         if not row_ids:
             return {}
@@ -490,8 +496,8 @@ class PgGraphStore:
         else:
             cur = await conn.execute(
                 "SELECT id, content FROM chunks WHERE workspace = %s AND id = ANY(%s)"
-                " AND COALESCE(metadata->>'access_level', 'public') = %s",
-                (self._workspace, list(row_ids), str(acl)))
+                " AND COALESCE(meta->>'access_level', 'public') = ANY(%s)",
+                (self._workspace, list(row_ids), [str(a) for a in acl]))
         return {str(r["id"]): r["content"] for r in await cur.fetchall()}
 
     def _to_hits(self, paths: list[dict], names: dict[str, str],

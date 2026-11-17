@@ -66,7 +66,8 @@ class AuthController(BaseController):
             raise UnauthenticatedError(_GENERIC_LOGIN_FAIL)
 
         scopes = tuple(s for s in str(user.get("scopes") or "").split() if s)
-        pair = self._issue_pair(workspace=workspace, user=username, scopes=scopes)
+        pair = self._issue_pair(workspace=workspace, user=username, scopes=scopes,
+                                clearance=str(user.get("clearance") or "public"))
         await users.mark_login(self.pool, int(user["id"]))
         self.log_done("auth login", request_id=request_id,
                       thread_id="-", agent="-", status="completed", started=started)
@@ -84,7 +85,8 @@ class AuthController(BaseController):
             raise InvalidTokenError("User tidak aktif.")
         scopes = tuple(s for s in str(user.get("scopes") or "").split() if s)
         pair = self._issue_pair(workspace=claims.workspace, user=claims.subject,
-                                scopes=scopes)
+                                scopes=scopes,
+                                clearance=str(user.get("clearance") or "public"))
         log.info("refresh ok request_id=%s jti_lama=%s", request_id, claims.jti)
         return pair
 
@@ -109,15 +111,17 @@ class AuthController(BaseController):
     def me(self, claims: TokenClaims) -> MeResponse:
         return MeResponse(workspace=claims.workspace, user=claims.subject,
                           scopes=list(claims.scopes),
-                          expires_at=claims.expires_at)
+                          expires_at=claims.expires_at,
+                          clearance=claims.clearance)
 
     # --- internal ---
     def _issue_pair(self, *, workspace: str, user: str,
-                    scopes: tuple[str, ...]) -> TokenPair:
+                    scopes: tuple[str, ...],
+                    clearance: str = "public") -> TokenPair:
         access, _ = create_access_token(self.settings, workspace=workspace, user=user,
-                                        scopes=scopes)
+                                        scopes=scopes, clearance=clearance)
         refresh, _ = create_refresh_token(self.settings, workspace=workspace, user=user,
-                                          scopes=scopes)
+                                          scopes=scopes, clearance=clearance)
         return TokenPair(access_token=access, refresh_token=refresh,
                          expires_in=self.settings.ACCESS_TOKEN_TTL_SECONDS)
 

@@ -38,3 +38,5 @@ class MeResponse(BaseModel):
     user: str
     scopes: list[str] = Field(default_factory=list)
     expires_at: int = Field(description="Epoch detik kedaluwarsa access token.")
+    clearance: str = Field(default="public",
+                           description="Level baca maksimum (v1.0 G6).")

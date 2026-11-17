@@ -46,15 +46,18 @@ FULL_SCOPES = ("chat", "jobs", "threads", "approve", "documents")
 
 def bearer(workspace: str = "toko-a", user: str = "budi",
            scopes: tuple[str, ...] = FULL_SCOPES,
-           settings: Settings | None = None) -> dict[str, str]:
+           settings: Settings | None = None,
+           clearance: str = "public") -> dict[str, str]:
     s = settings or test_settings()
-    token, _ = create_access_token(s, workspace=workspace, user=user, scopes=scopes)
+    token, _ = create_access_token(s, workspace=workspace, user=user,
+                                   scopes=scopes, clearance=clearance)
     return {"Authorization": f"Bearer {token}"}
 
 
 def auth_headers(workspace: str = "toko-a", user: str = "budi",
-                 request_id: str | None = None) -> dict[str, str]:
-    headers = bearer(workspace=workspace, user=user)
+                 request_id: str | None = None,
+                 clearance: str = "public") -> dict[str, str]:
+    headers = bearer(workspace=workspace, user=user, clearance=clearance)
     if request_id:
         headers["X-Request-ID"] = request_id
     return headers

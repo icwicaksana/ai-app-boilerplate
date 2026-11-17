@@ -206,7 +206,8 @@ async def test_r2_guard_chat_di_thread_pending_409():
             yield {"type": "result", "status": "completed"}
 
     ctrl = ChatController(_settings(), checkpointer=object())
-    ctrl._agent_for = lambda tid, name: _Agent(interrupts=[{"id": "i1"}])
+    ctrl._agent_for = lambda tid, name, clearance="public": _Agent(
+        interrupts=[{"id": "i1"}])
     req = ChatRequest(agent="example_chat", input="halo",
                       thread_id="toko-a:budi:sess-1")
     events = [e async for e in ctrl.stream(
@@ -218,7 +219,8 @@ async def test_r2_guard_chat_di_thread_pending_409():
 
     # Tanpa interrupt → jalan normal.
     ctrl2 = ChatController(_settings(), checkpointer=object())
-    ctrl2._agent_for = lambda tid, name: _Agent(interrupts=[])
+    ctrl2._agent_for = lambda tid, name, clearance="public": _Agent(
+        interrupts=[])
     events2 = [e async for e in ctrl2.stream(
         req, ThreadIdentity(workspace="toko-a", user="budi"))]
     assert ran == [True]

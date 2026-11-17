@@ -19,7 +19,7 @@ class _CountingController(JobController):
         super().__init__(settings, checkpointer=object())
         self.calls = 0
 
-    def _agent_for(self, thread_id, agent_name):
+    def _agent_for(self, thread_id, agent_name, clearance="public"):
         ctrl = self
 
         class _Agent:

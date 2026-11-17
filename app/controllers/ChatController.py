@@ -42,14 +42,17 @@ class ChatController(BaseController):
         if name not in CHAT_AGENTS:
             raise AgentNotFoundError(name)
 
-    def _agent_for(self, thread_id: str, agent_name: str) -> BaseChatAgent:
+    def _agent_for(self, thread_id: str, agent_name: str,
+                   clearance: str = "public") -> BaseChatAgent:
         # Agent dirakit per eksekusi (bukan di __init__) agar session header
         # x-opencode-session = thread_id. Objek controller sendiri sudah per-request,
         # jadi tidak ada biaya tambahan dibanding sebelumnya.
         agent_cls = CHAT_AGENTS[agent_name]
-        return agent_cls(self._context_for(agent_cls, thread_id))
+        return agent_cls(self._context_for(agent_cls, thread_id,
+                                           clearance=clearance))
 
-    def _context_for(self, agent_cls, thread_id: str):
+    def _context_for(self, agent_cls, thread_id: str,
+                     clearance: str = "public"):
         """v0.9 F0-5: SATU factory untuk semua jalur (chat/resume/fork).
 
         `raise_embedding` mempertahankan perilaku v0.7 (D11): agen ber-RAG
@@ -63,6 +66,7 @@ class ChatController(BaseController):
             store=self.store, pool=self.pool, rag=self.rag,
             skills=self.skills,
             agent_cls=agent_cls, missing_retriever="raise_embedding",
+            clearance=clearance,
         )
 
     async def _has_pending_interrupt(self, agent, config: dict) -> bool:
@@ -91,7 +95,8 @@ class ChatController(BaseController):
         """
         thread_id, config = self.resolve_thread_config(identity, req.thread_id)
         self._ensure_agent(req.agent)
-        agent = self._agent_for(thread_id, req.agent)
+        agent = self._agent_for(thread_id, req.agent,
+                                clearance=identity.clearance)
         if await self._has_pending_interrupt(agent, config):
             raise ThreadAwaitingApprovalError(thread_id)
         return thread_id, config, agent
@@ -117,7 +122,8 @@ class ChatController(BaseController):
             return
         if agent is None:
             try:
-                agent = self._agent_for(thread_id, req.agent)
+                agent = self._agent_for(thread_id, req.agent,
+                                        clearance=identity.clearance)
             except UpstreamAIError as exc:
                 terminal = "error"
                 log.exception("chat init gagal (upstream)")

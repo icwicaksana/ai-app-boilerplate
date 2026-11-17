@@ -118,9 +118,20 @@ class QdrantStore:
             models.FieldCondition(key="workspace",
                                   match=models.MatchValue(value=self._workspace))]
         for key in sorted(filters or ()):
+            val = filters[key]
+            if key == "access_level":
+                # v1.0 G6: IN-list (MatchAny). Kunci SELALU ada di payload
+                # (worker menulis default public) — chunk lama tanpa kunci
+                # butuh reindex (tercatat di runbook reindex).
+                levels = (list(val) if isinstance(val, (list, tuple, set))
+                          else [val])
+                must.append(models.FieldCondition(
+                    key="meta.access_level",
+                    match=models.MatchAny(any=[str(v) for v in levels])))
+                continue
             must.append(models.FieldCondition(
                 key=f"meta.{key}",
-                match=models.MatchValue(value=str(filters[key]))))
+                match=models.MatchValue(value=str(val))))
         return models.Filter(must=must)
 
     async def upsert_chunks(self, *, doc_id: str,

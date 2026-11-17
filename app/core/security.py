@@ -83,6 +83,7 @@ class TokenClaims:
     scopes: tuple[str, ...] = field(default_factory=tuple)
     issued_at: int = 0
     expires_at: int = 0
+    clearance: str = "public"  # v1.0 G6: level baca maksimum (acl.LEVELS)
 
     @property
     def ttl_remaining(self) -> int:
@@ -110,19 +111,24 @@ def create_token(
     token_type: str,
     ttl_seconds: int,
     scopes: tuple[str, ...] = (),
+    clearance: str = "public",
 ) -> tuple[str, TokenClaims]:
     """Buat token bertanda tangan + claims-nya (dipakai access & refresh)."""
+    from app.core.acl import normalize_level
+
     if token_type not in (TYPE_ACCESS, TYPE_REFRESH):
         raise ValueError(f"token_type tak dikenal: {token_type!r}")
     now = datetime.now(timezone.utc)
     exp = now + timedelta(seconds=ttl_seconds)
     jti = new_jti()
+    clearance = normalize_level(clearance)
     payload = {
         "sub": user,
         "workspace": workspace,
         "typ": token_type,
         "jti": jti,
         "scope": " ".join(scopes),
+        "clearance": clearance,
         "iss": settings.JWT_ISSUER,
         "iat": int(now.timestamp()),
         "exp": int(exp.timestamp()),
@@ -131,24 +137,29 @@ def create_token(
     claims = TokenClaims(
         subject=user, workspace=workspace, jti=jti, token_type=token_type,
         scopes=tuple(scopes), issued_at=payload["iat"], expires_at=payload["exp"],
+        clearance=clearance,
     )
     return token, claims
 
 
 def create_access_token(settings: Settings, *, workspace: str, user: str,
-                        scopes: tuple[str, ...] = ()) -> tuple[str, TokenClaims]:
+                        scopes: tuple[str, ...] = (),
+                        clearance: str = "public",
+                        ) -> tuple[str, TokenClaims]:
     return create_token(settings, workspace=workspace, user=user,
                         token_type=TYPE_ACCESS,
                         ttl_seconds=settings.ACCESS_TOKEN_TTL_SECONDS,
-                        scopes=scopes)
+                        scopes=scopes, clearance=clearance)
 
 
 def create_refresh_token(settings: Settings, *, workspace: str, user: str,
-                         scopes: tuple[str, ...] = ()) -> tuple[str, TokenClaims]:
+                         scopes: tuple[str, ...] = (),
+                         clearance: str = "public",
+                         ) -> tuple[str, TokenClaims]:
     return create_token(settings, workspace=workspace, user=user,
                         token_type=TYPE_REFRESH,
                         ttl_seconds=settings.REFRESH_TOKEN_TTL_SECONDS,
-                        scopes=scopes)
+                        scopes=scopes, clearance=clearance)
 
 
 def decode_token(settings: Settings, token: str, *,
@@ -180,6 +191,8 @@ def decode_token(settings: Settings, token: str, *,
             f"jenis token salah (butuh {expected_type!r}, "
             f"dapat {payload.get('typ')!r})")
     scope_raw = payload.get("scope") or ""
+    from app.core.acl import normalize_level
+
     return TokenClaims(
         subject=str(payload["sub"]),
         workspace=str(payload[CLAIM_WORKSPACE]),
@@ -188,4 +201,6 @@ def decode_token(settings: Settings, token: str, *,
         scopes=tuple(s for s in str(scope_raw).split(" ") if s),
         issued_at=int(payload.get("iat") or 0),
         expires_at=int(payload.get("exp") or 0),
+        # Token pra-G6 tanpa klaim → public (fail-closed, kompatibel).
+        clearance=normalize_level(payload.get("clearance")),
     )

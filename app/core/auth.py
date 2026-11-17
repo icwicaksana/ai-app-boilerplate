@@ -129,7 +129,10 @@ def _claims_to_identity(claims: TokenClaims) -> ThreadIdentity:
     except Exception as exc:
         raise InvalidTokenError(
             "Klaim token tak memenuhi format identitas.") from exc
-    return ThreadIdentity(workspace=workspace, user=user)
+    from app.core.acl import normalize_level
+
+    return ThreadIdentity(workspace=workspace, user=user,
+                          clearance=normalize_level(claims.clearance))
 
 
 def _assert_canonical(claims: TokenClaims) -> None:

@@ -6,7 +6,7 @@
 -- termasuk edge dari dokumen internal/restricted (BOCOR via filter graph).
 -- Pasca-G1, worker selalu menulis ACL chunk. Migrasi ini memperbaiki baris
 -- lama:
---   * edge ber-chunk_row_id → COALESCE(chunks.metadata->>'access_level',
+--   * edge ber-chunk_row_id → COALESCE(chunks.meta->>'access_level',
 --     'public') dari chunk asalnya;
 --   * edge tanpa chunk_row_id (legasi) → COALESCE(documents.meta->
 --     'access_level', 'public') dari dokumennya.
@@ -50,7 +50,7 @@ BEGIN
     -- (a) Edge ber-chunk: ACL dari chunk asalnya.
     WITH benar AS (
         SELECT e.id AS eid,
-               COALESCE(c.metadata->>'access_level', 'public') AS acl
+               COALESCE(c.meta->>'access_level', 'public') AS acl
           FROM public.kg_edges e
           JOIN public.chunks c ON c.id = e.chunk_row_id
          WHERE e.chunk_row_id IS NOT NULL
@@ -60,7 +60,7 @@ BEGIN
       FROM benar b
      WHERE e.id = b.eid AND e.access_level IS DISTINCT FROM b.acl;
     GET DIAGNOSTICS v_n = ROW_COUNT;
-    RAISE NOTICE '021: % edge ber-chunk diselaraskan dari chunks.metadata', v_n;
+    RAISE NOTICE '021: % edge ber-chunk diselaraskan dari chunks.meta', v_n;
 
     -- (b) Edge tanpa chunk_row_id: ACL dari dokumennya.
     WITH benar AS (
@@ -82,7 +82,7 @@ BEGIN
       FROM public.kg_edges e
       JOIN public.chunks c ON c.id = e.chunk_row_id
      WHERE e.access_level IS DISTINCT FROM
-           COALESCE(c.metadata->>'access_level', 'public');
+           COALESCE(c.meta->>'access_level', 'public');
     IF v_n > 0 THEN
         RAISE EXCEPTION '021 verify: % edge ber-chunk masih menyimpang', v_n;
     END IF;

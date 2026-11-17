@@ -28,6 +28,7 @@ class ThreadIdentity:
 
     workspace: str
     user: str
+    clearance: str = "public"  # v1.0 G6: dari klaim JWT (acl.LEVELS)
 
     def __str__(self) -> str:
         # Format "workspace:user" untuk log server (log = privat ops, butuh ini

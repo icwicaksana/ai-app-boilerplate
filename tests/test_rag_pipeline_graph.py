@@ -167,7 +167,8 @@ async def test_pipeline_hop2_bila_kurus_dan_strip_filter():
     res = await r.search("Kopi?", filters={"access_level": "public",
                                            "doc_type": "x"})
     assert [c["max_hops"] for c in g.calls] == [1, 2]  # kurus → hop-2
-    assert g.calls[0]["filters"] == {"access_level": "public"}  # strip
+    # v1.0 G6: access_level dinormalisasi ke list (IN), kunci lain strip.
+    assert g.calls[0]["filters"] == {"access_level": ["public"]}  # strip
 
 
 @pytest.mark.asyncio

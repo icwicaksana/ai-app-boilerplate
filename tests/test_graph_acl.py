@@ -111,12 +111,12 @@ async def test_g2_fetch_terfilter_acl():
 
     store = PgGraphStore(pool=None, workspace="toko-a")
     conn = _Conn()
-    await store._fetch_contents(conn, {"r1"}, acl="internal")
-    assert "COALESCE(metadata->>'access_level', 'public') = %s" in conn.sql[0]
-    assert conn.params[0][-1] == "internal"
+    await store._fetch_contents(conn, {"r1"}, acl=["internal"])
+    assert "COALESCE(meta->>'access_level', 'public') = ANY(%s)" in conn.sql[0]
+    assert conn.params[0][-1] == ["internal"]
     conn2 = _Conn()
-    await store._fetch_titles(conn2, {"d1"}, acl="public")
-    assert "COALESCE(meta->>'access_level', 'public') = %s" in conn2.sql[0]
+    await store._fetch_titles(conn2, {"d1"}, acl=["public"])
+    assert "COALESCE(meta->>'access_level', 'public') = ANY(%s)" in conn2.sql[0]
 
 
 def test_g2_hop_tak_lolos_gugurkan_path():

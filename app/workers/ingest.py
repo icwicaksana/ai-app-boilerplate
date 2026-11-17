@@ -572,6 +572,9 @@ async def _run_stages(ctx: WorkerCtx, job: dict, workspace: str,
             for key in ("doc_type", "access_level"):
                 if key in doc_meta:
                     meta[key] = doc_meta[key]
+            # v1.0 G6: access_level SELALU ada (default public) — payload
+            # Qdrant tak bisa COALESCE, jadi kunci tak boleh absen.
+            meta.setdefault("access_level", "public")
             rows.append({"content": content, "vector": vec, "ord": seq,
                          "page": page, "sheet": sheet, "heading": heading,
                          "token_count": ctx.tok.count(content),

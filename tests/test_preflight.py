@@ -54,7 +54,7 @@ def _ident():
 @pytest.mark.asyncio
 async def test_preflight_guard_409_sebelum_turn():
     ctrl = ChatController(test_settings(), checkpointer=object())
-    ctrl._agent_for = lambda tid, name: _Agent(interrupts=[{"id": "i1"}])
+    ctrl._agent_for = lambda tid, name, clearance="public": _Agent(interrupts=[{"id": "i1"}])
     with pytest.raises(ThreadAwaitingApprovalError) as ei:
         await ctrl.preflight(_req(), _ident())
     assert (ei.value.status_code, ei.value.code) == (
@@ -65,7 +65,7 @@ async def test_preflight_guard_409_sebelum_turn():
 async def test_preflight_build_gagal_propagate():
     ctrl = ChatController(test_settings(), checkpointer=object())
 
-    def _boom(tid, name):
+    def _boom(tid, name, clearance="public"):
         raise UpstreamAIError("llm tak terkonfigurasi")
 
     ctrl._agent_for = _boom
@@ -78,8 +78,8 @@ async def test_preflight_ok_dan_stream_pakai_agen_1x():
     builds: list = []
     ctrl = ChatController(test_settings(), checkpointer=object())
 
-    def _build(tid, name):
-        builds.append(name)
+    def _build(tid, name, clearance="public"):
+        builds.append((name, clearance))
         return _Agent()
 
     ctrl._agent_for = _build
@@ -87,7 +87,7 @@ async def test_preflight_ok_dan_stream_pakai_agen_1x():
     assert thread_id == "toko-a:budi:sess-1" and isinstance(agent, _Agent)
     events = [e async for e in ctrl.stream(_req(), _ident(), agent=agent)]
     assert events[-1]["type"] == "result"
-    assert builds == ["example_chat"]  # build 1x (preflight saja)
+    assert builds == [("example_chat", "public")]  # build 1x (preflight saja)
 
 
 def _app(ctrl):
@@ -102,7 +102,7 @@ def _app(ctrl):
 def test_route_guard_409_json_tanpa_turn():
     """Thread pending → 409 JSON (bukan SSE) + NOL turn tercipta."""
     ctrl = ChatController(test_settings(), checkpointer=object())
-    ctrl._agent_for = lambda tid, name: _Agent(interrupts=[{"id": "i1"}])
+    ctrl._agent_for = lambda tid, name, clearance="public": _Agent(interrupts=[{"id": "i1"}])
     client, cache = _app(ctrl)
     res = client.post("/api/v1/chat/stream", headers=auth_headers(),
                       json={"agent": "example_chat", "input": "hi",
@@ -116,7 +116,7 @@ def test_route_guard_409_json_tanpa_turn():
 def test_replay_byte_sama_dengan_asli():
     """Resume dari 0-0 memutar byte identik pengiriman asli."""
     ctrl = ChatController(test_settings(), checkpointer=object())
-    ctrl._agent_for = lambda tid, name: _Agent()
+    ctrl._agent_for = lambda tid, name, clearance="public": _Agent()
     client, _ = _app(ctrl)
     h = auth_headers()
     body = {"agent": "example_chat", "input": "hi"}

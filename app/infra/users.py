@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS app_users (
     username      TEXT        NOT NULL,
     password_hash TEXT        NOT NULL,
     scopes        TEXT        NOT NULL DEFAULT 'chat jobs threads approve documents',
+    clearance     TEXT        NOT NULL DEFAULT 'public',
     is_active     BOOLEAN     NOT NULL DEFAULT TRUE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ,
@@ -89,6 +90,13 @@ async def ensure_schema(pool: AsyncConnectionPool) -> None:
         await conn.execute(
             "UPDATE app_users SET scopes = TRIM(scopes || ' documents') "
             "WHERE scopes NOT LIKE '%documents%'")
+        # v1.0 G6: kolom clearance untuk baris lama (fail-closed: public).
+        await conn.execute(
+            "ALTER TABLE app_users ADD COLUMN IF NOT EXISTS clearance "
+            "TEXT NOT NULL DEFAULT 'public'")
+        await conn.execute(
+            "UPDATE app_users SET clearance = 'public' "
+            "WHERE clearance NOT IN ('public', 'internal', 'restricted')")
     log.info("auth schema ready (app_users)")
 
 
@@ -97,7 +105,8 @@ async def get_user(pool: AsyncConnectionPool, workspace: str,
     workspace, username = canon_identity(workspace, username)
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT id, workspace, username, password_hash, scopes, is_active "
+            "SELECT id, workspace, username, password_hash, scopes, clearance,"
+            " is_active "
             "FROM app_users WHERE workspace = %s AND username = %s",
             (workspace, username),
         )
@@ -107,14 +116,18 @@ async def get_user(pool: AsyncConnectionPool, workspace: str,
 
 async def create_user(pool: AsyncConnectionPool, *, workspace: str, username: str,
                       password_hash: str, scopes: str = DEFAULT_SCOPES,
+                      clearance: str = "public",
                       is_active: bool = True) -> int:
     """Insert user baru; raise ValueError bila sudah ada (unique)."""
+    from app.core.acl import normalize_level
+
     workspace, username = canon_identity(workspace, username)
     async with pool.connection() as conn:
         cur = await conn.execute(
             "INSERT INTO app_users (workspace, username, password_hash, scopes, "
-            "is_active) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (workspace, username, password_hash, scopes, is_active),
+            "clearance, is_active) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (workspace, username, password_hash, scopes,
+             normalize_level(clearance), is_active),
         )
         row = await cur.fetchone()
     user_id = int(row["id"])

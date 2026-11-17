@@ -132,6 +132,9 @@ class HybridRetriever:
         graph_score_floor: float = 0.10,  # = default config (kalibrasi F5)
         graph_seed_confidence: float = 0.5,  # di bawah ini → graph-off
         graph_aliases: dict[str, str] | None = None,
+        # v1.0 G6: filter bawaan dari clearance JWT (fail-closed). Kunci
+        # access_level SELALU di-intersect (pemanggil tak bisa melebarkan).
+        default_filters: dict[str, Any] | None = None,
     ) -> None:
         self._embed = embed
         self._rerank = rerank
@@ -157,6 +160,36 @@ class HybridRetriever:
         self._graph_score_floor = graph_score_floor
         self._graph_seed_confidence = graph_seed_confidence
         self._graph_aliases = graph_aliases
+        self._default_filters = dict(default_filters or {})
+
+    @staticmethod
+    def _as_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            return [str(v) for v in value]
+        return [str(value)]
+
+    def _merge_filters(
+            self, filters: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Gabung filter panggilan di atas default clearance (v1.0 G6).
+
+        Aturan: kunci biasa = panggilan menang; `access_level` = INTERSECT
+        (default tak bisa dilebarkan — anti-eskalasi via parameter).
+        Nilai dinormalisasi ke list (backend memakai IN). Hasil kosong →
+        None (artinya: tanpa filter metadata — hanya bila tak ada default).
+        """
+        merged = dict(self._default_filters)
+        for key, val in (filters or {}).items():
+            if key == "access_level" and "access_level" in merged:
+                keep = [v for v in self._as_list(val)
+                        if v in self._as_list(merged[key])]
+                merged[key] = keep
+            else:
+                merged[key] = val
+        if "access_level" in merged:
+            merged["access_level"] = self._as_list(merged["access_level"])
+        return merged or None
 
     async def search(
         self,
@@ -167,6 +200,7 @@ class HybridRetriever:
     ) -> RetrievalResult:
         import time as _time  # stdlib murni (arch-test OK, bukan asyncio)
 
+        filters = self._merge_filters(filters)
         t0 = _time.perf_counter()
         timings: dict[str, float] = {}
         g_timings: dict[str, float] = {}

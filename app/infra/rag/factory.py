@@ -265,9 +265,17 @@ async def _validate_pg_triples(settings: Settings, pool, dims: int) -> None:
 
 
 def retriever_for_workspace(settings: Settings, clients: RagClients | None,
-                         pool, *, workspace: str) -> HybridRetriever:
+                         pool, *, workspace: str,
+                         clearance: str = "public") -> HybridRetriever:
     """Bangun `HybridRetriever` terikat workspace (D2). Dipanggil per-request
-    dari `ThreadIdentity` JWT — BUKAN dari body (dependencies)."""
+    dari `ThreadIdentity` JWT — BUKAN dari body (dependencies).
+
+    v1.0 G6: `clearance` (dari klaim JWT) menjadi default filter ACL —
+    fail-closed (tak dikenal = public saja).
+    """
+    from app.core.acl import allowed_levels
+
+    default_filters = {"access_level": allowed_levels(clearance)}
     if clients is None:
         from app.core.errors import EmbeddingUnavailableError
         raise EmbeddingUnavailableError("RAG nonaktif (RAG_EMBED_BASE_URL kosong).")
@@ -310,4 +318,5 @@ def retriever_for_workspace(settings: Settings, clients: RagClients | None,
         graph_max_hops=settings.GRAPH_MAX_HOPS,
         graph_fanout=settings.GRAPH_BFS_FANOUT,
         graph_score_floor=settings.GRAPH_SCORE_FLOOR,
-        graph_seed_confidence=settings.GRAPH_SEED_CONFIDENCE)
+        graph_seed_confidence=settings.GRAPH_SEED_CONFIDENCE,
+        default_filters=default_filters)

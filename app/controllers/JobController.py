@@ -38,17 +38,20 @@ class JobController(BaseController):
         if name not in JOB_AGENTS:
             raise AgentNotFoundError(name)
 
-    def _agent_for(self, thread_id: str, agent_name: str) -> BasePipelineAgent:
+    def _agent_for(self, thread_id: str, agent_name: str,
+                   clearance: str = "public") -> BasePipelineAgent:
         # Lihat ChatController._agent_for: session header = thread_id.
         agent_cls = JOB_AGENTS[agent_name]
         ctx = AgentContext(
             settings=self.settings, checkpointer=self.checkpointer,
             runner=self.runner, session_id=thread_id,
-            retriever=self._retriever_for(agent_cls, thread_id),
+            retriever=self._retriever_for(agent_cls, thread_id,
+                                          clearance=clearance),
         )
         return agent_cls(ctx)
 
-    def _retriever_for(self, agent_cls, thread_id: str):
+    def _retriever_for(self, agent_cls, thread_id: str,
+                       clearance: str = "public"):
         """Sama seperti ChatController (D2, v0.7)."""
         from app.core.errors import EmbeddingUnavailableError
         from app.core.threads import parse_thread_id
@@ -62,7 +65,7 @@ class JobController(BaseController):
 
         workspace, _, _ = parse_thread_id(thread_id)
         return retriever_for_workspace(self.settings, self.rag, self.pool,
-                                    workspace=workspace)
+                                    workspace=workspace, clearance=clearance)
 
     async def run(
         self,
@@ -80,7 +83,8 @@ class JobController(BaseController):
         thread_id, config = self.resolve_thread_config(identity, req.thread_id)
         self._ensure_agent(name)
         try:
-            agent = self._agent_for(thread_id, name)
+            agent = self._agent_for(thread_id, name,
+                                    clearance=identity.clearance)
             out = await agent.run_agent(req.payload, config)
         except UpstreamAIError:
             raise

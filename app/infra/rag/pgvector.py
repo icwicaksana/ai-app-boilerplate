@@ -60,8 +60,18 @@ class PgVectorStore:
                              f"(izinkan: {sorted(FILTER_KEYS)})")
         parts, params = [], []
         for key in sorted(filters):
+            val = filters[key]
+            if key == "access_level":
+                # v1.0 G6: IN-list + COALESCE (chunk lama tanpa kunci =
+                # public — konsisten write-path baru yang selalu menulis).
+                levels = (list(val) if isinstance(val, (list, tuple, set))
+                          else [val])
+                parts.append(
+                    "COALESCE(c.meta->>'access_level', 'public') = ANY(%s)")
+                params.append([str(v) for v in levels])
+                continue
             parts.append(f"c.meta->>'{key}' = %s")
-            params.append(str(filters[key]))
+            params.append(str(val))
         return " AND " + " AND ".join(parts), params
 
     async def upsert_chunks(self, *, doc_id: str,

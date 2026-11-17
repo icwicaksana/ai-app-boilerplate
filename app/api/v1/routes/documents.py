@@ -92,13 +92,25 @@ async def upload_document(
     preset: Preset = Form("prose"),
     ocr: OcrFlag = Form("auto"),
     lang: str = Form("id"),
+    access_level: str = Form("public"),
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: DocumentController = Depends(get_document_controller),
     settings: Settings = Depends(get_settings),
     cache: CacheClient | None = Depends(get_cache),
     _rl=Depends(rate_limit_dependency("ingest", "RATE_LIMIT_INGEST_PER_MIN")),
 ) -> IngestEnqueueResponse:
+    from app.core.acl import may_read, normalize_level
+
     request_id = get_request_id(request)
+    # v1.0 G6: level dokumen dari uploader; WAJIB ⊆ clearance sendiri
+    # (tak boleh menulis level yang tak bisa dibaca kembali).
+    access_level = normalize_level(access_level)
+    if not may_read(identity.clearance, access_level):
+        from app.core.errors import ForbiddenError
+
+        raise ForbiddenError(
+            f"clearance '{identity.clearance}' tak boleh mengunggah "
+            f"level '{access_level}'")
     blob = await file.read(settings.RAG_MAX_UPLOAD_BYTES + 1)
     if len(blob) > settings.RAG_MAX_UPLOAD_BYTES:
         raise PayloadTooLargeError(len(blob),
@@ -111,7 +123,7 @@ async def upload_document(
 
     payload_hash = body_hash({
         "sha256": hashlib.sha256(blob).hexdigest(), "preset": preset,
-        "ocr": ocr}) if idem_key else ""
+        "ocr": ocr, "access_level": access_level}) if idem_key else ""
     # NOTE: filename SENGAJA tak ikut hash (retry wajar boleh beda nama).
     idem_owner = ""
     if idem_key:
@@ -137,7 +149,7 @@ async def upload_document(
         out = await ctrl.enqueue(
             workspace=identity.workspace, user=identity.user,
             filename=file.filename or "", blob=blob, preset=preset, ocr=ocr,
-            lang=(lang or "id")[:8])
+            lang=(lang or "id")[:8], access_level=access_level)
     except Exception:
         if idem_key:
             await guard.abort(workspace=identity.workspace, user=identity.user,
@@ -358,7 +370,8 @@ async def retrieval_search(
     from app.rag import citations as C
 
     out = await ctrl.search(workspace=identity.workspace, query=req.query, k=req.k,
-                            filters=req.filters, clients=clients)
+                            filters=req.filters, clients=clients,
+                            clearance=identity.clearance)
     if out["degraded"]:
         # Observabilitas degradasi untuk operator/FE (P2-13 parsial).
         response.headers["X-RAG-Degraded"] = ",".join(out["degraded"])

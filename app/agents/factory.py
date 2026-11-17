@@ -62,6 +62,7 @@ def build_agent_context(
     skills=None,
     agent_cls=None,
     missing_retriever: MissingRetriever = "degrade",
+    clearance: str = "public",
 ) -> AgentContext:
     """Rakit AgentContext lengkap untuk satu eksekusi agent.
 
@@ -94,7 +95,8 @@ def build_agent_context(
 
     retriever = _retriever_for(
         agent_cls=agent_cls, settings=settings, pool=pool, rag=rag,
-        thread_id=session_id, missing_retriever=missing_retriever)
+        thread_id=session_id, missing_retriever=missing_retriever,
+        clearance=clearance)
 
     return AgentContext(
         settings=settings,
@@ -117,7 +119,8 @@ def _parts(thread_id: str):
 
 
 def _retriever_for(*, agent_cls, settings, pool, rag, thread_id,
-                   missing_retriever: MissingRetriever):
+                   missing_retriever: MissingRetriever,
+                   clearance: str = "public"):
     """Retriever workspace-bound untuk agen NEEDS_RETRIEVER (D2, v0.7)."""
     if agent_cls is None or not getattr(agent_cls, "NEEDS_RETRIEVER", False):
         return None
@@ -145,4 +148,5 @@ def _retriever_for(*, agent_cls, settings, pool, rag, thread_id,
 
     from app.infra.rag.factory import retriever_for_workspace
 
-    return retriever_for_workspace(settings, rag, pool, workspace=workspace)
+    return retriever_for_workspace(settings, rag, pool, workspace=workspace,
+                                   clearance=clearance)
