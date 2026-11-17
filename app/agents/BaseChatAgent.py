@@ -124,7 +124,9 @@ class BaseChatAgent:
                 max_entries=getattr(self.settings, "SKILLS_MAX_ENTRIES", 40),
             )
             block = ("Skill yang tersedia (muat dengan load_skill bila tugas "
-                     f"membutuhkan):\n{index}")
+                     "membutuhkan prosedur tertulisnya; untuk pertanyaan "
+                     "tentang daftar skill itu sendiri, jawab dari indeks "
+                     f"tanpa memuat):\n{index}")
             system_prompt = f"{system_prompt}\n\n{block}" if system_prompt else block
         # v0.9 F4: tool delegasi subagent. Guard ganda seperti skill:
         # SUBAGENTS_ENABLED=false atau roster kosong → tak tersentuh,
