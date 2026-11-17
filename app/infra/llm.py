@@ -23,11 +23,14 @@ from app.core.errors import UpstreamAIError
 
 
 def get_llm(settings: Settings, session_id: str | None = None,
-            model: str | None = None):
+            model: str | None = None, *, streaming: bool = True):
     """Kembalikan chat model LangGraph via gateway.
 
     session_id: diisi thread_id oleh controller (1 sesi stabil per percakapan).
     model: override nama model (v0.8 L3); None = LITELLM_MODEL.
+    streaming: False = `disable_streaming=True` — WAJIB untuk LLM subagent
+        (v0.9 lapis struktural: token child tak pernah dihasilkan, tetapi
+        event start/end tetap fire sehingga tracing + cost utuh).
     Instance LLM murah dibentuk per build; GRAPH dibangun per request (ADR-11)
     — jangan cache graph bila header spend per-thread masih menempel di LLM.
 
@@ -60,6 +63,7 @@ def get_llm(settings: Settings, session_id: str | None = None,
         temperature=settings.LLM_TEMPERATURE,
         request_timeout=settings.LLM_TIMEOUT_SECONDS,
         max_retries=0,  # retry = milik proxy (num_retries di YAML)
+        disable_streaming=not streaming,
         extra_headers=headers,
         model_kwargs={"extra_body": {"metadata": {"spend_logs_metadata": spend_meta}}},
     )

@@ -13,7 +13,7 @@ setiap fork klien mewarisi rencana ini dan bisa menelusuri alasan keputusan.
 |---|---|---|
 | K1 | Roster subagent **statis di kode** | HITL & tool set tidak boleh ditentukan LLM; audit harus bisa dienumerasi |
 | K2 | LLM hanya memutuskan **kapan, ke siapa, dan Brief** | Budget boleh diturunkan LLM, tidak boleh dinaikkan |
-| K3 | **Tidak ada event SSE baru** | `schemas/stream.py` beku sejak v0.1; pakai `tool_start`/`tool_end` bernama `subagent:<name>` |
+| K3 | **Tidak ada event SSE baru** | `schemas/stream.py` beku sejak v0.1; pakai `tool_start`/`tool_end` bernama `subagent__<nama>` (garis bawah ganda — titik dua lolos `@tool` tetapi ditolak API OpenAI `^[a-zA-Z0-9_-]+$`, dan gateway kita OpenAI-compatible; diverifikasi probe F4) |
 | K4 | `durability="sync"` **hanya jalur chat streaming** | Di situlah race interrupt terbukti; jalur lain tidak diubah |
 | K5 | Indeks skill ditaruh **di akhir** system prompt | Bagian statis di depan tetap stabil untuk prefix-cache |
 | K6 | Router skill (RRF/embedding/Jev) **ditunda** | <10 skill; ambang keputusan ada di §7 |
@@ -142,6 +142,20 @@ Report = {
 - Circuit breaker: 3 kegagalan/60s → buka 5 menit
 - Tiga timeout berlapis: tool 10s / subagent 45s / request 60s
 - Subagent **tidak boleh** memegang tool tulis ber-approval
+
+Implementasi (2026-11-17):
+- `SubagentBase` (kelas) DIGANTI `SubagentSpec` (data beku): tidak ada
+  perilaku yang perlu di-override subclass — semua perilaku hidup di
+  `make_subagent_tool`. Roster = `SUBAGENTS` dict + `register()`.
+- Nama tool `subagent__<nama>` (K3 revisi — titik dua ditolak API OpenAI).
+- Guard build (SubagentConfigError, LOUD): spec tak dikenal, tool hilang,
+  tool approval-gated (sumber: `HITL_POLICY`), tool delegasi (rekursi).
+- Retry: wrapper per-tool 3× backoff+jitter + timeout 10s/attempt,
+  breaker proses-lifetime per (spec, tool); loop agen = retry lapis 2.
+- Budget: `min(spec, settings, brief)` — brief hanya boleh menurunkan;
+  over-budget → partial + entri failures.
+- Mount di `build()` setelah blok skill (guard ganda flag+roster);
+  misconfig melempar saat build, bukan skip diam-diam.
 
 **Gate:** subagent gagal → `status="failed"`, agen utama tidak mengarang.
 

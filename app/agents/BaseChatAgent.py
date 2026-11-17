@@ -126,6 +126,25 @@ class BaseChatAgent:
             block = ("Skill yang tersedia (muat dengan load_skill bila tugas "
                      f"membutuhkan):\n{index}")
             system_prompt = f"{system_prompt}\n\n{block}" if system_prompt else block
+        # v0.9 F4: tool delegasi subagent. Guard ganda seperti skill:
+        # SUBAGENTS_ENABLED=false atau roster kosong → tak tersentuh,
+        # prompt/tools byte-identik (gate disabled tetap hijau).
+        # Spec salah konfigurasi melempar SubagentConfigError di sini (LOUD,
+        # bukan skip diam-diam): salah wiring harus ketahuan di test/deploy.
+        from app.agents.subagents.registry import SUBAGENTS, delegation_index
+
+        if getattr(self.settings, "SUBAGENTS_ENABLED", False) and SUBAGENTS:
+            from app.agents.tools.DelegationTool import make_subagent_tool
+
+            base_tools = list(tools)  # child tak boleh lihat tool delegasi
+            for spec_name in sorted(SUBAGENTS):
+                tools.append(make_subagent_tool(
+                    spec_name, tools=base_tools, settings=self.settings,
+                    session_id=session_id))
+            block = ("Subagent yang tersedia (delegasikan dengan tool "
+                     "subagent__<nama> bila tugas membutuhkan):\n"
+                     f"{delegation_index()}")
+            system_prompt = f"{system_prompt}\n\n{block}" if system_prompt else block
         # Observabilitas: nama tool terikat (termasuk factory-bound) — dikunci test
         # agar binding tak lepas diam-diam saat refactor build().
         self.bound_tools = [getattr(t, "name", "?") for t in tools]
