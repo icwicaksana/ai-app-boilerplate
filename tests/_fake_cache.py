@@ -61,6 +61,21 @@ class FakeCache:
         raw = self.store.get(key)
         return json.loads(raw) if raw else None
 
+    async def get_str(self, key: str) -> str | None:
+        if self.down:
+            from app.infra.cache import CacheUnavailable
+
+            raise CacheUnavailable("fake down")
+        return self.store.get(key)
+
+    async def set_str(self, key: str, value: str, ttl_seconds: int) -> None:
+        if self.down:
+            from app.infra.cache import CacheUnavailable
+
+            raise CacheUnavailable("fake down")
+        self.store[key] = value
+        self.ttls[key] = int(ttl_seconds)
+
     async def exists(self, key: str) -> bool:
         if self.down:
             from app.infra.cache import CacheUnavailable
@@ -89,6 +104,9 @@ class FakeCache:
             self.streams.setdefault(key, []).append((f"{len(self.streams[key]) + 1}-0",
                                                      str(args[0])))
             self.ttls[key] = int(args[1])
+            if len(keys) > 1 and len(args) > 2:  # v1.0 S3: owner atomik
+                self.store[keys[1]] = str(args[2])
+                self.ttls[keys[1]] = int(args[1])
             return f"{len(self.streams[key])}-0"
         if "DEL" in script:  # consume ticket (GETDEL)
             return self.store.pop(key, None)
@@ -121,6 +139,10 @@ class FakeCache:
         return rows[:count]
 
     async def expire(self, key: str, ttl_seconds: int) -> bool:
+        if self.down:
+            from app.infra.cache import CacheUnavailable
+
+            raise CacheUnavailable("fake down")
         if key not in self.store and key not in self.streams:
             return False
         self.ttls[key] = int(ttl_seconds)

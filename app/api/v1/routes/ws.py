@@ -35,7 +35,7 @@ from app.core.ratelimit import RateLimiter
 from app.core.threads import ThreadIdentity
 from app.core.turns import TurnManager
 from app.core.ws_ticket import TicketStore, origin_allowed
-from app.infra.cache import CacheClient
+from app.infra.cache import CacheClient, CacheUnavailable
 from app.infra.turnlog import is_terminal
 from app.schemas.chat import ChatRequest
 
@@ -71,9 +71,15 @@ async def create_ticket(
     if not decision.allowed:
         raise RateLimitedError(decision.retry_after, decision.limit)
     store = TicketStore(cache, settings.WS_TICKET_TTL_SECONDS)
-    ticket, ttl = await store.issue(workspace=identity.workspace,
-                                    user=identity.user,
-                                    scopes=claims.scopes, jti=claims.jti)
+    try:
+        ticket, ttl = await store.issue(workspace=identity.workspace,
+                                        user=identity.user,
+                                        scopes=claims.scopes, jti=claims.jti)
+    except CacheUnavailable as exc:
+        # Tiket butuh cache (sekali-pakai tak bisa tanpa simpan) → 503 jujur,
+        # bukan 500 generik (S9: bedakan endpoint sensitif).
+        raise StorageUnavailableError(
+            "Layanan ticket WebSocket butuh cache — coba lagi nanti.") from exc
     return {"ticket": ticket, "expires_in": ttl,
             "ws_url": f"{settings.API_V1_PREFIX}/ws/chat?ticket={ticket}",
             "subprotocol": SUBPROTOCOL}
@@ -227,6 +233,10 @@ class _Connection:
         decision = await RateLimiter(self.cache).check(
             scope=f"ws_{kind}", workspace=self.identity.workspace,
             subject=self.identity.user, limit=limit)
+        if decision.degraded:
+            from app.core.degraded import report_degraded
+
+            report_degraded("rate_limit", f"ws_{kind}")
         if not decision.allowed:
             log.warning("WS rate-limit ditolak kind=%s user=%s", kind,
                         self.identity.user)
@@ -249,7 +259,10 @@ class _Connection:
         try:
             return not await is_revoked(self.cache, jti)
         except Exception:
-            return True  # fail-open seperti HTTP (alarm di V1-B S9)
+            from app.core.degraded import report_degraded
+
+            report_degraded("ws_auth", "cek_gagal")
+            return True  # fail-open seperti HTTP (kini beralarm, S9)
     async def _start_chat(self, msg: dict) -> None:
         if self.run_task and not self.run_task.done():
             await self._put({"type": "error", "code": "BUSY", "status": 409,

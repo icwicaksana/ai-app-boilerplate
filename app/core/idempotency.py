@@ -22,6 +22,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.degraded import report_degraded
 from app.core.logging import get_logger
 from app.infra.cache import CacheClient, CacheUnavailable, idempotency_key
 
@@ -40,6 +41,7 @@ CONFLICT = "conflict"
 class IdemDecision:
     state: str
     response: dict[str, Any] | None = None
+    degraded: bool = False  # True = fail-open (tanpa dedup) — route beri header
 
 
 def body_hash(payload: Any) -> str:
@@ -65,7 +67,8 @@ class IdempotencyGuard:
             stored = await self.cache.get_json(cache_key)
         except CacheUnavailable:
             log.warning("idempotency fail-open (cache down) workspace=%s", workspace)
-            return IdemDecision(NEW)
+            report_degraded("idempotency", "cache_down")
+            return IdemDecision(NEW, degraded=True)
         if not stored:
             # Kunci hilang di antara NX dan GET (TTL habis) → anggap baru.
             return IdemDecision(NEW)
@@ -87,6 +90,7 @@ class IdempotencyGuard:
             )
         except CacheUnavailable:
             log.warning("idempotency finish gagal (cache down) workspace=%s", workspace)
+            report_degraded("idempotency", "finish_gagal")
 
     async def abort(self, *, workspace: str, user: str, key: str) -> None:
         """Lepas kunci saat eksekusi gagal, agar klien bisa retry."""
@@ -96,3 +100,4 @@ class IdempotencyGuard:
             await self.cache.delete(idempotency_key(workspace, user, key))
         except CacheUnavailable:
             log.warning("idempotency abort gagal (cache down) workspace=%s", workspace)
+            report_degraded("idempotency", "abort_gagal")

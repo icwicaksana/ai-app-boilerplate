@@ -21,7 +21,11 @@ request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Tempel request_id ke state + log-context + header respons."""
+    """Tempel request_id ke state + log-context + header respons.
+
+    v1.0 S9: juga emit `X-Degraded` (daftar komponen fail-open, koma-pisah)
+    bila request berjalan dalam mode terdegradasi.
+    """
 
     async def dispatch(self, request: Request, call_next):
         rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -32,6 +36,9 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         finally:
             request_id_ctx.reset(token)
         response.headers["X-Request-ID"] = rid
+        degraded = getattr(request.state, "degraded", None)
+        if degraded:
+            response.headers["X-Degraded"] = ",".join(sorted(degraded))
         return response
 
 

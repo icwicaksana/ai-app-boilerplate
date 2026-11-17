@@ -20,6 +20,7 @@ from __future__ import annotations
 from fastapi import Request
 
 from app.core.config import Settings
+from app.core.degraded import report_degraded
 from app.core.errors import (
     AuthNotConfiguredError,
     ForbiddenError,
@@ -58,8 +59,9 @@ def _bearer_token(request: Request) -> str:
     return token
 
 
-async def is_revoked(cache: CacheClient | None, jti: str) -> bool:
-    """True bila jti ada di denylist. Cache error → False (fail-open) + log."""
+async def is_revoked(cache: CacheClient | None, jti: str,
+                   request=None) -> bool:
+    """True bila jti ada di denylist. Cache error → False (fail-open) + ALARM."""
     if cache is None:
         return False
     try:
@@ -67,10 +69,12 @@ async def is_revoked(cache: CacheClient | None, jti: str) -> bool:
     except CacheUnavailable:
         log.warning("denylist JWT tak terbaca (cache down) — token diizinkan "
                     "(fail-open, jti=%s)", jti)
+        report_degraded("denylist", "cache_down", request=request)
         return False
 
 
-async def revoke(cache: CacheClient | None, claims: TokenClaims) -> bool:
+async def revoke(cache: CacheClient | None, claims: TokenClaims,
+                 request=None) -> bool:
     """Masukkan jti ke denylist dengan TTL = sisa umur token."""
     if cache is None or claims.ttl_remaining <= 0:
         return False
@@ -80,6 +84,7 @@ async def revoke(cache: CacheClient | None, claims: TokenClaims) -> bool:
         return True
     except CacheUnavailable:
         log.warning("revoke token gagal (cache down) jti=%s", claims.jti)
+        report_degraded("revoke", "cache_down", request=request)
         return False
 
 
@@ -158,7 +163,7 @@ async def resolve_claims(request: Request, settings: Settings,
     except InvalidToken as exc:
         raise InvalidTokenError(str(exc)) from exc
     _assert_canonical(claims)
-    if await is_revoked(cache, claims.jti):
+    if await is_revoked(cache, claims.jti, request=request):
         raise InvalidTokenError("Token sudah di-revoke (logout).")
     return claims
 

@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 
 from app.controllers.ChatController import ChatController
 from app.core.approvals import record_pending_approvals
+from app.core.degraded import flag_request, report_degraded
 from app.core.dependencies import (
     get_chat_controller,
     get_request_id,
@@ -25,12 +26,13 @@ from app.core.dependencies import (
     get_turn_manager,
     require_scope_dep,
 )
-from app.core.errors import StreamGoneError
+from app.core.errors import StorageUnavailableError, StreamGoneError
 from app.core.logging import get_logger
 from app.core.ratelimit import rate_limit_dependency
 from app.core.request_id import request_id_ctx
 from app.core.threads import ThreadIdentity
 from app.core.turns import TurnManager
+from app.infra.cache import CacheUnavailable
 from app.infra.turnlog import new_turn_id
 from app.schemas.chat import ChatRequest
 from app.schemas.stream import StreamStarted
@@ -75,13 +77,21 @@ async def stream_chat(
     on_event = _approval_hook(request, identity, thread_id, req.agent, request_id)
 
     if not turns.enabled:  # cache nonaktif → streaming langsung (tanpa resume)
-        return _direct_stream(req, identity, ctrl, request_id, on_event)
+        return _direct_stream(req, identity, ctrl, request_id, on_event, request)
 
     turn_id = new_turn_id()
-    await turns.start(
-        workspace=identity.workspace, turn_id=turn_id, owner=identity.user,
-        first_event=StreamStarted(turn_id=turn_id).model_dump(mode="json"),
-        events=ctrl.stream(req, identity, request_id=request_id))
+    try:
+        await turns.start(
+            workspace=identity.workspace, turn_id=turn_id, owner=identity.user,
+            first_event=StreamStarted(turn_id=turn_id).model_dump(mode="json"),
+            events=ctrl.stream(req, identity, request_id=request_id))
+    except CacheUnavailable:
+        # v1.0 S9: cache MATI di tengah (turns.enabled tapi tulis gagal) →
+        # degradasi ke streaming langsung (fail-open + alarm + header),
+        # bukan 500. Tanpa resume — klien diberi tahu via X-Degraded.
+        log.warning("chat degradasi direct (turn log tak bisa ditulis)")
+        report_degraded("turns", "create_gagal", request=request)
+        return _direct_stream(req, identity, ctrl, request_id, on_event, request)
 
     async def tail():
         token = request_id_ctx.set(request_id)
@@ -115,14 +125,21 @@ async def resume_stream(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
     """Resume turn: replay dari cursor klien lalu lanjut sampai terminal."""
-    if not turns.enabled or not await turns.turnlog.exists(
-            workspace=identity.workspace, turn_id=turn_id):
+    try:
+        log_ada = await turns.turnlog.exists(workspace=identity.workspace,
+                                             turn_id=turn_id)
+        pemilik = await turns.is_owner(workspace=identity.workspace,
+                                       turn_id=turn_id, user=identity.user)
+    except CacheUnavailable as exc:
+        # Resume BUTUH log (tak bisa degradasi) → 503 jujur, bukan 410/500.
+        raise StorageUnavailableError(
+            "Turn log tak tersedia (cache down) — coba lagi nanti.") from exc
+    if not turns.enabled or not log_ada:
         raise StreamGoneError(turn_id)
     # v1.0 S3: pemilik diverifikasi; salah-pemilik = 410 SAMA seperti turn
     # hilang (tanpa oracle keberadaan). Owner tak ada (turn pra-v1.0) pun
     # 410 — fail-closed; turn hidup ≤15 mnt jadi jendela deploy sempit.
-    if not await turns.is_owner(workspace=identity.workspace, turn_id=turn_id,
-                                user=identity.user):
+    if not pemilik:
         raise StreamGoneError(turn_id)
     cursor = (last_event_id or "0-0").strip() or "0-0"
 
@@ -140,7 +157,7 @@ async def resume_stream(
 
 def _direct_stream(req: ChatRequest, identity: ThreadIdentity,
                    ctrl: ChatController, request_id: str,
-                   on_event: OnEvent) -> StreamingResponse:
+                   on_event: OnEvent, request: Request) -> StreamingResponse:
     """Fallback tanpa cache: perilaku v0.4 (tak bisa resume)."""
 
     async def event_gen():

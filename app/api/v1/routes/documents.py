@@ -116,6 +116,10 @@ async def upload_document(
         decision = await guard.begin(
             workspace=identity.workspace, user=identity.user, key=idem_key,
             payload_hash=payload_hash)
+        if decision.degraded:  # v1.0 S9: tanpa dedup -> klien retry hati-hati
+            from app.core.degraded import flag_request
+
+            flag_request(request, "idempotency")
         if decision.state == REPLAY and decision.response is not None:
             response.headers["Idempotent-Replayed"] = "true"
             return IngestEnqueueResponse(**decision.response)

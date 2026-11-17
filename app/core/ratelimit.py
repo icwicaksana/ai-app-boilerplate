@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from fastapi import Depends, Request
 
 from app.core.config import Settings, get_settings
+from app.core.degraded import report_degraded
 from app.core.errors import RateLimitedError
 from app.core.logging import get_logger
 from app.core.threads import ThreadIdentity
@@ -125,6 +126,7 @@ def rate_limit_dependency(scope: str, limit_attr: str):
             scope=scope, workspace=identity.workspace, subject=identity.user, limit=limit)
         if decision.degraded:
             request.state.rate_limit_degraded = True
+            report_degraded("rate_limit", scope, request=request)
         if not decision.allowed:
             log.warning("rate-limit ditolak scope=%s workspace=%s user=%s",
                         scope, identity.workspace, identity.user)
@@ -144,6 +146,7 @@ async def check_login_limit(request: Request, *, workspace: str, username: str,
         limit=settings.RATE_LIMIT_LOGIN_PER_MIN)
     if decision.degraded:
         request.state.rate_limit_degraded = True
+        report_degraded("rate_limit", "login", request=request)
     if not decision.allowed:
         log.warning("rate-limit login ditolak workspace=%s user=%s ip=%s",
                     workspace, username, ip)
@@ -165,6 +168,7 @@ async def check_refresh_limit(request: Request, *, settings: Settings,
         limit=settings.RATE_LIMIT_REFRESH_PER_MIN)
     if decision.degraded:
         request.state.rate_limit_degraded = True
+        report_degraded("rate_limit", "refresh", request=request)
     if not decision.allowed:
         log.warning("rate-limit refresh ditolak ip=%s", ip)
         raise RateLimitedError(decision.retry_after, decision.limit)
