@@ -38,12 +38,23 @@ class TurnManager:
         task = self._tasks.get(turn_id)
         return bool(task and not task.done())
 
-    async def start(self, *, workspace: str, turn_id: str,
+    async def is_owner(self, *, workspace: str, turn_id: str,
+                       user: str) -> bool:
+        """True bila `user` pemilik turn. Owner tak ada = False (fail-closed).
+
+        Satu-satunya pintu cek pemilik resume (dipakai HTTP + WS) agar
+        semantik 410-tanpa-oracle identik di kedua transport.
+        """
+        owner = await self.turnlog.owner_of(workspace=workspace,
+                                            turn_id=turn_id)
+        return owner is not None and owner == user
+
+    async def start(self, *, workspace: str, turn_id: str, owner: str,
                     first_event: dict[str, Any],
                     events: AsyncIterator[dict[str, Any]]) -> None:
         """Tulis event pertama (started) lalu jalankan producer di latar."""
         await self.turnlog.create(workspace=workspace, turn_id=turn_id,
-                                  first_event=first_event)
+                                  owner=owner, first_event=first_event)
         task = asyncio.create_task(
             self._produce(workspace, turn_id, events), name=f"turn:{turn_id}")
         self._tasks[turn_id] = task

@@ -23,6 +23,7 @@ from app.core.dependencies import (
     get_request_id,
     get_thread_identity,
     get_turn_manager,
+    require_scope_dep,
 )
 from app.core.errors import StreamGoneError
 from app.core.logging import get_logger
@@ -34,7 +35,8 @@ from app.infra.turnlog import new_turn_id
 from app.schemas.chat import ChatRequest
 from app.schemas.stream import StreamStarted
 
-router = APIRouter(tags=["chat"])
+router = APIRouter(tags=["chat"],
+                     dependencies=[Depends(require_scope_dep("chat"))])
 log = get_logger(__name__)
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -77,7 +79,7 @@ async def stream_chat(
 
     turn_id = new_turn_id()
     await turns.start(
-        workspace=identity.workspace, turn_id=turn_id,
+        workspace=identity.workspace, turn_id=turn_id, owner=identity.user,
         first_event=StreamStarted(turn_id=turn_id).model_dump(mode="json"),
         events=ctrl.stream(req, identity, request_id=request_id))
 
@@ -115,6 +117,12 @@ async def resume_stream(
     """Resume turn: replay dari cursor klien lalu lanjut sampai terminal."""
     if not turns.enabled or not await turns.turnlog.exists(
             workspace=identity.workspace, turn_id=turn_id):
+        raise StreamGoneError(turn_id)
+    # v1.0 S3: pemilik diverifikasi; salah-pemilik = 410 SAMA seperti turn
+    # hilang (tanpa oracle keberadaan). Owner tak ada (turn pra-v1.0) pun
+    # 410 — fail-closed; turn hidup ≤15 mnt jadi jendela deploy sempit.
+    if not await turns.is_owner(workspace=identity.workspace, turn_id=turn_id,
+                                user=identity.user):
         raise StreamGoneError(turn_id)
     cursor = (last_event_id or "0-0").strip() or "0-0"
 

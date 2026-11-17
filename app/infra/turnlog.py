@@ -31,16 +31,22 @@ MAX_EVENTS_PER_TURN = 20_000  # pagar memori per turn
 DEFAULT_TTL_SECONDS = 900     # selama turn berjalan
 RECONNECT_TTL_SECONDS = 300   # jendela reconnect setelah selesai
 
-# XADD + EXPIRE dalam satu langkah atomik.
+# XADD + EXPIRE + owner dalam satu langkah atomik.
 _CREATE_LUA = """
 local id = redis.call('XADD', KEYS[1], '*', 'data', ARGV[1])
 redis.call('EXPIRE', KEYS[1], ARGV[2])
+redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[2])
 return id
 """
 
 
 def turn_key(workspace: str, turn_id: str) -> str:
     return f"turn:{workspace}:{turn_id}"
+
+
+def turn_owner_key(workspace: str, turn_id: str) -> str:
+    """Kunci pemilik turn (v1.0 S3): resume lintas-user ditolak."""
+    return f"turn:{workspace}:{turn_id}:owner"
 
 
 def new_turn_id() -> str:
@@ -61,17 +67,43 @@ class TurnLog:
     def enabled(self) -> bool:
         return self.cache is not None
 
-    async def create(self, *, workspace: str, turn_id: str,
+    async def create(self, *, workspace: str, turn_id: str, owner: str,
                      first_event: dict[str, Any],
                      ttl_seconds: int = DEFAULT_TTL_SECONDS) -> str:
-        """Buat stream + event pertama (atomik dengan TTL). Return entry ID."""
+        """Buat stream + event pertama + owner (atomik dengan TTL).
+
+        `owner` WAJIB (fail-closed): resume memverifikasi pemilik sebelum
+        memompa event. Return entry ID.
+        """
         if self.cache is None:
             return "0-0"
         payload = json.dumps(first_event, ensure_ascii=False, default=str)
-        entry_id = await self.cache.eval_int(
-            _CREATE_LUA, [turn_key(workspace, turn_id)],
-            [payload, int(ttl_seconds)])
-        return str(entry_id)
+        try:
+            entry_id = await self.cache.eval_int(
+                _CREATE_LUA, [turn_key(workspace, turn_id),
+                              turn_owner_key(workspace, turn_id)],
+                [payload, int(ttl_seconds), owner])
+            return str(entry_id)
+        except CacheUnavailable as exc:
+            # Fallback sekuensial: fake/Redis purba tanpa EVAL (unit test
+            # memakai fakeredis yang tak mengimplementasikan eval). Valkey
+            # asli selalu lewat jalur Lua atomik di atas. Cache yang
+            # benar-benar mati tetap raise dari bawah (fail-closed create).
+            log.debug("turn create tanpa Lua (%s) — fallback sekuensial",
+                      type(exc).__name__)
+            entry_id = await self.cache.xadd(
+                turn_key(workspace, turn_id), {"data": payload})
+            await self.cache.expire(turn_key(workspace, turn_id),
+                                    int(ttl_seconds))
+            await self.cache.set_str(turn_owner_key(workspace, turn_id),
+                                     owner, int(ttl_seconds))
+            return str(entry_id)
+
+    async def owner_of(self, *, workspace: str, turn_id: str) -> str | None:
+        """Pemilik turn, atau None bila turn/owner tak ada (diperlakukan 410)."""
+        if self.cache is None:
+            return None
+        return await self.cache.get_str(turn_owner_key(workspace, turn_id))
 
     async def append(self, *, workspace: str, turn_id: str,
                      event: dict[str, Any]) -> str:

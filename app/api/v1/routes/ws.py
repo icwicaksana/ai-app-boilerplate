@@ -247,6 +247,15 @@ class _Connection:
                              "detail": f"Turn '{turn_id}' kedaluwarsa.",
                              "instance": "-"})
             return
+        # v1.0 S3: sama seperti HTTP — salah-pemilik = 410 tanpa oracle.
+        if not await self.turns.is_owner(workspace=self.identity.workspace,
+                                         turn_id=turn_id,
+                                         user=self.identity.user):
+            await self._put({"type": "error", "code": "STREAM_GONE",
+                             "status": 410, "title": "Gone",
+                             "detail": f"Turn '{turn_id}' kedaluwarsa.",
+                             "instance": "-"})
+            return
 
         async def _pump() -> None:
             async for _rid, event in self.turns.follow(

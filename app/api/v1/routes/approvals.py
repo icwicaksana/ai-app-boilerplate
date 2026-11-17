@@ -11,6 +11,7 @@ from app.core.dependencies import (
     get_approval_service,
     get_request_id,
     get_thread_identity,
+    require_scope_dep,
 )
 from app.core.threads import ThreadIdentity
 from app.infra import approvals as repo
@@ -24,7 +25,10 @@ from app.schemas.approvals import (
     VerifyChainResponse,
 )
 
-router = APIRouter(tags=["approvals"])
+# v1.0 S4: area reviewer — list/get/decide/audit butuh scope "approve".
+# Requester melacak status miliknya via thread miliknya, bukan daftar ini.
+router = APIRouter(tags=["approvals"],
+                   dependencies=[Depends(require_scope_dep("approve"))])
 
 
 def _row_to_response(row: dict) -> ApprovalResponse:

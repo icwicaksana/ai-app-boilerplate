@@ -18,6 +18,13 @@ def test_turn_key_shape_and_workspace_isolation():
     assert turn_key("toko-a", "abc") != turn_key("toko-b", "abc")
 
 
+def test_turn_owner_key_shape():
+    from app.infra.turnlog import turn_owner_key
+
+    assert turn_owner_key("toko-a", "abc") == "turn:toko-a:abc:owner"
+    assert turn_owner_key("toko-a", "abc") != turn_owner_key("toko-a", "abd")
+
+
 def test_new_turn_id_unique_and_short():
     ids = {new_turn_id() for _ in range(50)}
     assert len(ids) == 50
@@ -46,8 +53,10 @@ class FakeTurnLog:
         self.appended = 0
         self.fail_on_append_at = fail_on_append_at
 
-    async def create(self, *, workspace, turn_id, first_event, ttl_seconds=900):
+    async def create(self, *, workspace, turn_id, owner, first_event,
+                     ttl_seconds=900):
         self.first_event = first_event
+        self.owner = owner
         self.events.append(first_event)
         return "0-0"
 
@@ -81,7 +90,7 @@ def _stream(*events):
 async def test_producer_writes_started_then_events_and_finishes():
     log = FakeTurnLog()
     mgr = TurnManager(log)
-    await mgr.start(workspace="toko-a", turn_id="t1",
+    await mgr.start(workspace="toko-a", turn_id="t1", owner="budi",
                     first_event={"type": "started", "turn_id": "t1"},
                     events=_stream({"type": "token", "delta": "a"},
                                    {"type": "result", "status": "completed"}))
@@ -94,7 +103,7 @@ async def test_producer_writes_started_then_events_and_finishes():
 async def test_producer_stops_at_terminal():
     log = FakeTurnLog()
     mgr = TurnManager(log)
-    await mgr.start(workspace="t", turn_id="t2", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t2", owner="budi", first_event={"type": "started"},
                     events=_stream({"type": "result"},
                                    {"type": "token", "delta": "harusnya tidak"}))
     await asyncio.gather(*list(mgr._tasks.values()))
@@ -105,11 +114,11 @@ async def test_producer_stops_at_terminal():
 async def test_producer_writes_error_terminal_on_failure():
     log = FakeTurnLog(fail_on_append_at=1)  # append pertama (token) gagal
     mgr = TurnManager(log)
-    await mgr.start(workspace="t", turn_id="t3", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t3", owner="budi", first_event={"type": "started"},
                     events=_stream({"type": "token", "delta": "a"}))
     await asyncio.gather(*list(mgr._tasks.values()))
     # error terminal tetap ditulis walau append pertama gagal? append berikutnya
-    # juga akan gagal pada fake ini → cukup pastikan finish dipanggil & tak raise.
+    # juga akan gagal pada fake ini â†’ cukup pastikan finish dipanggil & tak raise.
     assert log.finished is True
 
 
@@ -118,7 +127,7 @@ async def test_follow_passthrough_and_running_flag():
     log = FakeTurnLog()
     mgr = TurnManager(log)
     assert mgr.running("t4") is False
-    await mgr.start(workspace="t", turn_id="t4", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t4", owner="budi", first_event={"type": "started"},
                     events=_stream({"type": "result"}))
     await asyncio.gather(*list(mgr._tasks.values()))  # producer selesai dulu
     items = [x async for x in mgr.follow(workspace="t", turn_id="t4")]
@@ -131,7 +140,7 @@ async def test_producer_skips_duplicate_started():
     """`started` hanya ditulis sekali (first_event), bukan dari runner juga."""
     log = FakeTurnLog()
     mgr = TurnManager(log)
-    await mgr.start(workspace="t", turn_id="t6",
+    await mgr.start(workspace="t", turn_id="t6", owner="budi",
                     first_event={"type": "started", "turn_id": "t6"},
                     events=_stream({"type": "started"},
                                    {"type": "token", "delta": "a"},
@@ -149,7 +158,7 @@ async def test_cancel_all_stops_producers():
         await asyncio.sleep(3600)
 
     mgr = TurnManager(log)
-    await mgr.start(workspace="t", turn_id="t5", first_event={"type": "started"},
+    await mgr.start(workspace="t", turn_id="t5", owner="budi", first_event={"type": "started"},
                     events=never_ending())
     await asyncio.sleep(0.01)
     await mgr.cancel_all()
@@ -162,3 +171,39 @@ async def test_disabled_manager_reports_disabled():
 
     mgr = TurnManager(TurnLog(None))
     assert mgr.enabled is False
+
+
+# --- v1.0 S3: pemilik turn (tutup resume lintas-user) ---
+
+@pytest.mark.asyncio
+async def test_start_records_owner():
+    log = FakeTurnLog()
+    mgr = TurnManager(log)
+    await mgr.start(workspace="t", turn_id="t9", owner="sari",
+                    first_event={"type": "started"}, events=_stream())
+    await asyncio.gather(*list(mgr._tasks.values()))
+    assert log.owner == "sari"
+
+
+@pytest.mark.asyncio
+async def test_owner_roundtrip_fakeredis():
+    """Lua create menulis owner; is_owner benar/salah/hilang.
+
+    fakeredis mengeksekusi Lua betulan — ini juga membuktikan skrip
+    2-key valid (bukan hanya di Valkey asli).
+    """
+    from fakeredis.aioredis import FakeRedis
+
+    from app.infra.cache import CacheClient
+    from app.infra.turnlog import TurnLog
+
+    mgr = TurnManager(TurnLog(CacheClient(FakeRedis(decode_responses=True))))
+    await mgr.start(workspace="toko-a", turn_id="r1", owner="budi",
+                    first_event={"type": "started"}, events=_stream())
+    await asyncio.gather(*list(mgr._tasks.values()))
+    assert await mgr.is_owner(workspace="toko-a", turn_id="r1",
+                              user="budi") is True
+    assert await mgr.is_owner(workspace="toko-a", turn_id="r1",
+                              user="sari") is False
+    assert await mgr.is_owner(workspace="toko-a", turn_id="tak-ada",
+                              user="budi") is False

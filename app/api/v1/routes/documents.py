@@ -25,6 +25,7 @@ from app.core.dependencies import (
     get_rag_clients,
     get_request_id,
     get_thread_identity,
+    require_scope_dep,
 )
 from app.core.errors import (
     DocumentNotFoundError,
@@ -55,7 +56,8 @@ from app.schemas.documents import (
     RetryRequest,
 )
 
-router = APIRouter(tags=["documents"])
+router = APIRouter(tags=["documents"],
+                     dependencies=[Depends(require_scope_dep("documents"))])
 
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}

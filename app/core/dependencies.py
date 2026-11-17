@@ -13,7 +13,7 @@ from fastapi import Depends, Request
 from app.controllers.ChatController import ChatController
 from app.controllers.JobController import JobController
 from app.controllers.runner import Runner
-from app.core.auth import resolve_claims, resolve_identity
+from app.core.auth import require_scope, resolve_claims, resolve_identity
 from app.core.config import Settings, get_settings
 from app.core.errors import StorageUnavailableError
 from app.core.request_id import request_id_ctx, resolve_instance
@@ -117,6 +117,25 @@ async def get_current_claims(
 ) -> TokenClaims:
     """Klaim token terverifikasi (dipakai /auth/me, logout, audit)."""
     return await resolve_claims(request, settings, cache)
+
+
+def require_scope_dep(scope: str):
+    """Factory dependensi gate scope per-router (v1.0 S4).
+
+    Pakai: `APIRouter(dependencies=[Depends(require_scope_dep("chat"))])`.
+    Decode JWT 2x per request (di sini + get_thread_identity) — biaya
+    verifikasi HS256 yang sepele dibanding 1 call LLM.
+    """
+
+    async def _gate(
+        request: Request,
+        settings: Settings = Depends(get_settings),
+        cache: CacheClient | None = Depends(get_cache),
+    ) -> None:
+        claims = await resolve_claims(request, settings, cache)
+        require_scope(claims, scope)
+
+    return _gate
 
 
 def _persistence(request: Request) -> tuple:

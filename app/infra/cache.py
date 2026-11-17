@@ -130,6 +130,23 @@ class CacheClient:
         except Exception as exc:
             raise CacheUnavailable(f"set_json gagal: {exc}") from exc
 
+    async def get_str(self, key: str) -> str | None:
+        """Baca string mentah (mis. owner turn). None bila tak ada."""
+        try:
+            raw = await self._client.get(key)
+        except Exception as exc:
+            raise CacheUnavailable(f"get_str gagal: {exc}") from exc
+        if raw is None:
+            return None
+        return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+
+    async def set_str(self, key: str, value: str, ttl_seconds: int) -> None:
+        """Tulis string mentah dengan TTL (mis. owner turn)."""
+        try:
+            await self._client.set(key, value, ex=max(1, int(ttl_seconds)))
+        except Exception as exc:
+            raise CacheUnavailable(f"set_str gagal: {exc}") from exc
+
     async def get_json(self, key: str) -> dict[str, Any] | None:
         try:
             raw = await self._client.get(key)

@@ -40,8 +40,12 @@ def app_with_settings(**kw) -> FastAPI:
     return app
 
 
+# v1.0 S4: default = semua scope (tes gate scope memakai scopes eksplisit).
+FULL_SCOPES = ("chat", "jobs", "threads", "approve", "documents")
+
+
 def bearer(workspace: str = "toko-a", user: str = "budi",
-           scopes: tuple[str, ...] = ("chat", "jobs", "threads"),
+           scopes: tuple[str, ...] = FULL_SCOPES,
            settings: Settings | None = None) -> dict[str, str]:
     s = settings or test_settings()
     token, _ = create_access_token(s, workspace=workspace, user=user, scopes=scopes)

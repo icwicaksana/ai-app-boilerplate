@@ -175,6 +175,11 @@ async def resolve_identity(request: Request, settings: Settings,
 
 
 def require_scope(claims: TokenClaims, scope: str) -> None:
-    """403 bila scope tak dimiliki. Scope kosong di token = hanya butuh auth."""
-    if claims.scopes and scope not in claims.scopes:
+    """403 bila scope tak dimiliki. KETAT (v1.0 S4): scope kosong = tolak.
+
+    Semantik lama ("kosong = hanya butuh auth") adalah rasa aman palsu:
+    token tanpa scope bisa masuk semua area. Pengecualian hanya untuk
+    endpoint yang SENGAJA tanpa gate scope (logout/me/health).
+    """
+    if scope not in (claims.scopes or ()):
         raise ForbiddenError(f"Token tidak punya scope '{scope}'.")

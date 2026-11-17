@@ -17,6 +17,7 @@ from app.core.dependencies import (
     get_job_controller,
     get_request_id,
     get_thread_identity,
+    require_scope_dep,
 )
 from app.core.errors import (
     AppError,
@@ -35,7 +36,8 @@ from app.core.threads import ThreadIdentity
 from app.infra.cache import CacheClient
 from app.schemas.job import JobRequest, JobResponse
 
-router = APIRouter(tags=["jobs"])
+router = APIRouter(tags=["jobs"],
+                     dependencies=[Depends(require_scope_dep("jobs"))])
 
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 

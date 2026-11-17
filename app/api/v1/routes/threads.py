@@ -12,11 +12,13 @@ from app.core.dependencies import (
     get_request_id,
     get_thread_controller,
     get_thread_identity,
+    require_scope_dep,
 )
 from app.core.threads import ThreadIdentity
 from app.schemas.threads import ForkRequest, ForkResponse, HistoryResponse, ThreadStateResponse
 
-router = APIRouter(tags=["threads"])
+router = APIRouter(tags=["threads"],
+                     dependencies=[Depends(require_scope_dep("threads"))])
 
 
 @router.get("/threads/{thread_id}/state", response_model=ThreadStateResponse)

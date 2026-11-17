@@ -134,6 +134,19 @@ class ApprovalService:
             raise ApprovalExpiredError()
         if row["status"] != "pending":
             raise ApprovalStateError(row["status"])
+        # v1.0 S2 (SoD): peminta tak boleh menyetujui sendiri. Pemilik =
+        # segmen user dari thread_id kanonis (tanpa kolom baru).
+        from app.core.threads import parse_thread_id
+
+        try:
+            _, owner, _ = parse_thread_id(str(row.get("thread_id") or ""))
+        except Exception:
+            raise ForbiddenError(
+                "Thread pemilik approval tak valid — tolak memutuskan.")
+        if actor == owner:
+            raise ForbiddenError(
+                "Tidak boleh memutuskan approval milik sendiri "
+                "(pemisahan tugas: minta reviewer lain).")
         if decision not in ("approve", "reject"):
             raise AppError("decision harus 'approve' atau 'reject'.",
                            status_code=422, code="INVALID_DECISION",

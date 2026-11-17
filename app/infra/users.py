@@ -16,7 +16,7 @@ from app.core.threads import canon_segment
 
 log = get_logger(__name__)
 
-DEFAULT_SCOPES = "chat jobs threads"
+DEFAULT_SCOPES = "chat jobs threads approve documents"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS app_users (
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS app_users (
     workspace        TEXT        NOT NULL,
     username      TEXT        NOT NULL,
     password_hash TEXT        NOT NULL,
-    scopes        TEXT        NOT NULL DEFAULT 'chat jobs threads',
+    scopes        TEXT        NOT NULL DEFAULT 'chat jobs threads approve documents',
     is_active     BOOLEAN     NOT NULL DEFAULT TRUE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ,
@@ -77,6 +77,18 @@ async def ensure_schema(pool: AsyncConnectionPool) -> None:
             "WHERE workspace <> LOWER(TRIM(workspace)) "
             "OR username <> LOWER(TRIM(username))")
         await conn.execute(_LOWER_INDEX)
+        # v1.0 S4: scope baru "approve"+"documents" untuk baris lama (idempoten;
+        # default tim kecil: semua user boleh me-review, SoD tetap ditegakkan
+        # di decide — deployment ketat cabut manual dari non-reviewer).
+        await conn.execute(
+            "ALTER TABLE app_users ALTER COLUMN scopes "
+            "SET DEFAULT 'chat jobs threads approve documents'")
+        await conn.execute(
+            "UPDATE app_users SET scopes = TRIM(scopes || ' approve') "
+            "WHERE scopes NOT LIKE '%approve%'")
+        await conn.execute(
+            "UPDATE app_users SET scopes = TRIM(scopes || ' documents') "
+            "WHERE scopes NOT LIKE '%documents%'")
     log.info("auth schema ready (app_users)")
 
 
