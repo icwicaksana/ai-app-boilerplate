@@ -189,7 +189,7 @@ async def test_fork_success_writes_new_thread(monkeypatch):
 
     monkeypatch.setitem(CHAT_AGENTS, "fake_chat", FakeAgent)
     cp = _cp()
-    ctrl = ThreadController(_settings(), cp, Runner())
+    ctrl = ThreadController(_settings(), cp, Runner(), store=object())
     res = await ctrl.fork(_ident(), "toko-a:budi:sess-1", "cp-2", "fake_chat")
     assert res.thread_id.startswith("toko-a:budi:sess-")
     assert res.thread_id != "toko-a:budi:sess-1"
@@ -215,7 +215,8 @@ def test_graph_for_fork_tolerates_empty_llm_creds():
     """Fork operasi DB murni: build graph tak boleh 502 tanpa LITELLM_*."""
     from langgraph.checkpoint.memory import InMemorySaver
 
-    ctrl = ThreadController(Settings(_env_file=None), InMemorySaver(), Runner())
+    ctrl = ThreadController(Settings(_env_file=None), InMemorySaver(), Runner(),
+                              store=object())
     graph = ctrl._graph_for_fork(ExampleChatAgent, "toko-a:budi:sess-x")
     assert graph is not None
 

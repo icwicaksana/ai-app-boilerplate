@@ -92,13 +92,14 @@ async def env(hitl):
     store = get_store(pool)
     await setup_persistence(cp, store)
     await repo.ensure_schema(pool)
-    yield hitl, pool, cp
+    yield hitl, pool, cp, store
     await close_pool(pool)
 
 
-def _service(settings, pool, cp) -> ApprovalService:
+def _service(settings, pool, cp, store) -> ApprovalService:
     return ApprovalService(settings, pool, cp,
-                           runner=Runner(durability="sync"))
+                           runner=Runner(durability="sync"),
+                           store=store)
 
 
 def _graph(settings, cp, thread_id: str):
@@ -109,10 +110,10 @@ def _graph(settings, cp, thread_id: str):
 
 @pytest.mark.asyncio
 async def test_full_approval_flow(env):
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     graph = _graph(settings, cp, thread_id)
 
     first = await svc.runner.run(graph, {"approved": False}, 
@@ -155,10 +156,10 @@ async def test_full_approval_flow(env):
 
 @pytest.mark.asyncio
 async def test_reject_does_not_resume(env):
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     graph = _graph(settings, cp, thread_id)
 
     first = await svc.runner.run(graph, {"approved": False},
@@ -181,10 +182,10 @@ async def test_stale_action_detected(env):
     """Aksi berubah setelah approval diminta â†’ 409 APPROVAL_STALE."""
     from app.core.approvals import ApprovalStaleError
 
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     graph = _graph(settings, cp, thread_id)
 
     first = await svc.runner.run(graph, {"approved": False},
@@ -205,11 +206,11 @@ async def test_stale_action_detected(env):
 
 @pytest.mark.asyncio
 async def test_workspace_isolation_of_approvals(env):
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     other = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     graph = _graph(settings, cp, thread_id)
 
     first = await svc.runner.run(graph, {"approved": False},
@@ -239,10 +240,10 @@ async def _make_pending(svc, settings, cp, workspace, thread_id):
 async def test_expired_approval_cannot_be_decided(env):
     from app.core.approvals import ApprovalExpiredError
 
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
 
     async with pool.connection() as conn:
@@ -260,9 +261,9 @@ async def test_expired_approval_cannot_be_decided(env):
 async def test_unknown_approval_404_and_invalid_decision(env):
     from app.core.errors import AppError
 
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     with pytest.raises(ApprovalNotFoundError):
         await svc.get(workspace=workspace, approval_id=999_999)
 
@@ -276,10 +277,10 @@ async def test_unknown_approval_404_and_invalid_decision(env):
 
 @pytest.mark.asyncio
 async def test_reject_then_approve_is_409(env):
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
 
     await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
@@ -291,10 +292,10 @@ async def test_reject_then_approve_is_409(env):
 
 @pytest.mark.asyncio
 async def test_audit_tampering_detected(env):
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
     await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
                      decision="approve")
@@ -312,10 +313,10 @@ async def test_audit_tampering_detected(env):
 
 @pytest.mark.asyncio
 async def test_no_pending_left_after_approval(env):
-    settings, pool, cp = env
+    settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
-    svc = _service(settings, pool, cp)
+    svc = _service(settings, pool, cp, store)
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
     await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
                      decision="approve")

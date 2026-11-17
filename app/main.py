@@ -205,10 +205,21 @@ async def lifespan(app: FastAPI):
         app.state.skills = build_registry(settings)
     except SkillStartupError as exc:
         log.error("%s", exc)
+        # Samakan pola RAG di atas: tutup yang sudah dibuka sebelum raise,
+        # kalau tidak restart lifespan menumpuk koneksi.
+        await close_pool(pool)
+        if cache is not None:
+            await cache.close()
         raise
     if app.state.skills:
         log.info("skills siap: %d skill, manifest=%s",
                  len(app.state.skills), app.state.skills.manifest_id[:12])
+    elif getattr(app.state.skills, "errors", ()):
+        # Registry falsy TAPI punya error = enabled namun degraded, BUKAN
+        # nonaktif. Membedakan keduanya penting untuk diagnosis startup.
+        log.warning("skills degraded: %d error (%s)",
+                    len(app.state.skills.errors),
+                    "; ".join(app.state.skills.errors[:3]))
     else:
         log.info("skills NONAKTIF (SKILLS_ENABLED=false atau tanpa skill)")
     if rag is not None:

@@ -14,7 +14,7 @@ import re
 import yaml
 
 from app.skills.model import Skill, SkillParseError
-from app.skills.validate import build_skill
+from app.skills.validate import MAX_BODY, build_skill
 
 #: `---` pembuka, isi, `---` penutup, di awal berkas.
 #: `\A` dipakai (bukan `^`) supaya frontmatter HARUS di baris pertama.
@@ -22,8 +22,13 @@ FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\r?\n(?P<meta>.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.S)
 
 
-def parse_skill(text: str, *, source: str = "<string>") -> Skill:
+def parse_skill(text: str, *, source: str = "<string>",
+                max_body: int = MAX_BODY) -> Skill:
     """Urai teks berkas skill menjadi `Skill` tervalidasi."""
+    if text.startswith("\ufeff"):
+        # Pertahanan lapis kedua: loader membaca dengan utf-8-sig, tetapi
+        # pemanggil langsung (tes, tooling) mungkin tidak.
+        text = text.lstrip("\ufeff")
     if not text or not text.strip():
         raise SkillParseError(f"{source}: berkas kosong")
 
@@ -44,4 +49,4 @@ def parse_skill(text: str, *, source: str = "<string>") -> Skill:
             f"(ditemukan {type(meta).__name__}).")
 
     body = text[match.end():].strip()
-    return build_skill(meta, body, source=source)
+    return build_skill(meta, body, source=source, max_body=max_body)

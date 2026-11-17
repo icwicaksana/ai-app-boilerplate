@@ -7,6 +7,11 @@ diambil saat F2 — sebelum F3 menyentuh `build()`.
 Kalau tes ini merah setelah perubahan F3/F4, artinya jalur lama ikut berubah:
 perbaiki wiring-nya, JANGAN ganti hash-nya. Hash hanya boleh berubah bila ada
 keputusan eksplisit mengubah prompt v0.8.3 (dan itu di luar cakupan v0.9).
+
+Verifikasi baseline (2026-11-17): `git diff 9421e80..HEAD` untuk
+BaseChatAgent/RagChatAgent/ExampleChatAgent/memory.py menunjukkan satu-satunya
+perubahan adalah penamaan graph F0-3 — konstruksi system prompt tidak
+tersentuh. Jadi hash di bawah ini setara v0.8.3 murni, bukan pasca-perubahan.
 """
 
 from __future__ import annotations
@@ -28,6 +33,18 @@ BASELINE_PROMPT_SHA = {
 BASELINE_PROMPT_SHA_MEMORY = {
     "example_chat": "d5d2aaeb29ded56b",
     "rag_chat": "0a450de73732cc22",
+}
+
+# Tool terikat per agen saat skills mati (tanpa memori). Mengunci bahwa F3
+# tidak menambah/mengurangi tool di jalur lama.
+BASELINE_BOUND_TOOLS = {
+    "example_chat": ["check_stock", "process_refund"],
+    "rag_chat": [],
+}
+BASELINE_BOUND_TOOLS_MEMORY = {
+    "example_chat": ["check_stock", "process_refund",
+                     "save_memory", "save_profile_patch"],
+    "rag_chat": ["save_memory", "save_profile_patch"],
 }
 
 HITL_DEMO_PROMPT = "Demo HITL tanpa LLM."
@@ -94,11 +111,29 @@ def test_prompt_dengan_memori_identik_baseline(agent_name, monkeypatch):
 
 @pytest.mark.parametrize("agent_name", sorted(BASELINE_PROMPT_SHA))
 def test_tidak_ada_tool_skill_terikat(agent_name, monkeypatch):
-    _, captured = _build_capture(agent_name, with_memory=False,
-                                 monkeypatch=monkeypatch)
+    agent, captured = _build_capture(agent_name, with_memory=False,
+                                     monkeypatch=monkeypatch)
     names = [getattr(t, "name", "?") for t in captured["tools"]]
     assert "load_skill" not in names
     assert "read_skill_file" not in names
+
+
+@pytest.mark.parametrize("agent_name", sorted(BASELINE_PROMPT_SHA))
+def test_nama_graph_dan_bound_tools_terkunci(agent_name, monkeypatch):
+    """Gate tidak hanya mengunci teks prompt: identitas graph + tool terikat
+    ikut dikunci, supaya perubahan wiring F3/F4 terlihat di sini."""
+    agent, captured = _build_capture(agent_name, with_memory=False,
+                                     monkeypatch=monkeypatch)
+    assert captured["name"] == agent.AGENT_NAME
+    assert agent.bound_tools == BASELINE_BOUND_TOOLS[agent_name]
+    assert "middleware" in captured
+
+
+@pytest.mark.parametrize("agent_name", sorted(BASELINE_PROMPT_SHA_MEMORY))
+def test_bound_tools_dengan_memori_terkunci(agent_name, monkeypatch):
+    agent, _ = _build_capture(agent_name, with_memory=True,
+                              monkeypatch=monkeypatch)
+    assert agent.bound_tools == BASELINE_BOUND_TOOLS_MEMORY[agent_name]
 
 
 def test_hitl_demo_prompt_terkunci():

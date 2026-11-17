@@ -173,10 +173,11 @@ def test_resolve_root_absolut_lewat_apa_adanya():
 
 def test_resolve_root_relatif_dari_akar_repo_bukan_cwd():
     """Relatif dihitung dari akar repo — cwd pemanggil tidak relevan."""
-    out = resolve_root(_settings(SKILLS_DIR="app/skills"))
+    out = resolve_root(_settings(SKILLS_DIR="skills"))
     assert out.is_absolute()
     assert out.name == "skills"
-    assert out.parent.name == "app"
+    # Bukan di bawah cwd melainkan di bawah akar repo (ada app/ di sampingnya).
+    assert (out.parent / "app").is_dir()
 
 
 # --- health ---------------------------------------------------------------------
@@ -233,3 +234,73 @@ def test_health_tidak_pernah_raise():
 
     out = _skills_status(object(), _settings(SKILLS_ENABLED=True))
     assert out.startswith("down (")
+
+
+# --- hardening hasil review QA -------------------------------------------------
+
+def test_encoding_rusak_jadi_error_bukan_boot_mati(monkeypatch):
+    """Satu skill ber-encoding salah tidak boleh membunuh boot non-strict."""
+    from pathlib import Path as _Path
+
+    real_read = _Path.read_text
+
+    def boom(self, *a, **k):
+        if self.parent.name == "alpha":
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "byte salah")
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(_Path, "read_text", boom)
+    skills, errors = load_skills(GOOD)
+    assert [s.name for s in skills] == ["zebra"]
+    assert len(errors) == 1 and "alpha" in errors[0]
+
+
+def test_berkas_raksasa_ditolak_sebelum_dibaca():
+    skills, errors = load_skills(GOOD, max_file_bytes=10)
+    assert skills == []
+    assert len(errors) == 2
+    assert "melebihi batas baca" in errors[0]
+
+
+def test_batas_body_dari_settings_ditegakkan():
+    """SKILL_BODY_MAX_CHARS bukan setting mati — boot strict gagal."""
+    s = _settings(SKILLS_ENABLED=True, SKILLS_STRICT=True)
+    # Field punya ge=100, jadi nilai uji disetel langsung (bypass validasi
+    # konstruksi) — yang diuji adalah boot MENERUSKAN nilainya ke loader.
+    s.SKILL_BODY_MAX_CHARS = 10
+    with pytest.raises(SkillStartupError, match="melebihi batas"):
+        build_registry(s, root=GOOD)
+
+
+def test_batas_entri_dari_settings_ditegakkan():
+    """SKILLS_MAX_ENTRIES bukan setting mati — kelebihan dipotong + error."""
+    reg = build_registry(
+        _settings(SKILLS_ENABLED=True, SKILLS_STRICT=False,
+                  SKILLS_MAX_ENTRIES=1),
+        root=GOOD)
+    assert reg.names() == ("alpha",)
+    assert len(reg.errors) == 1
+    assert "SKILLS_MAX_ENTRIES=1" in reg.errors[0]
+
+
+def test_skill_membawa_daftar_berkas_l3():
+    """Skill.files diisi loader — tidak ada medan mati."""
+    skills, _ = load_skills(GOOD)
+    by_name = {s.name: s for s in skills}
+    assert by_name["alpha"].files == ("references/detail.md",)
+    assert by_name["zebra"].files == ()
+
+
+def test_nama_traversal_ditolak_saat_list():
+    assert load_supporting_files(GOOD, "../../etc") == []
+    assert load_supporting_files(GOOD, "Alpha") == []
+    assert load_supporting_files(GOOD, "") == []
+
+
+def test_bom_ditoleransi():
+    from app.skills.parser import parse_skill
+
+    skill = parse_skill(
+        "\ufeff---\nname: sop-a\ndescription: cukup panjang sekali\n"
+        "when_to_use: kapan saja\n---\n\nisi")
+    assert skill.name == "sop-a"

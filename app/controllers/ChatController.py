@@ -14,7 +14,12 @@ from app.controllers.base import BaseController
 from app.controllers.registry import CHAT_AGENTS
 from app.controllers.runner import Runner
 from app.core.config import Settings
-from app.core.errors import AgentNotFoundError, AppError, UpstreamAIError
+from app.core.errors import (
+    AgentNotFoundError,
+    AppError,
+    UpstreamAIError,
+    public_error_detail,
+)
 from app.core.logging import get_logger
 from app.core.threads import ThreadIdentity
 from app.helpers.response import stream_error
@@ -91,7 +96,7 @@ class ChatController(BaseController):
             terminal = "error"
             log.exception("chat init gagal")
             yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
-                detail=f"{type(exc).__name__}: {exc}", request_id=request_id)}
+                detail=public_error_detail(exc), request_id=request_id)}
             return
         try:
             async for event in agent.stream_agent(req.input, config):
@@ -105,7 +110,7 @@ class ChatController(BaseController):
             terminal = "error"
             log.exception("chat stream gagal")
             yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
-                detail=f"{type(exc).__name__}: {exc}", request_id=request_id)}
+                detail=public_error_detail(exc), request_id=request_id)}
         finally:
             self.log_done("chat stream", request_id=request_id, thread_id=thread_id,
                           agent=req.agent, status=terminal, started=started)

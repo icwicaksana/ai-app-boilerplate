@@ -191,7 +191,10 @@ class Settings(BaseSettings):
     # Default MATI: perilaku v0.8.3 harus IDENTIK byte-per-byte bila false.
     # System prompt tidak boleh berubah sama sekali saat fitur ini mati.
     SKILLS_ENABLED: bool = False
-    SKILLS_DIR: str = "app/skills"
+    # Direktori KONTEN (markdown operator), bukan paket kode. Sengaja terpisah
+    # dari `app/skills/`: konten campur kode berarti satu direktori `utils/`
+    # di masa depan bisa menjadi error boot dalam strict mode.
+    SKILLS_DIR: str = "skills"
     # True = satu skill rusak menggagalkan boot (operator salah tulis harus
     # ketahuan saat deploy, bukan diam-diam skill hilang dari indeks).
     SKILLS_STRICT: bool = True

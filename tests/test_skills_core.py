@@ -29,11 +29,6 @@ FIXTURE = Path(__file__).parent / "fixtures" / "skills"
 
 
 def _parse_file(path: Path):
-    return parse_skill(path.read_text(encoding="utf-8"), source=path.name)
-
-
-
-def _parse_file(path):
     return parse_skill(path.read_text(encoding="utf-8"),
                        source=str(path.name))
 
@@ -121,6 +116,13 @@ def test_description_terlalu_pendek_ditolak():
 def test_description_multibaris_ditolak():
     with pytest.raises(SkillValidationError, match="satu baris"):
         parse_skill('---\nname: sop-a\ndescription: "baris satu\\nbaris dua"\n'
+                    "when_to_use: kapan saja\n---\n\nisi")
+
+
+def test_carriage_return_ditolak():
+    """\\r tunggal = injeksi baris di indeks L1 (tanpa escaping saat render)."""
+    with pytest.raises(SkillValidationError, match="satu baris"):
+        parse_skill('---\nname: sop-a\ndescription: "satu\\rdua cukup panjang"\n'
                     "when_to_use: kapan saja\n---\n\nisi")
 
 

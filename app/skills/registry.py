@@ -27,12 +27,16 @@ class SkillRegistry:
     errors: tuple[str, ...] = field(default_factory=tuple)
     #: Akar direktori, disimpan untuk resolusi berkas L3.
     root: str | None = None
+    #: Sidik jari roster — dihitung SEKALI saat build, bukan per akses.
+    #: `/health` memanggilnya tiap probe; hash ulang 800 KB per probe
+    #: adalah pola salah arah.
+    manifest_id: str = ""
 
     # --- konstruksi -----------------------------------------------------
 
     @classmethod
     def empty(cls) -> "SkillRegistry":
-        return cls()
+        return cls(manifest_id=_manifest_id([]))
 
     @classmethod
     def build(cls, skills: list[Skill], errors: list[str] | None = None,
@@ -40,7 +44,8 @@ class SkillRegistry:
         # Urutkan di sini supaya SEMUA turunan (indeks, manifest) deterministik
         # tanpa bergantung pada urutan direktori di disk.
         ordered = tuple(sorted(skills, key=lambda s: s.name))
-        return cls(skills=ordered, errors=tuple(errors or ()), root=root)
+        return cls(skills=ordered, errors=tuple(errors or ()), root=root,
+                   manifest_id=_manifest_id(ordered))
 
     # --- akses ----------------------------------------------------------
 
@@ -58,10 +63,6 @@ class SkillRegistry:
         return build_index(self.skills,
                            include_when_to_use=include_when_to_use,
                            max_entries=max_entries)
-
-    @property
-    def manifest_id(self) -> str:
-        return _manifest_id(self.skills)
 
     def __len__(self) -> int:
         return len(self.skills)

@@ -42,7 +42,8 @@ async def test_fork_copies_prefix_then_delete_source(persistence, tag):
                               {"messages": [HumanMessage(content="m0"),
                                             HumanMessage(content="m1")]})
 
-    ctrl = ThreadController(_dummy_settings(), checkpointer, Runner())
+    ctrl = ThreadController(_dummy_settings(), checkpointer, Runner(),
+                             store=store)
     mem = MemoryStore(store, workspace, user)
     await mem.put_profile({"nama": "Budi"})
     forked_id: str | None = None

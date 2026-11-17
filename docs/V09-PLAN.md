@@ -21,6 +21,8 @@ setiap fork klien mewarisi rencana ini dan bisa menelusuri alasan keputusan.
 | K8 | Skill `scripts/` tidak dieksekusi | Butuh sandbox executor → v1.0 |
 | K9 | **Filter stream berbasis TAG, bukan kedalaman** | Diukur: di dalam `create_agent`, model graph ROOT berjalan di namespace `model:<uuid>` (depth 1) — SAMA dengan child di `tools:<uuid>`. Kedalaman tidak membedakan induk/anak. `parent_ids` (root=2, child=5) hanya heuristik internal LangGraph. Maka penandaan eksplisit wajib, dan `make_subagent_tool()` jadi satu-satunya jalur sah. |
 | K10 | **Guard binding di FACTORY, bukan di agen** | D11 menetapkan degradasi tanpa retriever itu disengaja (RAG mati → chat tetap jalan). Karena itu agen tidak boleh melempar. Yang harus membedakan adalah **jalur wiring**: chat boleh degraded, resume-approval dan fork **tidak**. Percobaan menaruh raise di `BaseChatAgent` menggagalkan `test_chat_degradasi_tanpa_retriever` dan sudah di-revert. |
+| K11 | **Detail error 500 digenerikkan ke klien** | Pesan operasional (4xx, 502/503) lewat apa adanya; 500 → "Terjadi kesalahan internal."; exception tak dikenal → nama tipe saja. Detail penuh di log (korelasi `request_id`). `public_error_detail()` di `errors.py` dipakai handler HTTP + SSE. |
+| K12 | **Direktori konten skill terpisah dari kode** | `SKILLS_DIR` default `skills/` (akar repo), bukan `app/skills/`. Konten operator campur modul Python = satu direktori baru bisa jadi error boot strict. |
 
 ---
 
@@ -97,7 +99,9 @@ Settings grup v0.9 di `config.py`:
 
 ```python
 SKILLS_ENABLED: bool = False
-SKILLS_DIR: str = "app/skills"
+SKILLS_DIR: str = "skills"  # direktori konten, BUKAN app/skills (K12)
+SKILLS_STRICT: bool = True  # skill rusak gagalkan boot (pengecualian: dir hilang)
+SKILLS_INDEX_INCLUDE_WHEN: bool = True
 SKILLS_MAX_ENTRIES: int = 40
 SKILL_BODY_MAX_CHARS: int = 20_000
 SUBAGENTS_ENABLED: bool = False
@@ -180,3 +184,14 @@ Telemetri `skill_load` (F3) adalah sumber data untuk pemicu di atas.
 
 Router skill (RRF/embedding/Jev) · eksekusi `scripts/` · upload skill dari user ·
 hot-reload skill · Text-to-SQL · spawn dinamis (v0.10+, capability-scoped).
+
+Temuan review QA F2 yang SENGAJA ditunda (pre-existing, bukan regresi v0.9 —
+jangan kerjakan diam-diam di tengah F3/F4):
+- approvals membangun graph penuh (butuh LLM) hanya untuk baca checkpoint.
+- Fork membuang interrupts + `deepcopy` values tanpa batas ukuran.
+- Nama tool `subagent:<name>` (K3) harus diverifikasi lawan validator nama
+  tool LangChain SEBELUM F4 menulis `make_subagent_tool` — titik dua sering
+  ditolak (`^[a-zA-Z0-9_-]+$`); bila ditolak, K3 direvisi (mis. `subagent__x`).
+- P0-3 versi reviewer ("klaim sebelum validasi agen") adalah false positive:
+  `_assert_not_stale` (sebelum klaim) sudah memanggil `_graph_for` yang
+  melempar `AgentNotFoundError` untuk agen tak dikenal.

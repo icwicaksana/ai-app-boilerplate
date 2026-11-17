@@ -10,7 +10,7 @@ MASALAH YANG DITUTUP
     dan tool memori hilang, `bound_tools` jadi `[]`, dan tidak ada satu pun
     error. Tool tulis yang seharusnya butuh approval pun bisa ikut lepas.
 
-D11 TETAP DIHORMATI
+D11 TETAP DIHORMATI — DENGAN KEJUJURAN TENTANG BATASNYA
     Degradasi tanpa retriever itu DISENGAJA untuk jalur chat: RAG mati ->
     chat tetap jalan. Jadi agen tidak boleh melempar. Yang boleh berbeda
     adalah JALUR, bukan agen — karena itu mode ketiadaannya eksplisit:
@@ -18,6 +18,13 @@ D11 TETAP DIHORMATI
       "degrade"        -> retriever None, agen jalan apa adanya (chat D11)
       "raise_embedding"-> EmbeddingUnavailableError / 503 (jalur chat ber-RAG)
       "raise_binding"  -> AgentBindingError / 500 (resume & fork: wiring salah)
+
+    CATATAN JUJUR (hasil review QA F2): di produksi, chat selalu memakai
+    "raise_embedding" dan resume/fork selalu "raise_binding" — tidak ada
+    jalur produksi yang memakai "degrade". Artinya untuk agen NEEDS_RETRIEVER
+    via chat, yang berlaku adalah 503 (bukan degradasi); D11 berlaku untuk
+    agen non-RAG dan konstruksi langsung di luar controller. Mode "degrade"
+    dipertahankan sebagai default aman, bukan sebagai perilaku chat.
 """
 
 from __future__ import annotations
@@ -59,15 +66,30 @@ def build_agent_context(
 
     `store` adalah PostgresStore mentah (bukan MemoryStore); MemoryStore
     dibungkus per-user di sini supaya namespace terkunci ke thread ini.
-    """
-    memory = None
-    if store is not None:
-        workspace = _workspace_of(session_id)
-        if workspace is not None:
-            from app.infra.memory import MemoryStore
 
-            _, user, _ = _parts(session_id)
-            memory = MemoryStore(store, workspace, user)
+    Pada mode "raise_binding" (resume/fork), store yang hilang ATAU thread_id
+    yang tak valid ikut melempar — bukan hanya retriever. Tanpa ini, graph
+    resume kehilangan tool memori + MEMORY_RULES secara diam-diam (kelas bug
+    yang sama dengan P0-2, hanya di sumbu memori).
+    """
+    strict = missing_retriever == "raise_binding"
+    if strict and store is None:
+        raise AgentBindingError(
+            "jalur resume-approval / fork thread tidak menyertakan store "
+            f"(session={session_id!r}). Tanpa store, graph dibangun ulang "
+            f"tanpa tool memori — skema berbeda dari graph yang di-interrupt.")
+    workspace = _workspace_of(session_id)
+    if strict and workspace is None:
+        raise AgentBindingError(
+            f"thread_id tidak valid untuk membangun context: {session_id!r}. "
+            f"Jalur resume-approval / fork thread tidak boleh menebak "
+            f"namespace memori.")
+    memory = None
+    if store is not None and workspace is not None:
+        from app.infra.memory import MemoryStore
+
+        _, user, _ = _parts(session_id)
+        memory = MemoryStore(store, workspace, user)
 
     retriever = _retriever_for(
         agent_cls=agent_cls, settings=settings, pool=pool, rag=rag,

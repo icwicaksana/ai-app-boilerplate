@@ -18,8 +18,13 @@ def resolve_root(settings) -> Path:
 
     Tanpa ini, menjalankan `uvicorn` dari direktori lain akan memuat nol
     skill tanpa error — dan agent diam-diam kehilangan seluruh prosedurnya.
+
+    CATATAN: `parents[2]` mengasumsikan layout checkout repo
+    (`<repo>/app/skills/boot.py`). Bila diinstal sebagai package, pasang
+    `SKILLS_DIR` absolut. Deployment yang ragu-ragu: cek log startup
+    ("skills siap" vs "NONAKTIF") dan `/health` → `checks.skills`.
     """
-    root = Path(getattr(settings, "SKILLS_DIR", "app/skills"))
+    root = Path(getattr(settings, "SKILLS_DIR", "skills"))
     if root.is_absolute():
         return root
     # app/skills/boot.py -> parents[2] = akar repo
@@ -34,12 +39,25 @@ def build_registry(settings, *, root: Path | None = None) -> SkillRegistry:
 
     root_path = root or resolve_root(settings)
     if not root_path.is_dir():
-        # Direktori tidak ada BUKAN error bila fitur dinyalakan tanpa skill:
-        # deployment baru boleh menyala lebih dulu, skill menyusul.
+        # PENGECUALIAN SKILLS_STRICT YANG DISENGAJA: direktori tidak ada
+        # bukan fatal — deployment baru boleh menyala lebih dulu, skill
+        # menyusul. Tetapi skill yang ADA dan rusak TETAP menggagalkan boot
+        # di bawah strict. Perbedaannya: ketiadaan vs kerusakan.
         return SkillRegistry.build([], [f"direktori skill tidak ada: {root_path}"],
                                    root=str(root_path))
 
-    skills, errors = load_skills(root_path)
+    max_body = int(getattr(settings, "SKILL_BODY_MAX_CHARS", 20_000))
+    skills, errors = load_skills(root_path, max_body_chars=max_body)
+
+    max_entries = int(getattr(settings, "SKILLS_MAX_ENTRIES", 40))
+    if len(skills) > max_entries:
+        # Diurutkan dulu (load_skills sudah alfabetis) supaya pemotongan
+        # deterministik: skill yang sama selalu selamat di setiap boot.
+        errors = list(errors) + [
+            f"{len(skills)} skill melebihi SKILLS_MAX_ENTRIES={max_entries} "
+            f"— {max_entries} pertama dimuat, sisanya diabaikan"]
+        skills = skills[:max_entries]
+
     if errors and getattr(settings, "SKILLS_STRICT", True):
         raise SkillStartupError(
             "skill gagal dimuat dan SKILLS_STRICT=true:\n  - "

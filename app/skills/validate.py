@@ -44,7 +44,8 @@ def _require_str(meta: dict, key: str, *, source: str) -> str:
     return value.strip()
 
 
-def build_skill(meta: dict, body: str, *, source: str = "<string>") -> Skill:
+def build_skill(meta: dict, body: str, *, source: str = "<string>",
+                max_body: int = MAX_BODY) -> Skill:
     """Validasi meta+body lalu bentuk `Skill`. Raise SkillValidationError."""
     unknown = set(meta) - KNOWN_FIELDS
     if unknown:
@@ -59,7 +60,7 @@ def build_skill(meta: dict, body: str, *, source: str = "<string>") -> Skill:
             f"diawali huruf/angka (ditemukan {name!r}).")
 
     description = _require_str(meta, "description", source=source)
-    if "\n" in description:
+    if "\n" in description or "\r" in description:
         raise SkillValidationError(
             f"{source}: 'description' harus satu baris (dipakai di indeks).")
     if not (MIN_DESCRIPTION <= len(description) <= MAX_DESCRIPTION):
@@ -68,7 +69,7 @@ def build_skill(meta: dict, body: str, *, source: str = "<string>") -> Skill:
             f"karakter (ditemukan {len(description)}).")
 
     when_to_use = _require_str(meta, "when_to_use", source=source)
-    if "\n" in when_to_use:
+    if "\n" in when_to_use or "\r" in when_to_use:
         raise SkillValidationError(
             f"{source}: 'when_to_use' harus satu baris.")
     if not (MIN_WHEN_TO_USE <= len(when_to_use) <= MAX_WHEN_TO_USE):
@@ -97,9 +98,9 @@ def build_skill(meta: dict, body: str, *, source: str = "<string>") -> Skill:
     body = (body or "").strip()
     if len(body) < MIN_BODY:
         raise SkillValidationError(f"{source}: body skill kosong.")
-    if len(body) > MAX_BODY:
+    if len(body) > max_body:
         raise SkillValidationError(
-            f"{source}: body {len(body)} karakter melebihi batas {MAX_BODY}. "
+            f"{source}: body {len(body)} karakter melebihi batas {max_body}. "
             f"Pindahkan detail ke berkas L3 dan rujuk dari body.")
 
     return Skill(

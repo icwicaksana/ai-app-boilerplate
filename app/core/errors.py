@@ -314,11 +314,28 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content=job_error(
-            title=exc.title, detail=exc.message, status=exc.status_code,
+            title=exc.title, detail=public_error_detail(exc),
+            status=exc.status_code,
             code=exc.code, instance=resolve_instance(request),
         ),
         headers=exc.headers or None,
     )
+
+
+def public_error_detail(exc: BaseException) -> str:
+    """Detail error yang AMAN dikirim ke klien.
+
+    Aturan: pesan operasional (4xx, 502/503 — user bisa bertindak) lewat apa
+    adanya; pesan 500 digenerikkan (isinya uraian wiring/path internal);
+    exception tak dikenal hanya nama tipenya (pesannya bisa bawa path,
+    DSN, atau dump driver). Detail penuh selalu ada di log server dan bisa
+    dikorelasikan via request_id.
+    """
+    if isinstance(exc, AppError):
+        if exc.status_code == 500:
+            return "Terjadi kesalahan internal."
+        return exc.message
+    return type(exc).__name__
 
 
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

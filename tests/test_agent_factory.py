@@ -57,6 +57,27 @@ def test_pesan_error_menyebut_jalur_penyebab():
     assert "fork thread" in pesan
 
 
+def test_resume_tanpa_store_gagal_keras():
+    """P0-2: tanpa store, graph resume kehilangan tool memori diam-diam."""
+    with pytest.raises(AgentBindingError):
+        _build(agent_cls=_AgenBiasa, store=None,
+               missing_retriever="raise_binding")
+
+
+def test_resume_thread_id_tak_valid_gagal_keras():
+    """P0-2: thread format lama tak bisa diikat ke namespace memori."""
+    with pytest.raises(AgentBindingError):
+        _build(agent_cls=_AgenBiasa, store=object(), session_id="thr-xxx",
+               missing_retriever="raise_binding")
+
+
+def test_resume_lengkap_tidak_gagal():
+    ctx = _build(agent_cls=_AgenBiasa, store=object(),
+                 missing_retriever="raise_binding")
+    assert ctx.store is not None
+    assert ctx.retriever is None
+
+
 # --- jalur chat: perilaku LAMA dipertahankan ------------------------------
 
 def test_chat_rag_mati_tetap_503():
@@ -73,7 +94,10 @@ def test_chat_degradasi_boleh_tanpa_retriever():
 
 def test_agen_tanpa_kebutuhan_tidak_pernah_gagal():
     for mode in ("degrade", "raise_embedding", "raise_binding"):
-        ctx = _build(agent_cls=_AgenBiasa, missing_retriever=mode)
+        # store disediakan: raise_binding mewajibkan store (P0-2) terlepas
+        # dari kebutuhan retriever — yang diuji di sini adalah retriever.
+        ctx = _build(agent_cls=_AgenBiasa, store=object(),
+                     missing_retriever=mode)
         assert ctx.retriever is None, mode
 
 

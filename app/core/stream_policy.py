@@ -36,6 +36,14 @@ CATATAN: HEURISTIK KEDALAMAN DIBUANG (diukur, bukan diduga)
     satu-satunya mekanisme yang stabil. Itulah alasan `make_subagent_tool()`
     bersifat WAJIB.
 
+CATATAN: KETERGANTUNGAN PERILAKU LANGGRAPH
+    Lapis 2 bertumpu pada "tag config merambat ke event model child" —
+    perilaku yang terbukti pada langchain==1.4.6 / langchain-core==1.6.10 /
+    langgraph==1.2.15 (diuji tests/test_stream_leak_regression.py) tetapi
+    tidak dijamin API publik. Bila upgrade LangGraph membuat
+    `test_tag_subagent_menutup_kebocoran` merah, JANGAN hijau-kan dengan
+    mengubah tes — selidiki propagasi tag dulu.
+
 Modul ini MURNI: tanpa I/O, tanpa import LangGraph, mudah dites langsung.
 """
 
@@ -52,8 +60,11 @@ CLIENT_EVENT_KINDS = frozenset({
 })
 
 #: Tag penanda run yang tidak boleh dipancarkan ke klien.
-#: `subagent` dipasang oleh make_subagent_tool(); `internal` untuk model
-#: bantu (klasifikasi, ringkasan) yang bukan bagian percakapan.
+#: Pemilik tiap tag (tag tanpa pemilik = risiko over-filter saat dipakai ulang):
+#: * `subagent`  — dipasang oleh make_subagent_tool() (F4, wajib).
+#: * `internal`  — model bantu (klasifikasi, ringkasan) yang bukan percakapan.
+#: * `no-stream` — CADANGAN untuk integrasi pihak ketiga; belum ada produsen
+#:   di repo ini. Jangan pakai untuk arti lain tanpa memperbarui komentar ini.
 HIDDEN_TAGS = frozenset({"subagent", "internal", "no-stream"})
 
 
