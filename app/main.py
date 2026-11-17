@@ -65,12 +65,15 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException) -> J
 
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    from app.core.errors import public_error_detail, to_public_error
+
     log.exception("unhandled error")
+    mapped = to_public_error(exc)
     return JSONResponse(
-        status_code=500,
+        status_code=mapped.status_code,
         content=job_error(
-            title="Internal Error", detail="Terjadi kesalahan internal.",
-            status=500, code="INTERNAL_ERROR",
+            title=mapped.title, detail=public_error_detail(mapped),
+            status=mapped.status_code, code=mapped.code,
             instance=resolve_instance(request),
         ),
     )

@@ -118,7 +118,7 @@ async def test_producer_writes_error_terminal_on_failure():
                     events=_stream({"type": "token", "delta": "a"}))
     await asyncio.gather(*list(mgr._tasks.values()))
     # error terminal tetap ditulis walau append pertama gagal? append berikutnya
-    # juga akan gagal pada fake ini â†’ cukup pastikan finish dipanggil & tak raise.
+    # juga akan gagal pada fake ini → cukup pastikan finish dipanggil & tak raise.
     assert log.finished is True
 
 

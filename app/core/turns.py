@@ -96,11 +96,10 @@ class TurnManager:
             log.exception("turn producer gagal turn=%s", turn_id)
             terminal = True
             try:
-                await self.turnlog.append(workspace=workspace, turn_id=turn_id, event={
-                    "type": "error", "title": "Stream Failed",
-                    "status": 500, "code": "STREAM_FAILED",
-                    "detail": f"{type(exc).__name__}: {exc}", "instance": "-",
-                })
+                from app.helpers.response import stream_error_from
+
+                await self.turnlog.append(workspace=workspace, turn_id=turn_id,
+                                          event=stream_error_from(exc))
             except Exception:
                 log.exception("gagal menulis error terminal turn=%s", turn_id)
         finally:

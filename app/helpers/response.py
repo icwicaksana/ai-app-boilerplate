@@ -136,3 +136,19 @@ def stream_error(
                     code=code, instance=request_id)
     return StreamError(title=body["title"], status=body["status"], detail=body["detail"],
                        instance=body["instance"], code=body["code"]).model_dump(mode="json")
+
+
+def stream_error_from(exc: BaseException, *, request_id: str = "-") -> dict[str, Any]:
+    """Event error terminal dari exception APAPUN (v1.0 R12+R14).
+
+    Satu-satunya jalan aman: AppError diteruskan (status/code asli —
+    429/502/503 tak lagi jadi 500), hulu dipetakan 502/504, tak dikenal
+    digenerikkan (tanpa bocor pesan driver). Import lazy: errors.py memakai
+    job_error() dari modul ini (siklus top-level).
+    """
+    from app.core.errors import public_error_detail, to_public_error
+
+    mapped = to_public_error(exc)
+    return stream_error(detail=public_error_detail(mapped), title=mapped.title,
+                        status=mapped.status_code, code=mapped.code,
+                        request_id=request_id)

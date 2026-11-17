@@ -35,7 +35,7 @@ from app.agents.AgentContext import AgentContext
 from app.agents.utils.MessageUtils import extract_last_ai_text
 from app.agents.utils.MiddlewareBuilderUtils import build_middleware
 from app.core.logging import get_logger
-from app.helpers.response import stream_error, stream_started, stream_success
+from app.helpers.response import stream_error, stream_error_from, stream_started, stream_success
 from app.infra.llm import get_llm
 from app.infra.memory import (
     FACTS_MSG_ID,
@@ -291,7 +291,7 @@ class BaseChatAgent:
             state = self._to_state(clean, profile_text, facts_text, clear_stale)
         except Exception as exc:  # jangan pernah mulai stream tanpa state valid
             log.exception("stream_agent %s _to_state gagal", type(self).__name__)
-            yield stream_error(detail=f"{type(exc).__name__}: {exc}")
+            yield stream_error_from(exc)
             return
         final: dict[str, Any] | None = None
         failed = False
@@ -321,7 +321,7 @@ class BaseChatAgent:
                     yield event
         except Exception as exc:  # gagal mid-stream: tutup dengan event error terminal
             log.exception("stream_agent %s gagal", type(self).__name__)
-            yield stream_error(detail=f"{type(exc).__name__}: {exc}")
+            yield stream_error_from(exc)
             return
         if final is None and not failed:  # pengaman: runner tak yield result
             if saw_content:
@@ -339,7 +339,7 @@ class BaseChatAgent:
                 result = await self.runner.run(self.graph, state, config)
             except Exception as exc:
                 log.exception("stream_agent %s fallback run gagal", type(self).__name__)
-                yield stream_error(detail=f"{type(exc).__name__}: {exc}")
+                yield stream_error_from(exc)
                 return
             reply = extract_last_ai_text(result.get("messages", []))
             output = self._safe_postprocess(reply)

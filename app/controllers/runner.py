@@ -23,6 +23,7 @@ from app.core.logging import get_logger
 from app.core.stream_policy import StreamPolicy
 from app.helpers.response import (
     stream_error,
+    stream_error_from,
     stream_started,
     stream_thinking,
     stream_token,
@@ -145,7 +146,7 @@ class Runner:
             except Exception as exc:
                 log.exception("runner stream fallback gagal (thread=%s)",
                               _thread_of(config))
-                yield stream_error(detail=f"{type(exc).__name__}: {exc}")
+                yield stream_error_from(exc)
                 return
             yield {"type": "result", **result}
             return
@@ -164,7 +165,7 @@ class Runner:
                 raise
             except Exception as exc:
                 log.exception("runner stream gagal (thread=%s)", _thread_of(config))
-                yield stream_error(detail=f"{type(exc).__name__}: {exc}")
+                yield stream_error_from(exc)
                 return
             final = await self._final_result_event(graph, config)
             if final is None:  # checkpoint tak terbaca = gagal, bukan result kosong

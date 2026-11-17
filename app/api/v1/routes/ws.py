@@ -360,10 +360,9 @@ class _Connection:
             raise
         except Exception as exc:
             log.exception("WS run gagal")
-            await self._put({"type": "error", "code": "STREAM_FAILED",
-                             "status": 500, "title": "Stream Failed",
-                             "detail": f"{type(exc).__name__}: {exc}",
-                             "instance": "-"})
+            from app.helpers.response import stream_error_from
+
+            await self._put(stream_error_from(exc))
 
     async def _record(self, event: dict, thread_id: str, agent: str) -> None:
         """v0.6: interrupt → approval pending (sama seperti jalur SSE)."""

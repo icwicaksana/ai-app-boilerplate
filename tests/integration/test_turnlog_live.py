@@ -1,4 +1,4 @@
-﻿"""Integrasi: TurnLog di Valkey ASLI (Streams, cursor, TTL, terminal)."""
+"""Integrasi: TurnLog di Valkey ASLI (Streams, cursor, TTL, terminal)."""
 
 import asyncio
 
@@ -31,7 +31,7 @@ async def test_create_append_replay_and_cursor(cache):
     assert [e["type"] for _, e in rows] == ["started", "token", "token", "result"]
     assert rows[1][1]["delta"] == "a"
 
-    # cursor eksklusif: mulai dari entry kedua â†’ tidak mengulang yang pertama
+    # cursor eksklusif: mulai dari entry kedua → tidak mengulang yang pertama
     rows2 = await log.replay(workspace=WORKSPACE, turn_id=turn, cursor=rows[0][0])
     assert [e["type"] for _, e in rows2] == ["token", "token", "result"]
 
@@ -85,7 +85,7 @@ async def test_workspace_isolation(cache):
 
 @pytest.mark.asyncio
 async def test_follow_returns_when_key_missing(cache):
-    """Turn tak dikenal â†’ follow berhenti cepat, tidak menggantung."""
+    """Turn tak dikenal → follow berhenti cepat, tidak menggantung."""
     log = _log(cache)
     got = [e async for _, e in log.follow(
         workspace=WORKSPACE, turn_id=new_turn_id(), block_ms=100, idle_timeout_s=10)]

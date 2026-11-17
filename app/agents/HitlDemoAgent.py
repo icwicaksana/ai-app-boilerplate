@@ -1,4 +1,4 @@
-﻿"""Agent demo HITL (v0.6) â€” TANPA LLM, untuk mencoba alur approval.
+"""Agent demo HITL (v0.6) — TANPA LLM, untuk mencoba alur approval.
 
 Alur: node `propose` memanggil `interrupt()` dengan payload gaya
 `HITLRequest` (aksi refund Rp 750.000), lalu menunggu keputusan. Setelah
@@ -59,7 +59,7 @@ class HitlDemoAgent(BaseChatAgent):
             return {
                 "executed": approved,
                 "outcome": ("Refund dieksekusi" if approved
-                            else "Refund ditolak â€” tidak ada aksi"),
+                            else "Refund ditolak — tidak ada aksi"),
             }
 
         g = StateGraph(_DemoState)

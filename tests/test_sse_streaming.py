@@ -102,8 +102,11 @@ def test_midstream_raise_yields_terminal_error_no_result():
     events = _run(_collect(FakeGraph(script, [])))
     kinds = [e["type"] for e in events]
     assert kinds == ["started", "token", "error"]
-    assert events[-1]["code"] == "STREAM_FAILED"
-    assert "TimeoutError" in events[-1]["detail"]
+    # v1.0 R14: TimeoutError builtin = hulu timeout (504), bukan 500 generik;
+    # R12: pesan driver tak bocor (generik, bisa ditindaklanjuti).
+    assert events[-1]["code"] == "UPSTREAM_TIMEOUT"
+    assert events[-1]["status"] == 504
+    assert "llm putus" not in events[-1]["detail"]
 
 
 def test_empty_deltas_skipped():

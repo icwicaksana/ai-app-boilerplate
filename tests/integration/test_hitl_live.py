@@ -2,8 +2,8 @@
 
 Skenario:
 1. Graf berhenti di `interrupt()` (payload gaya HITLRequest).
-2. Interrupt dicatat â†’ baris approval pending + audit `approval_requested`.
-3. Approve â†’ graph di-resume (decisions) â†’ selesai; audit `approval_decided`.
+2. Interrupt dicatat → baris approval pending + audit `approval_requested`.
+3. Approve → graph di-resume (decisions) → selesai; audit `approval_decided`.
 4. Double-decide → 409; reject → resume cabang tolak; hash chain valid.
 """
 
@@ -139,7 +139,7 @@ async def test_full_approval_flow(env):
     snap = await graph.aget_state({"configurable": {"thread_id": thread_id}})
     assert snap.values.get("executed") is True
 
-    # Double decide â†’ 409 (bukan eksekusi ganda)
+    # Double decide → 409 (bukan eksekusi ganda)
     with pytest.raises(ApprovalStateError):
         await svc.decide(workspace=workspace, actor="sari",
                          approval_id=approval_id, decision="approve")
@@ -180,7 +180,7 @@ async def test_reject_resumes_ke_cabang_tolak(env):
 
 @pytest.mark.asyncio
 async def test_stale_action_detected(env):
-    """Aksi berubah setelah approval diminta â†’ 409 APPROVAL_STALE."""
+    """Aksi berubah setelah approval diminta → 409 APPROVAL_STALE."""
     from app.core.approvals import ApprovalStaleError
 
     settings, pool, cp, store = env
@@ -194,7 +194,7 @@ async def test_stale_action_detected(env):
     rows = await svc.record_interrupts(workspace=workspace, thread_id=thread_id,
                                        agent="hitl_fake",
                                        interrupts=first["interrupts"])
-    # Rusak hash tersimpan â†’ mensimulasikan aksi berubah sejak approval.
+    # Rusak hash tersimpan → mensimulasikan aksi berubah sejak approval.
     async with pool.connection() as conn:
         await conn.execute(
             "UPDATE approvals SET action_hash = %s WHERE id = %s",

@@ -30,7 +30,7 @@ def _post_chat(client, headers=None):
 
 
 def test_chat_429_is_json_not_sse():
-    """Limit terlampaui SEBELUM stream mulai â†’ JSON RFC7807 (bukan SSE)."""
+    """Limit terlampaui SEBELUM stream mulai → JSON RFC7807 (bukan SSE)."""
     app = app_with_settings(RATE_LIMIT_CHAT_PER_MIN=1)
     app.state.cache = FakeCache()
     from app.core.config import get_settings

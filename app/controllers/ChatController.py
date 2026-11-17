@@ -19,11 +19,10 @@ from app.core.errors import (
     AppError,
     ThreadAwaitingApprovalError,
     UpstreamAIError,
-    public_error_detail,
 )
 from app.core.logging import get_logger
 from app.core.threads import ThreadIdentity
-from app.helpers.response import stream_error
+from app.helpers.response import stream_error, stream_error_from
 from app.infra.memory import MemoryStore
 from app.schemas.chat import ChatRequest
 
@@ -97,8 +96,8 @@ class ChatController(BaseController):
         except Exception as exc:
             terminal = "error"
             log.exception("chat init gagal")
-            yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
-                detail=public_error_detail(exc), request_id=request_id)}
+            yield {"thread_id": thread_id, "request_id": request_id, **stream_error_from(
+                exc, request_id=request_id)}
             return
         # v1.0 R2-guard: tolak input baru di thread yang menunggu approval
         # (409 sebagai event pre-run, konsisten pola di atas). Tanpa graph /
@@ -128,8 +127,8 @@ class ChatController(BaseController):
         except Exception as exc:  # gagal mid-stream: tutup dengan event error terminal (RFC)
             terminal = "error"
             log.exception("chat stream gagal")
-            yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
-                detail=public_error_detail(exc), request_id=request_id)}
+            yield {"thread_id": thread_id, "request_id": request_id, **stream_error_from(
+                exc, request_id=request_id)}
         finally:
             self.log_done("chat stream", request_id=request_id, thread_id=thread_id,
                           agent=req.agent, status=terminal, started=started)

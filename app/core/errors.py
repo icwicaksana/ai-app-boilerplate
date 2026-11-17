@@ -5,6 +5,8 @@ untuk branching programmatic di FE. `status` SELALU == HTTP status asli.
 Controller raise AppError, main terjemahkan. `instance` diisi request_id pemanggil.
 """
 
+import asyncio
+
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -339,6 +341,78 @@ def public_error_detail(exc: BaseException) -> str:
             return "Terjadi kesalahan internal."
         return exc.message
     return type(exc).__name__
+
+
+# --- v1.0 R12+R14: SATU-SATUNYA mapper exception → error publik ---
+
+# Modul hulu (SDK/transport): exception dari sini = 502/504, bukan 500.
+# Pencocokan string (bukan import) agar errors.py tetap ringan: litellm DILARANG
+# diimpor di sini (import berat + side-effect).
+_UPSTREAM_MODULES = (
+    "httpx", "httpcore", "http11", "h11", "h2",
+    "litellm", "openai", "anthropic", "cohere", "groq", "mistralai",
+    "google.api_core", "google.generativeai", "vertexai",
+    "qdrant_client", "psycopg", "psycopg_pool", "asyncpg", "pgvector",
+    "redis", "valkey", "fakeredis", "elasticsearch", "pymongo",
+    "boto3", "botocore", "s3fs",
+)
+
+# Nama bawaan yang selalu berarti hulu (modul apa pun, termasuk builtins).
+_TIMEOUT_NAMES = ("Timeout",)  # substring: TimeoutError, ConnectTimeout, ...
+_CONNECTION_NAMES = ("ConnectError", "ConnectionError", "ConnectionRefused",
+                     "ConnectionReset", "ConnectionAborted", "BrokenPipe",
+                     "APIConnectionError", "NameResolution", "ProxyError",
+                     "ServiceUnavailable", "BadGateway", "GatewayTimeout")
+
+
+def to_public_error(exc: BaseException) -> AppError:
+    """Normalisasi exception APAPUN jadi AppError yang aman ke klien.
+
+    - AppError → teruskan apa adanya (status/code/title/message miliknya).
+    - Keluarga transport/SDK/hulu → 502/504 dengan pesan generik yang aman
+      (R14: stream tak lagi 500 untuk semua; R12: tanpa bocor pesan driver).
+    - PoolTimeout → 503 (pool DB habis = storage tak tersedia sesaat).
+    - Tak dikenal → 500 INTERNAL_ERROR (detail digenerikkan).
+    - Cancelled/GeneratorExit/KeyboardInterrupt/SystemExit → di-raise ulang
+      (JANGAN dipetakan: merusak semantik pembatalan).
+    """
+    if isinstance(exc, AppError):
+        return exc
+    if isinstance(exc, (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt,
+                        SystemExit)):
+        raise exc
+    name = type(exc).__name__
+    module = type(exc).__module__ or ""
+    if name == "PoolTimeout":
+        return StorageUnavailableError("Database sibuk — coba lagi sebentar.")
+    is_timeout = any(t in name for t in _TIMEOUT_NAMES)
+    is_conn = any(c in name for c in _CONNECTION_NAMES)
+    is_upstream_mod = module.split(".")[0] in _UPSTREAM_MODULES or any(
+        module == m or module.startswith(m + ".") for m in _UPSTREAM_MODULES)
+    status_attr = getattr(exc, "status_code", None)
+    try:
+        status_num = int(status_attr) if status_attr is not None else None
+    except (TypeError, ValueError):
+        status_num = None
+    if is_timeout and (is_upstream_mod or module in ("builtins", "exceptions",
+                                                     "asyncio", "asyncio.exceptions")):
+        return AppError("Layanan hulu timeout — coba lagi.",
+                        status_code=504, code="UPSTREAM_TIMEOUT",
+                        title="Upstream Timeout")
+    if is_conn or (is_upstream_mod and status_num in (429, 502, 503, 504)) \
+            or status_num in (502, 503, 504):
+        if "Timeout" in name or status_num == 504:
+            return AppError("Layanan hulu timeout — coba lagi.",
+                            status_code=504, code="UPSTREAM_TIMEOUT",
+                            title="Upstream Timeout")
+        return AppError("Layanan hulu tak tersedia — coba lagi.",
+                        status_code=502, code="UPSTREAM_UNAVAILABLE",
+                        title="Upstream Unavailable")
+    if is_upstream_mod or (status_num is not None and status_num >= 500):
+        return AppError("Layanan hulu gagal.", status_code=502,
+                        code="UPSTREAM_ERROR", title="Upstream Error")
+    return AppError("Terjadi kesalahan internal.", status_code=500,
+                    code="INTERNAL_ERROR", title="Internal Error")
 
 
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

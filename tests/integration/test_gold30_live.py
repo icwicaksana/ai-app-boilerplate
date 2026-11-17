@@ -112,7 +112,7 @@ def _qdrant_client_or_skip():
     key = (os.environ.get("TEST_QDRANT_API_KEY")
            or os.environ.get("QDRANT_API_KEY", "")).strip()
     if not key:
-        pytest.skip("QDRANT_API_KEY kosong â€” samakan dengan Infra/.env")
+        pytest.skip("QDRANT_API_KEY kosong — samakan dengan Infra/.env")
     return AsyncQdrantClient(url=url, api_key=key, timeout=10)
 
 
