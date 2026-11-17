@@ -98,7 +98,9 @@ Cek:
 
 ```bash
 
-curl http://localhost:8000/api/v1/health
+curl http://localhost:8000/api/v1/livez
+
+curl http://localhost:8000/api/v1/health -H "Authorization: Bearer <token>"
 
 curl -N -X POST http://localhost:8000/api/v1/chat/stream \
 
@@ -234,7 +236,11 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 
 |---|---|
 
-| `GET /api/v1/health` (+ `/ready`) | Liveness + cek DB/LLM (degraded, bukan 500). |
+| `GET /api/v1/health` | BUTUH JWT (v1.0). Status penuh + cek DB/LLM (degraded, bukan 500). |
+
+| `GET /api/v1/ready` | Publik MURAH: hanya probe DB (untuk LB/K8s). |
+
+| `GET /api/v1/livez` | Publik, tanpa I/O (liveness proses). |
 
 | `POST /api/v1/chat/stream` | Chat SSE token-level (v0.1). `{"agent","thread_id?","input"}` -> event `data: {...}` |
 

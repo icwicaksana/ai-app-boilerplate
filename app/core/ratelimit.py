@@ -11,6 +11,7 @@ lebih merugikan daripada kehilangan pembatasan sesaat.
 
 from __future__ import annotations
 
+import ipaddress
 import time
 from dataclasses import dataclass
 
@@ -25,6 +26,45 @@ from app.infra.cache import CacheClient, CacheUnavailable, rate_limit_key
 log = get_logger(__name__)
 
 WINDOW_SECONDS = 60
+
+
+def client_ip(request: Request, settings: Settings) -> str:
+    """IP klien sebenarnya dengan allowlist proxy tepercaya (v1.0 S8).
+
+    - Peer langsung selalu dipakai bila tak ada proxy tepercaya (default:
+      TRUSTED_PROXY_CIDRS kosong = abaikan XFF total → anti-spoof).
+    - Bila peer ∈ CIDR tepercaya dan X-Forwarded-For ada → entri KIRI
+      (klien asli di rantai proxy yang kita kendalikan).
+    - Entri CIDR invalid diabaikan + warning (fail-closed: tak dipercaya).
+    """
+    peer = getattr(getattr(request, "client", None), "host", None) or "unknown"
+    xff = (request.headers.get("x-forwarded-for") or "").strip()
+    if not xff:
+        return peer
+    cidrs = [c.strip() for c in (settings.TRUSTED_PROXY_CIDRS or "").split(",")
+             if c.strip()]
+    if not cidrs:
+        return peer
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+    trusted = False
+    for cidr in cidrs:
+        try:
+            if peer_ip in ipaddress.ip_network(cidr, strict=False):
+                trusted = True
+                break
+        except ValueError:
+            log.warning("TRUSTED_PROXY_CIDRS abaikan entri invalid: %r", cidr)
+    if not trusted:
+        return peer
+    first = xff.split(",")[0].strip()
+    try:
+        ipaddress.ip_address(first)
+    except ValueError:
+        return peer
+    return first
 
 
 @dataclass(frozen=True)
@@ -98,7 +138,7 @@ async def check_login_limit(request: Request, *, workspace: str, username: str,
     """Login dibatasi per (IP + username) — anti credential stuffing."""
     if not settings.RATE_LIMIT_ENABLED:
         return
-    ip = getattr(getattr(request, "client", None), "host", None) or "unknown"
+    ip = client_ip(request, settings)
     decision = await RateLimiter(cache).check(
         scope="login", workspace=workspace, subject=f"{ip}:{username}",
         limit=settings.RATE_LIMIT_LOGIN_PER_MIN)
@@ -107,4 +147,24 @@ async def check_login_limit(request: Request, *, workspace: str, username: str,
     if not decision.allowed:
         log.warning("rate-limit login ditolak workspace=%s user=%s ip=%s",
                     workspace, username, ip)
+        raise RateLimitedError(decision.retry_after, decision.limit)
+
+
+async def check_refresh_limit(request: Request, *, settings: Settings,
+                              cache: CacheClient | None) -> None:
+    """Refresh dibatasi per IP (v1.0 S8) — hentikan loop refresh satu sumber.
+
+    Batasan sadar: penyerang terdistribusi tak terhentikan; pertahanan utama
+    tetap rotasi atomik + TTL pendek (S5). Tanpa cache → fail-open + flag.
+    """
+    if not settings.RATE_LIMIT_ENABLED:
+        return
+    ip = client_ip(request, settings)
+    decision = await RateLimiter(cache).check(
+        scope="refresh", workspace="-", subject=ip,
+        limit=settings.RATE_LIMIT_REFRESH_PER_MIN)
+    if decision.degraded:
+        request.state.rate_limit_degraded = True
+    if not decision.allowed:
+        log.warning("rate-limit refresh ditolak ip=%s", ip)
         raise RateLimitedError(decision.retry_after, decision.limit)

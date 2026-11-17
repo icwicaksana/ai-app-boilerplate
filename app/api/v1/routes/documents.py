@@ -192,6 +192,7 @@ async def delete_document(
     document_id: str,
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: DocumentController = Depends(get_document_controller),
+    _rl=Depends(rate_limit_dependency("ingest", "RATE_LIMIT_INGEST_PER_MIN")),
 ) -> dict:
     if not await ctrl.delete(workspace=identity.workspace,
                              document_id=document_id):
@@ -205,6 +206,8 @@ async def document_progress(
     request: Request,
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: DocumentController = Depends(get_document_controller),
+    _rl=Depends(rate_limit_dependency("retrieval",
+                                      "RATE_LIMIT_RETRIEVAL_PER_MIN")),
 ) -> StreamingResponse:
     """SSE progress ingest (skema sendiri). Snapshot dulu, lalu poll SoR
     sampai terminal. Job hilang + retensi habis → 410 (via IngestGoneError
@@ -311,6 +314,7 @@ async def retry_ingestion_job(
     req: RetryRequest | None = None,
     identity: ThreadIdentity = Depends(get_thread_identity),
     ctrl: DocumentController = Depends(get_document_controller),
+    _rl=Depends(rate_limit_dependency("ingest", "RATE_LIMIT_INGEST_PER_MIN")),
 ) -> dict:
     """Reset job failed/dead (+override `ocr`). 409 bila state tak boleh."""
     body = req or RetryRequest()

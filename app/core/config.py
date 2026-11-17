@@ -234,6 +234,14 @@ class Settings(BaseSettings):
     # Retrieval/search dapat bucket SENDIRI (search cepat & sering; ingest
     # berat & jarang — berbagi bucket = E2E/UX kena 429 palsu).
     RATE_LIMIT_RETRIEVAL_PER_MIN: int = Field(default=30, ge=1, le=1000)
+    # v1.0 S8: matriks cakupan + proxy tepercaya.
+    RATE_LIMIT_THREADS_PER_MIN: int = Field(default=30, ge=1, le=10000)
+    RATE_LIMIT_APPROVALS_PER_MIN: int = Field(default=10, ge=1, le=10000)
+    RATE_LIMIT_REFRESH_PER_MIN: int = Field(default=30, ge=1, le=10000)
+    TRUSTED_PROXY_CIDRS: str = Field(
+        default="",
+        description="CIDR proxy tepercaya koma-pisah untuk X-Forwarded-For "
+                    "(mis. '10.0.0.0/8,172.16.0.0/12'). Kosong = abaikan XFF.")
     # OCR (D10): auto = tawarkan OCR_REQUIRED bila teks <50 char/halaman.
     OCR_MODE: Literal["auto", "on", "off"] = "auto"
     OCR_LANGS: str = "ind+eng"

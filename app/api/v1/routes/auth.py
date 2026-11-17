@@ -14,7 +14,7 @@ from app.core.dependencies import (
     get_request_id,
 )
 from app.core.security import TokenClaims
-from app.core.ratelimit import check_login_limit
+from app.core.ratelimit import check_login_limit, check_refresh_limit
 from app.infra.cache import CacheClient
 from app.schemas.auth import (
     LoginRequest,
@@ -56,7 +56,11 @@ async def refresh(
     req: RefreshRequest,
     request: Request,
     ctrl: AuthController = Depends(get_auth_controller),
+    settings: Settings = Depends(get_settings),
+    cache: CacheClient | None = Depends(get_cache),
 ) -> TokenPair:
+    # v1.0 S8: batasi per IP sebelum klaim atomik (lapis-2 setelah S5).
+    await check_refresh_limit(request, settings=settings, cache=cache)
     return await ctrl.refresh(req.refresh_token, request_id=get_request_id(request))
 
 

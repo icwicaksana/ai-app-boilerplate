@@ -134,8 +134,16 @@ def test_refresh_rotation_and_logout_live(client, creds, db_url):
     assert client.get("/api/v1/auth/me", headers=h).status_code == 401
 
 
-def test_health_reports_cache_and_auth(client):
-    body = client.get("/api/v1/health").json()
+def test_health_reports_cache_and_auth(client, creds, db_url):
+    import asyncio
+
+    workspace, username, password = creds
+    asyncio.run(_seed(db_url, workspace, username, password))
+    tokens = _login(client, workspace, username, password).json()
+    h = {"Authorization": f"Bearer {tokens['access_token']}"}
+    # v1.0 S10: /health butuh JWT; tanpa token 401.
+    assert client.get("/api/v1/health").status_code == 401
+    body = client.get("/api/v1/health", headers=h).json()
     assert body["checks"]["cache"] == "ok"
     assert body["checks"]["auth"].startswith("jwt")
     assert body["checks"]["checkpointer"].startswith("postgres")

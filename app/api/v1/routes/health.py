@@ -1,4 +1,11 @@
-"""Health: liveness + kesiapan DB/LLM/gateway. Tidak pernah 500 — laporkan degraded."""
+"""Health: liveness + kesiapan DB/LLM/gateway. Tidak pernah 500 — laporkan degraded.
+
+v1.0 S10 (F-D3/F-I2): permukaan publik minimum —
+- `/livez`: publik, tanpa I/O (satu-satunya untuk K8s liveness).
+- `/ready`: publik tapi MURAH (hanya probe DB cepat; tanpa gateway/RAG) —
+  LB/K8s tak bisa Bearer, jadi endpoint ini tak boleh mahal/penuh-info.
+- `/health`: BUTUH JWT (probe mahal + kaya-info versi/model = rekonesaisi).
+"""
 
 import asyncio
 
@@ -7,6 +14,8 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.core.config import Settings, get_settings
+from app.core.dependencies import get_current_claims
+from app.core.security import TokenClaims
 
 router = APIRouter(tags=["health"])
 
@@ -187,11 +196,12 @@ async def _health_body(request: Request, settings: Settings) -> dict:
 
 
 @router.get("/health")
-async def health(request: Request, settings: Settings = Depends(get_settings)) -> dict:
-    """Status PENUH (gateway + DB probe, s.d. ~4 dtk).
+async def health(request: Request, settings: Settings = Depends(get_settings),
+                 _claims: TokenClaims = Depends(get_current_claims)) -> dict:
+    """Status PENUH (gateway + DB probe, s.d. ~4 dtk). BUTUH JWT (v1.0 S10).
 
-    Untuk manusia/dashboard. K8s liveness JANGAN ke sini (bisa restart pod
-    yang hidup saat downstream gantung) — pakai `/livez`. Lihat T-04.
+    Untuk manusia/dashboard terautentikasi. K8s liveness JANGAN ke sini
+    (bisa restart pod yang hidup saat downstream gantung) — pakai `/livez`.
     """
     return await _health_body(request, settings)
 
@@ -206,7 +216,15 @@ async def livez(settings: Settings = Depends(get_settings)) -> dict:
 
 @router.get("/ready")
 async def ready(request: Request, settings: Settings = Depends(get_settings)) -> JSONResponse:
-    """Kesiapan untuk load-balancer/K8s: 503 bila belum ready."""
-    body = await _health_body(request, settings)
-    return JSONResponse(
-        status_code=200 if body["status"] == "ok" else 503, content=body)
+    """Kesiapan MURAH untuk load-balancer/K8s: 503 bila DB tak terjangkau.
+
+    v1.0 S10: hanya probe DB cepat (SELECT 1, timeout 2 dtk) — TANPA probe
+    gateway/RAG/embed (itu tugas /health yang terautentikasi). Publik tanpa
+    auth karena kubelet/LB tak bisa Bearer; aman karena murah + minim-info.
+    """
+    checkpointer, _ = await _persistence_status(request, settings)
+    ok = checkpointer.startswith("postgres")
+    body = {"status": "ok" if ok else "degraded",
+            "service": settings.PROJECT_NAME, "version": settings.APP_VERSION,
+            "checks": {"db": checkpointer}}
+    return JSONResponse(status_code=200 if ok else 503, content=body)

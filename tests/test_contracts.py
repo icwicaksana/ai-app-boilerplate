@@ -12,10 +12,10 @@ from app.core.threads import THREAD_RE
 def test_health_schema_shape():
     from fastapi.testclient import TestClient
 
-    from app.main import create_app
+    from tests._auth_helpers import app_with_settings, auth_headers
 
-    client = TestClient(create_app())
-    body = client.get("/api/v1/health").json()
+    client = TestClient(app_with_settings())
+    body = client.get("/api/v1/health", headers=auth_headers()).json()
     assert set(("status", "service", "version", "checks")) <= set(body)
     assert set(("llm", "gateway", "checkpointer", "store", "hitl")) <= set(
         body["checks"])

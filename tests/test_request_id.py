@@ -17,12 +17,12 @@ def _client():
 
 
 def test_middleware_echoes_request_id():
-    res = _client().get("/api/v1/health", headers={"X-Request-ID": "coba-1"})
+    res = _client().get("/api/v1/livez", headers={"X-Request-ID": "coba-1"})
     assert res.headers["X-Request-ID"] == "coba-1"
 
 
 def test_middleware_generates_request_id():
-    res = _client().get("/api/v1/health")
+    res = _client().get("/api/v1/livez")
     rid = res.headers.get("X-Request-ID", "")
     assert len(rid) == 12 and rid != "-"
 

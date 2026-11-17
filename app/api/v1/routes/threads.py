@@ -17,8 +17,12 @@ from app.core.dependencies import (
 from app.core.threads import ThreadIdentity
 from app.schemas.threads import ForkRequest, ForkResponse, HistoryResponse, ThreadStateResponse
 
+from app.core.ratelimit import rate_limit_dependency
+
 router = APIRouter(tags=["threads"],
-                     dependencies=[Depends(require_scope_dep("threads"))])
+                   dependencies=[Depends(require_scope_dep("threads")),
+                                   Depends(rate_limit_dependency(
+                                       "threads", "RATE_LIMIT_THREADS_PER_MIN"))])
 
 
 @router.get("/threads/{thread_id}/state", response_model=ThreadStateResponse)

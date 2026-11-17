@@ -86,17 +86,19 @@ class _FakePool:
 
 
 def test_health_pool_probe_ok_and_down():
-    app_ok = create_app()
+    from tests._auth_helpers import app_with_settings, auth_headers
+
+    app_ok = app_with_settings()
     app_ok.state.pool = _FakePool()
     app_ok.state.store = object()
-    res_ok = TestClient(app_ok).get("/api/v1/health")
+    res_ok = TestClient(app_ok).get("/api/v1/health", headers=auth_headers())
     assert res_ok.status_code == 200
     assert res_ok.json()["checks"]["checkpointer"].startswith("postgres")
 
-    app_down = create_app()
+    app_down = app_with_settings()
     app_down.state.pool = _FakePool(boom=True)
     app_down.state.store = object()
-    res_down = TestClient(app_down).get("/api/v1/health")
+    res_down = TestClient(app_down).get("/api/v1/health", headers=auth_headers())
     assert res_down.status_code == 200
     assert res_down.json()["checks"]["checkpointer"].startswith("down")
     assert res_down.json()["status"] == "degraded"

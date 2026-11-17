@@ -13,6 +13,7 @@ from app.core.dependencies import (
     get_thread_identity,
     require_scope_dep,
 )
+from app.core.ratelimit import rate_limit_dependency
 from app.core.threads import ThreadIdentity
 from app.infra import approvals as repo
 from app.schemas.approvals import (
@@ -27,8 +28,12 @@ from app.schemas.approvals import (
 
 # v1.0 S4: area reviewer — list/get/decide/audit butuh scope "approve".
 # Requester melacak status miliknya via thread miliknya, bukan daftar ini.
+# v1.0 S8: satu bucket approvals (decide mahal: resume LLM; verify O(n)).
 router = APIRouter(tags=["approvals"],
-                   dependencies=[Depends(require_scope_dep("approve"))])
+                   dependencies=[Depends(require_scope_dep("approve")),
+                                   Depends(rate_limit_dependency(
+                                       "approvals",
+                                       "RATE_LIMIT_APPROVALS_PER_MIN"))])
 
 
 def _row_to_response(row: dict) -> ApprovalResponse:
