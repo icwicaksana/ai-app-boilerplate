@@ -1,10 +1,10 @@
-﻿"""Integrasi: alur HITL penuh dengan graf NYATA yang interrupt.
+"""Integrasi: alur HITL penuh dengan graf NYATA yang interrupt.
 
 Skenario:
 1. Graf berhenti di `interrupt()` (payload gaya HITLRequest).
 2. Interrupt dicatat â†’ baris approval pending + audit `approval_requested`.
 3. Approve â†’ graph di-resume (decisions) â†’ selesai; audit `approval_decided`.
-4. Double-decide â†’ 409; reject â†’ tidak resume; hash chain valid.
+4. Double-decide → 409; reject → resume cabang tolak; hash chain valid.
 """
 
 import uuid
@@ -131,7 +131,7 @@ async def test_full_approval_flow(env):
     approval_id = pending[0]["id"]
     assert pending[0]["action_hash"] == action_hash("process_refund", _payload())
 
-    out = await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
+    out = await svc.decide(workspace=workspace, actor="sari", approval_id=approval_id,
                            decision="approve", reason="ok", request_id="r2")
     assert out["status"] == "approved" and out["resumed"] is True
     assert out["result"]["status"] == "completed"
@@ -141,7 +141,7 @@ async def test_full_approval_flow(env):
 
     # Double decide â†’ 409 (bukan eksekusi ganda)
     with pytest.raises(ApprovalStateError):
-        await svc.decide(workspace=workspace, actor="budi",
+        await svc.decide(workspace=workspace, actor="sari",
                          approval_id=approval_id, decision="approve")
 
     # Audit chain utuh + mencatat aktor & keputusan
@@ -150,12 +150,13 @@ async def test_full_approval_flow(env):
     entries = await repo.list_audit(pool, workspace=workspace)
     actions = [e["action"] for e in entries]
     assert actions == ["approval_requested", "approval_decided"]
-    assert entries[1]["actor"] == "budi"
+    assert entries[1]["actor"] == "sari"
     assert entries[1]["payload"]["decision"] == "approve"
 
 
 @pytest.mark.asyncio
-async def test_reject_does_not_resume(env):
+async def test_reject_resumes_ke_cabang_tolak(env):
+    """v1.0 R2: reject ikut resume (ke cabang tolak) — thread tak macet."""
     settings, pool, cp, store = env
     workspace = "it-hitl-" + uuid.uuid4().hex[:6]
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
@@ -170,11 +171,11 @@ async def test_reject_does_not_resume(env):
     out = await svc.decide(workspace=workspace, actor="ani",
                            approval_id=rows[0]["id"], decision="reject",
                            reason="tidak sesuai")
-    assert out["status"] == "rejected" and out["resumed"] is False
+    assert out["status"] == "rejected" and out["resumed"] is True
 
     snap = await graph.aget_state({"configurable": {"thread_id": thread_id}})
-    assert snap.values.get("executed") in (None, False)
-    assert snap.interrupts  # masih menunggu (tidak dieksekusi)
+    assert snap.values.get("executed") is False
+    assert not snap.interrupts  # sudah lewat interrupt (cabang tolak)
 
 
 @pytest.mark.asyncio
@@ -200,7 +201,7 @@ async def test_stale_action_detected(env):
             ("0" * 64, rows[0]["id"]))
 
     with pytest.raises(ApprovalStaleError):
-        await svc.decide(workspace=workspace, actor="budi",
+        await svc.decide(workspace=workspace, actor="sari",
                          approval_id=rows[0]["id"], decision="approve")
 
 
@@ -251,7 +252,7 @@ async def test_expired_approval_cannot_be_decided(env):
             "UPDATE approvals SET expires_at = now() - interval '1 minute' "
             "WHERE id = %s", (approval_id,))
     with pytest.raises(ApprovalExpiredError):
-        await svc.decide(workspace=workspace, actor="budi",
+        await svc.decide(workspace=workspace, actor="sari",
                          approval_id=approval_id, decision="approve")
     row = await repo.get_approval(pool, workspace=workspace, approval_id=approval_id)
     assert row["status"] == "expired"
@@ -270,7 +271,7 @@ async def test_unknown_approval_404_and_invalid_decision(env):
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
     with pytest.raises(AppError) as ei:
-        await svc.decide(workspace=workspace, actor="budi",
+        await svc.decide(workspace=workspace, actor="sari",
                          approval_id=approval_id, decision="mungkin")
     assert ei.value.status_code == 422 and ei.value.code == "INVALID_DECISION"
 
@@ -283,10 +284,10 @@ async def test_reject_then_approve_is_409(env):
     svc = _service(settings, pool, cp, store)
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
 
-    await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
+    await svc.decide(workspace=workspace, actor="sari", approval_id=approval_id,
                      decision="reject")
     with pytest.raises(ApprovalStateError):
-        await svc.decide(workspace=workspace, actor="budi",
+        await svc.decide(workspace=workspace, actor="sari",
                          approval_id=approval_id, decision="approve")
 
 
@@ -297,7 +298,7 @@ async def test_audit_tampering_detected(env):
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp, store)
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
-    await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
+    await svc.decide(workspace=workspace, actor="sari", approval_id=approval_id,
                      decision="approve")
 
     ok, bad = await repo.verify_chain(pool, workspace=workspace)
@@ -318,6 +319,6 @@ async def test_no_pending_left_after_approval(env):
     thread_id = f"{workspace}:budi:sess-{uuid.uuid4().hex[:8]}"
     svc = _service(settings, pool, cp, store)
     approval_id = await _make_pending(svc, settings, cp, workspace, thread_id)
-    await svc.decide(workspace=workspace, actor="budi", approval_id=approval_id,
+    await svc.decide(workspace=workspace, actor="sari", approval_id=approval_id,
                      decision="approve")
     assert await svc.list(workspace=workspace) == []

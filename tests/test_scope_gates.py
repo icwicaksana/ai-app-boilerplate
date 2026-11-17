@@ -49,8 +49,12 @@ async def test_sod_pemilik_tak_bisa_memutuskan_sendiri(monkeypatch):
         called["claim"] = True
         return _pending_row()
 
+    async def _count(*a, **kw):
+        return 1
+
     monkeypatch.setattr(repo, "expire_stale", _expire)
     monkeypatch.setattr(repo, "get_approval", _get)
+    monkeypatch.setattr(repo, "count_pending_for_thread", _count)
     monkeypatch.setattr(repo, "claim_decision", _claim)
     svc = ApprovalService(_settings(), pool=None, checkpointer=None)
     with pytest.raises(ForbiddenError):
@@ -73,8 +77,12 @@ async def test_sod_reviewer_lain_lolos(monkeypatch):
     async def _audit(*a, **kw):
         return None
 
+    async def _count(*a, **kw):
+        return 1
+
     monkeypatch.setattr(repo, "expire_stale", _expire)
     monkeypatch.setattr(repo, "get_approval", _get)
+    monkeypatch.setattr(repo, "count_pending_for_thread", _count)
     monkeypatch.setattr(repo, "claim_decision", _claim)
     monkeypatch.setattr(repo, "append_audit", _audit)
     svc = ApprovalService(_settings(), pool=None, checkpointer=None)
@@ -82,7 +90,8 @@ async def test_sod_reviewer_lain_lolos(monkeypatch):
     async def _nostale(self, row):
         return None
 
-    async def _resume(self, row, *, request_id):
+    async def _resume(self, row, *, decision, request_id):
+        assert decision == "approve"
         return {"status": "completed"}
 
     monkeypatch.setattr(ApprovalService, "_assert_not_stale", _nostale)

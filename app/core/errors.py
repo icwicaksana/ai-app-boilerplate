@@ -83,6 +83,19 @@ class ThreadNotFoundError(AppError):
         )
 
 
+class ThreadAwaitingApprovalError(AppError):
+    """Chat baru di thread yang menunggu approval (v1.0 R2-guard)."""
+
+    def __init__(self, thread_id: str = ""):
+        super().__init__(
+            f"Thread '{thread_id}' menunggu keputusan approval — "
+            f"selesaikan via POST /approvals/{{id}}/decide dulu.",
+            status_code=409,
+            code="THREAD_AWAITS_APPROVAL",
+            title="Thread Awaits Approval",
+        )
+
+
 class CrossWorkspaceError(AppError):
     def __init__(self):
         super().__init__(

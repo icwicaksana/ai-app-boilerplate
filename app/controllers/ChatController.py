@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.core.errors import (
     AgentNotFoundError,
     AppError,
+    ThreadAwaitingApprovalError,
     UpstreamAIError,
     public_error_detail,
 )
@@ -99,6 +100,23 @@ class ChatController(BaseController):
             yield {"thread_id": thread_id, "request_id": request_id, **stream_error(
                 detail=public_error_detail(exc), request_id=request_id)}
             return
+        # v1.0 R2-guard: tolak input baru di thread yang menunggu approval
+        # (409 sebagai event pre-run, konsisten pola di atas). Tanpa graph /
+        # state tak terbaca → lewati (kompatibel fake + degradasi).
+        try:
+            graph = getattr(agent, "graph", None)
+            snap = await graph.aget_state(config) if graph is not None else None
+            if getattr(snap, "interrupts", None):
+                terminal = "error"
+                exc = ThreadAwaitingApprovalError(thread_id)
+                yield {"thread_id": thread_id, "request_id": request_id,
+                       **stream_error(detail=exc.message, title=exc.title,
+                                      status=exc.status_code, code=exc.code,
+                                      request_id=request_id)}
+                return
+        except Exception:
+            log.debug("cek interrupt pre-chat dilewati (state tak terbaca)",
+                      exc_info=True)
         try:
             async for event in agent.stream_agent(req.input, config):
                 if event.get("type") == "error":

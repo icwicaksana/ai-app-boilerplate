@@ -90,8 +90,15 @@ async def record_pending(pool: AsyncConnectionPool, *, workspace: str,
                          thread_id: str, interrupt_id: str, agent: str,
                          tool_name: str,
                          action_hash: str, action_snapshot: dict[str, Any],
-                         policy_version: str, expires_in_seconds: int) -> dict[str, Any]:
-    """Catat approval pending (idempotent: satu baris per thread+interrupt)."""
+                         policy_version: str, expires_in_seconds: int
+                         ) -> tuple[dict[str, Any], bool]:
+    """Catat approval pending (idempotent: satu baris per thread+interrupt).
+
+    Return (baris, dibuat_baru). v1.0 R7: TIDAK PERNAH menimpa hash/snapshot
+    baris pending yang ada — penimpaan diam-diam = persetujuan untuk aksi A
+    berubah jadi persetujuan aksi B (bypass TOCTOU). Aksi berubah terdeteksi
+    di decide() via _assert_not_stale (409 STALE → minta ulang).
+    """
     async with pool.connection() as conn:
         cur = await conn.execute(
             """
@@ -100,10 +107,7 @@ async def record_pending(pool: AsyncConnectionPool, *, workspace: str,
                                    policy_version, expires_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s,
                     now() + make_interval(secs => %s))
-            ON CONFLICT (thread_id, interrupt_id) DO UPDATE
-                SET action_hash = EXCLUDED.action_hash,
-                    action_snapshot = EXCLUDED.action_snapshot
-                WHERE approvals.status = 'pending'
+            ON CONFLICT (thread_id, interrupt_id) DO NOTHING
             RETURNING id, status, action_hash
             """,
             (workspace, thread_id, interrupt_id, agent, tool_name, action_hash,
@@ -111,13 +115,14 @@ async def record_pending(pool: AsyncConnectionPool, *, workspace: str,
              int(expires_in_seconds)),
         )
         row = await cur.fetchone()
-        if row is None:  # sudah diputuskan → ambil baris lama
-            cur = await conn.execute(
-                "SELECT id, status, action_hash FROM approvals "
-                "WHERE thread_id = %s AND interrupt_id = %s",
-                (thread_id, interrupt_id))
-            row = await cur.fetchone()
-    return dict(row) if row else {}
+        if row is not None:
+            return dict(row), True
+        cur = await conn.execute(
+            "SELECT id, status, action_hash FROM approvals "
+            "WHERE thread_id = %s AND interrupt_id = %s",
+            (thread_id, interrupt_id))
+        row = await cur.fetchone()
+    return (dict(row) if row else {}), False
 
 
 async def get_approval(pool: AsyncConnectionPool, *, workspace: str,
@@ -169,6 +174,37 @@ async def claim_decision(pool: AsyncConnectionPool, *, workspace: str,
             (new_status, decision, actor, reason, workspace, approval_id))
         row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def release_claim(pool: AsyncConnectionPool, *, workspace: str,
+                        approval_id: int) -> bool:
+    """Kembalikan klaim ke pending (v1.0 R1: resume gagal → boleh retry).
+
+    Hanya dipanggil oleh decide() yang baru SAJA menang klaim atomik —
+    tak ada pihak lain yang bisa memegang baris ini di antaranya.
+    """
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """
+            UPDATE approvals
+               SET status = 'pending', decision = NULL, decided_by = NULL,
+                   decided_at = NULL, reason = NULL
+             WHERE workspace = %s AND id = %s AND status IN ('approved', 'rejected')
+            """,
+            (workspace, approval_id))
+        return (cur.rowcount or 0) > 0
+
+
+async def count_pending_for_thread(pool: AsyncConnectionPool, *,
+                                   workspace: str, thread_id: str) -> int:
+    """Jumlah approval pending di satu thread (v1.0 R8: tolak multi)."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM approvals "
+            "WHERE workspace = %s AND thread_id = %s AND status = 'pending'",
+            (workspace, thread_id))
+        row = await cur.fetchone()
+    return int(row["n"]) if row else 0
 
 
 async def expire_stale(pool: AsyncConnectionPool, *, workspace: str | None = None) -> int:

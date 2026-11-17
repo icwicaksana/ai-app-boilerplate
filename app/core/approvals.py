@@ -62,6 +62,17 @@ class ApprovalExpiredError(AppError):
                          title="Approval Expired")
 
 
+class ApprovalMultiInterruptError(AppError):
+    """Thread punya >1 approval pending (v1.0 R8)."""
+
+    def __init__(self, count: int):
+        super().__init__(
+            f"Thread punya {count} approval pending — putuskan satu per satu "
+            f"setelah interrupt lain selesai (multi-interrupt tak didukung).",
+            status_code=409, code="APPROVAL_MULTI_INTERRUPT",
+            title="Multiple Pending Approvals")
+
+
 class ApprovalService:
     def __init__(self, settings: Settings, pool, checkpointer,
                  runner: Runner | None = None, *, store=None, rag=None,
@@ -90,7 +101,7 @@ class ApprovalService:
             pol = policy_for(str(actions[0].get("name"))) if actions else None
             if pol is not None:
                 expires = pol.expires_in_seconds
-            row = await repo.record_pending(
+            row, created = await repo.record_pending(
                 self.pool, workspace=workspace, thread_id=thread_id,
                 interrupt_id=str(item.get("id", "")), agent=agent,
                 tool_name=tool_name,
@@ -100,6 +111,8 @@ class ApprovalService:
                 expires_in_seconds=expires)
             if row:
                 out.append(row)
+                if not created:
+                    continue  # sudah ada: jangan audit ganda (R7)
                 await repo.append_audit(
                     self.pool, workspace=workspace, actor="system",
                     action="approval_requested", subject_type="approval",
@@ -154,6 +167,14 @@ class ApprovalService:
 
         await self._assert_not_stale(row)
 
+        # v1.0 R8: resume decisions bersifat positional per interrupt —
+        # multi-interrupt butuh routing per-ID yang belum ada. Tolak eksplisit
+        # (sebelum klaim: tanpa perubahan state).
+        n_pending = await repo.count_pending_for_thread(
+            self.pool, workspace=workspace, thread_id=str(row["thread_id"]))
+        if n_pending > 1:
+            raise ApprovalMultiInterruptError(n_pending)
+
         claimed = await repo.claim_decision(
             self.pool, workspace=workspace, approval_id=approval_id,
             decision=decision, actor=actor, reason=reason)
@@ -163,6 +184,22 @@ class ApprovalService:
             if current and current["status"] == "expired":
                 raise ApprovalExpiredError()
             raise ApprovalStateError((current or {}).get("status", "unknown"))
+
+        # v1.0 R6: cek ulang hash SESUDAH klaim (tutup jendela TOCTOU antara
+        # cek-stale dan resume). Stale di sini → lepas klaim + 409.
+        try:
+            await self._assert_not_stale(claimed)
+        except ApprovalStaleError:
+            await repo.release_claim(self.pool, workspace=workspace,
+                                     approval_id=approval_id)
+            await repo.append_audit(
+                self.pool, workspace=workspace, actor=actor,
+                action="approval_claim_released", subject_type="approval",
+                subject_id=str(approval_id),
+                payload={"decision": decision, "reason": "stale_setelah_klaim",
+                         "thread_id": claimed["thread_id"]},
+                request_id=request_id)
+            raise
 
         await repo.append_audit(
             self.pool, workspace=workspace, actor=actor, action="approval_decided",
@@ -174,12 +211,25 @@ class ApprovalService:
                      "policy_version": claimed["policy_version"]},
             request_id=request_id)
 
-        if decision == "reject":
-            return {"approval_id": approval_id, "status": "rejected",
-                    "resumed": False, "result": None}
-
-        result = await self._resume(claimed, request_id=request_id)
-        return {"approval_id": approval_id, "status": "approved",
+        # v1.0 R1+R2: resume SELALU dipanggil (approve maupun reject — reject
+        # tanpa resume = thread macet di interrupt selamanya). Gagal resume →
+        # lepas klaim (kembali pending, boleh retry) + audit + raise asli.
+        try:
+            result = await self._resume(claimed, decision=decision,
+                                        request_id=request_id)
+        except Exception:
+            await repo.release_claim(self.pool, workspace=workspace,
+                                     approval_id=approval_id)
+            await repo.append_audit(
+                self.pool, workspace=workspace, actor=actor,
+                action="approval_resume_failed", subject_type="approval",
+                subject_id=str(approval_id),
+                payload={"decision": decision,
+                         "thread_id": claimed["thread_id"]},
+                request_id=request_id)
+            raise
+        status = "approved" if decision == "approve" else "rejected"
+        return {"approval_id": approval_id, "status": status,
                 "resumed": True, "result": result}
 
     # --- internal ---
@@ -201,10 +251,10 @@ class ApprovalService:
         if action_hash(str(row["tool_name"]), value) != row["action_hash"]:
             raise ApprovalStaleError()
 
-    async def _resume(self, row: dict[str, Any], *,
+    async def _resume(self, row: dict[str, Any], *, decision: str,
                       request_id: str) -> dict[str, Any]:
         graph = self._graph_for(str(row["agent"]), str(row["thread_id"]))
-        decisions = [{"type": "approve"} for _ in
+        decisions = [{"type": decision} for _ in
                      (row["action_snapshot"].get("action_requests") or [{}])]
         result = await self.runner.resume(
             graph, {"decisions": decisions},
