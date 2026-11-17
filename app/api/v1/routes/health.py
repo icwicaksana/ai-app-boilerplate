@@ -129,11 +129,39 @@ async def _rag_status(request: Request, settings: Settings) -> dict[str, str]:
     return out
 
 
+def _skills_status(request: Request, settings: Settings) -> str:
+    """Status skills v0.9. Aditif, sinkron, tanpa I/O, tak pernah raise.
+
+    Seperti komponen RAG: skills TIDAK membuat `/ready` 503 — chat tanpa
+    skill tetap jalan saat direktori skill bermasalah. Error pemuatan
+    ditampilkan di sini (ringkas; detail penuh di log lifespan) supaya tidak
+    ada kegagalan yang hanya hidup di log.
+    """
+    try:
+        if not settings.SKILLS_ENABLED:
+            return "disabled (SKILLS_ENABLED=false)"
+        registry = getattr(request.app.state, "skills", None)
+        if registry is None:
+            return "not initialized (lifespan gagal?)"
+        n = len(registry)
+        n_err = len(getattr(registry, "errors", ()))
+        manifest = getattr(registry, "manifest_id", "")[:12]
+        if n_err:
+            return (f"degraded ({n} skill, {n_err} gagal dimuat, "
+                    f"manifest={manifest})")
+        if n == 0:
+            return "enabled (tanpa skill)"
+        return f"ok ({n} skill, manifest={manifest})"
+    except Exception as exc:
+        return f"down ({type(exc).__name__})"
+
+
 async def _health_body(request: Request, settings: Settings) -> dict:
     gateway = await _gateway_status(settings)
     checkpointer, store = await _persistence_status(request, settings)
     cache = await _cache_status(request, settings)
     rag = await _rag_status(request, settings)
+    skills = _skills_status(request, settings)
     ready = gateway == "ok" and checkpointer.startswith("postgres")
     # degraded bila ada komponen opsional bermasalah (cache) — tetap ready.
     degraded = cache.startswith("down") or cache.startswith("not initialized")
@@ -151,6 +179,7 @@ async def _health_body(request: Request, settings: Settings) -> dict:
             "rerank": rag["rerank"],
             "vector": rag["vector"],
             "graph": rag["graph"],
+            "skills": skills,
             "auth": f"{settings.AUTH_MODE} ({'ready' if settings.auth_configured else 'NOT CONFIGURED'})",
             "hitl": "enabled" if settings.HITL_ENABLED else "disabled",
         },

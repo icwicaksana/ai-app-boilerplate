@@ -186,6 +186,24 @@ class Settings(BaseSettings):
     GRAPH_L3_MODEL: str = ""  # kosong = L3 MATI (hemat total; F5 ablation)
     GRAPH_L3_VERSION: str = ""
     GRAPH_L3_MAX_CALLS_PER_DOC: int = Field(default=20, ge=0, le=200)
+
+    # --- v0.9: Skills on-demand + Subagents (desain: docs/V09-PLAN.md) ---
+    # Default MATI: perilaku v0.8.3 harus IDENTIK byte-per-byte bila false.
+    # System prompt tidak boleh berubah sama sekali saat fitur ini mati.
+    SKILLS_ENABLED: bool = False
+    SKILLS_DIR: str = "app/skills"
+    # True = satu skill rusak menggagalkan boot (operator salah tulis harus
+    # ketahuan saat deploy, bukan diam-diam skill hilang dari indeks).
+    SKILLS_STRICT: bool = True
+    # when_to_use menolong model memilih, tetapi menggandakan biaya per entri.
+    SKILLS_INDEX_INCLUDE_WHEN: bool = True
+    SKILLS_MAX_ENTRIES: int = Field(default=40, ge=1, le=500)
+    SKILL_BODY_MAX_CHARS: int = Field(default=20_000, ge=100)
+    SUBAGENTS_ENABLED: bool = False
+    SUBAGENT_MAX_TOKENS: int = Field(default=8_000, ge=100)
+    SUBAGENT_TIMEOUT_S: int = Field(default=45, ge=1, le=600)
+    # Rekursi DITOLAK secara default (K7): subagent tidak boleh spawn subagent.
+    SUBAGENT_MAX_DEPTH: int = Field(default=1, ge=1, le=3)
     GRAPH_L3_MAX_TOKENS_IN: int = Field(default=1500, ge=100)
     GRAPH_L3_MAX_TOKENS_OUT: int = Field(default=500, ge=50)
     GRAPH_L3_DAILY_QUOTA_PER_WORKSPACE: int = Field(default=500, ge=0)

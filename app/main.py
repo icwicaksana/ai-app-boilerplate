@@ -196,6 +196,21 @@ async def lifespan(app: FastAPI):
         log.warning("RAG gagal init — degraded (RAG_STRICT_STARTUP=false)")
         rag = None
     app.state.rag = rag
+    # v0.9 F2: registry skill dimuat SEKALI di sini (tanpa hot-reload).
+    # Saat SKILLS_ENABLED=false hasilnya registry kosong dan perilaku sistem
+    # identik dengan v0.8.3.
+    from app.skills.boot import SkillStartupError, build_registry
+
+    try:
+        app.state.skills = build_registry(settings)
+    except SkillStartupError as exc:
+        log.error("%s", exc)
+        raise
+    if app.state.skills:
+        log.info("skills siap: %d skill, manifest=%s",
+                 len(app.state.skills), app.state.skills.manifest_id[:12])
+    else:
+        log.info("skills NONAKTIF (SKILLS_ENABLED=false atau tanpa skill)")
     if rag is not None:
         log.info("rag ready (backend=%s, embed=%s dim=%d)",
                  settings.RAG_BACKEND, settings.RAG_EMBED_MODEL, rag.dims)
