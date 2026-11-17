@@ -84,7 +84,8 @@ async def stream_chat(
         await turns.start(
             workspace=identity.workspace, turn_id=turn_id, owner=identity.user,
             first_event=StreamStarted(turn_id=turn_id).model_dump(mode="json"),
-            events=ctrl.stream(req, identity, request_id=request_id))
+            events=ctrl.stream(req, identity, request_id=request_id),
+            on_event=on_event)  # v1.0 R3: hook di produsen
     except CacheUnavailable:
         # v1.0 S9: cache MATI di tengah (turns.enabled tapi tulis gagal) →
         # degradasi ke streaming langsung (fail-open + alarm + header),
@@ -100,7 +101,6 @@ async def stream_chat(
                     workspace=identity.workspace, turn_id=turn_id):
                 if await request.is_disconnected():
                     break
-                await on_event(event)
                 yield _sse(entry_id, event)
         except (asyncio.CancelledError, GeneratorExit):
             raise

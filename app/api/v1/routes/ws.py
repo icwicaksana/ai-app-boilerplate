@@ -4,8 +4,10 @@ Alur:
 1. Klien `POST /realtime/ticket` (Bearer) → ticket sekali pakai (TTL 30 dtk).
 2. Klien `WS /ws/chat?ticket=...` (Origin divalidasi — CSWSH).
 3. Klien kirim `{"type":"chat","agent":...,"input":...,"thread_id":...}`.
-4. Server mengirim event envelope (`started/token/thinking/tool_*/result|error`)
-   dengan field tambahan `seq` (monotonic per koneksi).
+4. Server ack `{"type":"ack","turn_id":...}` lalu memompa event envelope
+   (`started/token/thinking/tool_*/result|error`) dari turn log dengan
+   field tambahan `seq` (monotonic per koneksi). Disconnect = pump berhenti,
+   produsen jalan terus (v1.0 R4: paritas resume HTTP).
 5. `{"type":"cancel"}` menghentikan run aktif; `{"type":"ping"}` → `pong`.
 6. `{"type":"resume","turn_id":...,"last_event_id":...}` melanjutkan turn dari
    turn log (v0.5a) — jalur yang sama dengan SSE resume.
@@ -36,8 +38,9 @@ from app.core.threads import ThreadIdentity
 from app.core.turns import TurnManager
 from app.core.ws_ticket import TicketStore, origin_allowed
 from app.infra.cache import CacheClient, CacheUnavailable
-from app.infra.turnlog import is_terminal
+from app.infra.turnlog import is_terminal, new_turn_id
 from app.schemas.chat import ChatRequest
+from app.schemas.stream import StreamStarted
 
 router = APIRouter(tags=["realtime"])
 log = get_logger(__name__)
@@ -287,9 +290,62 @@ class _Connection:
                              "status": exc.status_code, "title": exc.title,
                              "detail": exc.message, "instance": "-"})
             return
-        self.run_task = asyncio.create_task(self._run_chat(ctrl, req))
+        # R13 (sisi WS): validasi penuh SEBELUM turn dibuat — tanpa ini turn
+        # yatim + error datang sebagai event, bukan penolakan bersih.
+        try:
+            thread_id = ctrl.validate_before_stream(req, self.identity)
+        except AppError as exc:
+            await self._put({"type": "error", "code": exc.code,
+                             "status": exc.status_code, "title": exc.title,
+                             "detail": exc.message, "instance": "-"})
+            return
+        if not getattr(self.turns, "enabled", False):
+            # Tanpa cache: direct seperti HTTP (tak bisa resume).
+            self.run_task = asyncio.create_task(
+                self._run_chat_direct(ctrl, req))
+            return
+        # v1.0 R4: WS chat lewat TurnManager — disconnect = pump berhenti,
+        # produsen jalan terus, resume via turn_id (paritas HTTP).
+        turn_id = new_turn_id()
+        try:
+            await self.turns.start(
+                workspace=self.identity.workspace, turn_id=turn_id,
+                owner=self.identity.user,
+                first_event=StreamStarted(turn_id=turn_id).model_dump(
+                    mode="json"),
+                events=ctrl.stream(req, self.identity, request_id="ws"),
+                on_event=self._approval_hook(thread_id, req.agent))
+        except CacheUnavailable:
+            await self._put({"type": "error", "code": "STORAGE_UNAVAILABLE",
+                             "status": 503, "title": "Storage Unavailable",
+                             "detail": "Turn log tak tersedia — coba lagi.",
+                             "instance": "-"})
+            return
+        # Ack KILAT: klien pegang turn_id bahkan bila putus seketika.
+        await self._put({"type": "ack", "turn_id": turn_id})
+        self.run_task = asyncio.create_task(self._pump_turn(turn_id, "0-0"))
 
-    async def _run_chat(self, ctrl: ChatController, req: ChatRequest) -> None:
+    async def _pump_turn(self, turn_id: str, cursor: str) -> None:
+        """Pompa turn log ke WS (dipakai chat-managed + resume)."""
+        async for _rid, event in self.turns.follow(
+                workspace=self.identity.workspace, turn_id=turn_id,
+                cursor=cursor):
+            await self._put(event)
+
+    def _approval_hook(self, thread_id: str, agent: str):
+        """Hook produsen (R3): interrupt → approval pending."""
+
+        async def _hook(event: dict) -> None:
+            await self._record(event, thread_id, agent)
+
+        return _hook
+
+    async def _run_chat_direct(self, ctrl: ChatController, req: ChatRequest) -> None:
+        """Jalur tanpa cache: pompa langsung (konsumen = produsen).
+
+        Di sini _record per event BENAR (R3 tak berlaku: tak ada TurnLog).
+        Disconnect = run dibatalkan (tak bisa resume — sama seperti HTTP).
+        """
         thread_id = ""
         try:
             thread_id = ctrl.validate_before_stream(req, self.identity)
@@ -323,6 +379,14 @@ class _Connection:
     async def _start_resume(self, msg: dict) -> None:
         turn_id = str(msg.get("turn_id") or "")
         cursor = str(msg.get("last_event_id") or "0-0")
+        # v1.0 R11: resume tak boleh menimpa run aktif (dulu pump lama bocor
+        # + dua pompa berebut queue). Samakan dengan chat: 409 BUSY.
+        if self.run_task and not self.run_task.done():
+            await self._put({"type": "error", "code": "BUSY", "status": 409,
+                             "title": "Busy",
+                             "detail": "Masih ada run aktif; kirim cancel dulu.",
+                             "instance": "-"})
+            return
         if not turn_id or not getattr(self.turns, "enabled", False):
             await self._put({"type": "error", "code": "STREAM_GONE",
                              "status": 410, "title": "Gone",
@@ -345,12 +409,7 @@ class _Connection:
                              "instance": "-"})
             return
 
-        async def _pump() -> None:
-            async for _rid, event in self.turns.follow(
-                    workspace=self.identity.workspace, turn_id=turn_id, cursor=cursor):
-                await self._put(event)
-
-        self.run_task = asyncio.create_task(_pump())
+        self.run_task = asyncio.create_task(self._pump_turn(turn_id, cursor))
 
     # --- queue & pengiriman ---
     async def _put(self, event: dict) -> None:

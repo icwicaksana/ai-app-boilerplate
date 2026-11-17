@@ -12,17 +12,22 @@ Batas yang disadari:
   bukan menggantung).
 - Tak ada pembatalan otomatis saat klien pergi: produksi tetap jalan sampai
   selesai/timeout LLM. Ini tradeoff yang disengaja (hasil tetap bisa diambil).
+
+v1.0 R3: hook `on_event` dipanggil PRODUSEN (bukan konsumen) — pencatatan
+approval tak hilang bila klien disconnect sebelum event terminal dibaca.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from app.core.logging import get_logger
 from app.infra.turnlog import TurnLog, is_terminal
 
 log = get_logger(__name__)
+
+OnEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class TurnManager:
@@ -51,17 +56,20 @@ class TurnManager:
 
     async def start(self, *, workspace: str, turn_id: str, owner: str,
                     first_event: dict[str, Any],
-                    events: AsyncIterator[dict[str, Any]]) -> None:
+                    events: AsyncIterator[dict[str, Any]],
+                    on_event: OnEvent | None = None) -> None:
         """Tulis event pertama (started) lalu jalankan producer di latar."""
         await self.turnlog.create(workspace=workspace, turn_id=turn_id,
                                   owner=owner, first_event=first_event)
         task = asyncio.create_task(
-            self._produce(workspace, turn_id, events), name=f"turn:{turn_id}")
+            self._produce(workspace, turn_id, events, on_event),
+            name=f"turn:{turn_id}")
         self._tasks[turn_id] = task
         task.add_done_callback(lambda _t, tid=turn_id: self._tasks.pop(tid, None))
 
     async def _produce(self, workspace: str, turn_id: str,
-                       events: AsyncIterator[dict[str, Any]]) -> None:
+                       events: AsyncIterator[dict[str, Any]],
+                       on_event: OnEvent | None) -> None:
         terminal = False
         try:
             async for event in events:
@@ -72,6 +80,13 @@ class TurnManager:
                     continue
                 await self.turnlog.append(workspace=workspace, turn_id=turn_id,
                                           event=event)
+                # v1.0 R3: hook di produsen — approval tercatat walau SEMUA
+                # konsumen disconnect. Hook best-effort (tak boleh bunuh turn).
+                if on_event is not None:
+                    try:
+                        await on_event(event)
+                    except Exception:
+                        log.exception("hook on_event gagal turn=%s", turn_id)
                 if is_terminal(event):
                     terminal = True
                     break

@@ -7,6 +7,7 @@ sehingga logika rate-limit/idempotency bisa diuji deterministik.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -81,7 +82,7 @@ class FakeCache:
             from app.infra.cache import CacheUnavailable
 
             raise CacheUnavailable("fake down")
-        return key in self.store
+        return key in self.store or key in self.streams
 
     async def delete(self, key: str) -> None:
         if self.down:
@@ -133,6 +134,10 @@ class FakeCache:
 
     async def xread(self, key: str, cursor: str, block_ms: int = 1000,
                     count: int = 200) -> list[tuple[str, dict]]:
+        # Tiru block: yield sekali agar produsen bisa interleave. Tanpa ini
+        # follow() menghabiskan idle-timeout dalam mikrodetik (Valkey asli
+        # memblokir block_ms per panggilan).
+        await asyncio.sleep(0)
         rows = [(rid, {"data": data}) for rid, data in self.streams.get(key, [])]
         if cursor not in ("0-0", "0"):
             rows = [(rid, f) for rid, f in rows if rid > cursor]
