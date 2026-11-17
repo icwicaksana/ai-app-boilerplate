@@ -12,13 +12,14 @@ class BaseController:
     AGENT_NAME = ""
 
     def __init__(self, settings, checkpointer=None, runner=None, store=None,
-                 pool=None, rag=None):
+                 pool=None, rag=None, skills=None):
         self.settings = settings
         self.checkpointer = checkpointer
         self.runner = runner
         self.store = store  # mentah (AsyncPostgresStore); dibungkus MemoryStore per-request
         self.pool = pool  # pool mentah (untuk retriever RAG per-request, v0.7)
         self.rag = rag  # RagClients lifespan / None (v0.7)
+        self.skills = skills  # SkillRegistry lifespan / None (v0.9)
         self.log = get_logger(self.__class__.__name__)
 
     @staticmethod

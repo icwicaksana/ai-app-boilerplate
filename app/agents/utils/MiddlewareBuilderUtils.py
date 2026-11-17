@@ -30,7 +30,14 @@ CONTEXT_KEEP_LAST_TOOL_USES = 3
 # dan output-nya DIKECUALIKAN dari pembersihan konteks (bukti sitasi harus
 # bertahan untuk eval + atribusi; tanpa ini ClearToolUsesEdit menghapus bukti
 # yang baru dipakai menjawab).
-RETRIEVAL_TOOL_NAMES = frozenset({"search_knowledge_base"})
+RETRIEVAL_TOOL_NAMES = frozenset({
+    "search_knowledge_base",
+    # v0.9 F3: body skill adalah bukti prosedural seperti sitasi RAG — tanpa
+    # ini ClearToolUsesEdit menghapus body yang baru dimuat (blocker S1),
+    # dan limit 5/giliran mematikan skill di tengah riset (blocker S2).
+    "load_skill",
+    "read_skill_file",
+})
 RETRIEVAL_PER_TOOL_LIMIT = 10
 
 

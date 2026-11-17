@@ -129,9 +129,9 @@ def _meta_of(tup, key: str):
 
 class ThreadController(BaseController):
     def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None,
-                 *, store=None, pool=None, rag=None):
+                 *, store=None, pool=None, rag=None, skills=None):
         super().__init__(settings, checkpointer, runner or Runner(),
-                         store=store, pool=pool, rag=rag)
+                         store=store, pool=pool, rag=rag, skills=skills)
 
     async def _require_tuple(self, thread_id: str, checkpoint_id: str | None = None):
         """Tuple terbaru (atau 1 checkpoint spesifik). None/absen → 404.
@@ -276,6 +276,7 @@ class ThreadController(BaseController):
             runner=self.runner,
             session_id=new_thread,
             store=self.store, pool=self.pool, rag=self.rag,
+            skills=self.skills,
             agent_cls=agent_cls, missing_retriever="raise_binding",
         )
 

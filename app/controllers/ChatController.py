@@ -34,9 +34,9 @@ class ChatController(BaseController):
     AGENT_NAME = "example_chat"  # default; registry = sumber kebenaran
 
     def __init__(self, settings: Settings, checkpointer, runner: Runner | None = None,
-                 store=None, pool=None, rag=None):
+                 store=None, pool=None, rag=None, skills=None):
         super().__init__(settings, checkpointer, runner or Runner(), store=store,
-                         pool=pool, rag=rag)
+                         pool=pool, rag=rag, skills=skills)
 
     def _ensure_agent(self, name: str) -> None:
         if name not in CHAT_AGENTS:
@@ -61,6 +61,7 @@ class ChatController(BaseController):
             settings=self.settings, checkpointer=self.checkpointer,
             runner=self.runner, session_id=thread_id,
             store=self.store, pool=self.pool, rag=self.rag,
+            skills=self.skills,
             agent_cls=agent_cls, missing_retriever="raise_embedding",
         )
 

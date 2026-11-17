@@ -96,7 +96,8 @@ def _controller_for(ws: WebSocket, settings: Settings) -> ChatController:
 
     state = ws.app.state
     return ChatController(settings, getattr(state, "checkpointer", None),
-                          get_chat_runner(), store=getattr(state, "store", None))
+                          get_chat_runner(), store=getattr(state, "store", None),
+                          skills=getattr(state, "skills", None))
 
 
 class _Connection:

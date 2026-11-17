@@ -29,3 +29,4 @@ class AgentContext:
     session_id: str | None = None
     store: MemoryStore | None = None  # MemoryStore per-user (chat) atau None (pipeline/test)
     retriever: BoundRetriever | None = None  # RAG terikat workspace (v0.7) atau None
+    skills: object = None  # SkillRegistry boot (v0.9) atau None (mati/test)

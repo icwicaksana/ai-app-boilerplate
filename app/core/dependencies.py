@@ -95,7 +95,8 @@ def get_approval_service(
             "Persistence belum siap (lifespan gagal/startup tak jalan).")
     return ApprovalService(settings, pool, checkpointer,
                            store=getattr(request.app.state, "store", None),
-                           rag=getattr(request.app.state, "rag", None))
+                           rag=getattr(request.app.state, "rag", None),
+                           skills=getattr(request.app.state, "skills", None))
 async def get_thread_identity(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -146,7 +147,8 @@ def get_chat_controller(
     checkpointer, store = _persistence(request)
     return ChatController(settings, checkpointer, get_chat_runner(), store=store,
                           pool=_optional_pool(request),
-                          rag=get_rag_clients(request))
+                          rag=get_rag_clients(request),
+                          skills=getattr(request.app.state, "skills", None))
 
 
 def get_job_controller(
@@ -181,7 +183,8 @@ def get_thread_controller(
     return ThreadController(settings, checkpointer, get_runner(),
                             store=getattr(request.app.state, "store", None),
                             pool=getattr(request.app.state, "pool", None),
-                            rag=getattr(request.app.state, "rag", None))
+                            rag=getattr(request.app.state, "rag", None),
+                            skills=getattr(request.app.state, "skills", None))
 
 
 def get_rag_clients(request: Request):

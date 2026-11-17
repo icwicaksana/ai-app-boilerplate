@@ -59,6 +59,7 @@ def build_agent_context(
     store=None,
     pool=None,
     rag=None,
+    skills=None,
     agent_cls=None,
     missing_retriever: MissingRetriever = "degrade",
 ) -> AgentContext:
@@ -102,6 +103,10 @@ def build_agent_context(
         session_id=session_id,
         store=memory,
         retriever=retriever,
+        # v0.9 F3: skills diteruskan apa adanya — tidak ada mode raise_*.
+        # Registry kosong/None = degradasi diam yang BENAR (K10): skill
+        # adalah pengetahuan opsional, bukan binding identitas.
+        skills=skills,
     )
 
 

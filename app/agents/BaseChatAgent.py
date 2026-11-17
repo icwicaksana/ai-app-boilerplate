@@ -76,6 +76,7 @@ class BaseChatAgent:
         self.checkpointer = ctx.checkpointer
         self.runner = ctx.runner  # inject dari controller — jangan bikin Runner() di sini
         self.memory = getattr(ctx, "store", None)  # MemoryStore per-user / None
+        self.skills = getattr(ctx, "skills", None)  # SkillRegistry boot / None
         self.graph = self.build(ctx.session_id)
         # v0.9 F0-3: pastikan graph SELALU bernama, termasuk agen yang
         # meng-override build() dengan StateGraph sendiri (mis. HitlDemoAgent).
@@ -102,6 +103,29 @@ class BaseChatAgent:
             tools.append(make_save_memory_tool(memory))
             tools.append(make_save_profile_patch_tool(memory))
             system_prompt = f"{system_prompt}\n\n{MEMORY_RULES}" if system_prompt else MEMORY_RULES
+        # v0.9 F3: skill on-demand. Guard GANDA dan berurutan: flag MATI atau
+        # registry kosong → blok ini tidak tersentuh sama sekali, sehingga
+        # prompt dan tools byte-identik dengan v0.8.3 (dikunci
+        # tests/test_skills_disabled_identical.py). Indeks SELALU di akhir
+        # prompt (K5) agar prefix-cache bagian depan tetap stabil.
+        registry = getattr(self, "skills", None)
+        if getattr(self.settings, "SKILLS_ENABLED", False) and registry:
+            from app.agents.tools.SkillTools import (
+                make_load_skill_tool,
+                make_read_skill_file_tool,
+            )
+
+            max_chars = getattr(self.settings, "SKILL_BODY_MAX_CHARS", 20_000)
+            tools.append(make_load_skill_tool(registry, max_chars=max_chars))
+            tools.append(make_read_skill_file_tool(registry, max_chars=max_chars))
+            index = registry.index(
+                include_when_to_use=getattr(
+                    self.settings, "SKILLS_INDEX_INCLUDE_WHEN", True),
+                max_entries=getattr(self.settings, "SKILLS_MAX_ENTRIES", 40),
+            )
+            block = ("Skill yang tersedia (muat dengan load_skill bila tugas "
+                     f"membutuhkan):\n{index}")
+            system_prompt = f"{system_prompt}\n\n{block}" if system_prompt else block
         # Observabilitas: nama tool terikat (termasuk factory-bound) — dikunci test
         # agar binding tak lepas diam-diam saat refactor build().
         self.bound_tools = [getattr(t, "name", "?") for t in tools]

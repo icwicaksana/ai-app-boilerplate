@@ -64,7 +64,8 @@ class ApprovalExpiredError(AppError):
 
 class ApprovalService:
     def __init__(self, settings: Settings, pool, checkpointer,
-                 runner: Runner | None = None, *, store=None, rag=None):
+                 runner: Runner | None = None, *, store=None, rag=None,
+                 skills=None):
         self.settings = settings
         self.pool = pool
         self.checkpointer = checkpointer
@@ -73,6 +74,7 @@ class ApprovalService:
         # resume identik dengan graph yang di-interrupt (skema tool sama).
         self.store = store
         self.rag = rag
+        self.skills = skills
 
     # --- perekaman ---
     async def record_interrupts(self, *, workspace: str, thread_id: str,
@@ -215,6 +217,7 @@ class ApprovalService:
             settings=self.settings, checkpointer=self.checkpointer,
             runner=self.runner, session_id=thread_id,
             store=self.store, pool=self.pool, rag=self.rag,
+            skills=self.skills,
             agent_cls=agent_cls, missing_retriever="raise_binding",
         )
         agent: BaseChatAgent = agent_cls(ctx)
@@ -242,7 +245,8 @@ async def record_pending_approvals(app_or_request, *, identity, thread_id: str,
     svc = ApprovalService(
         get_settings(), pool, checkpointer,
         store=getattr(state, "store", None),
-        rag=getattr(state, "rag", None))
+        rag=getattr(state, "rag", None),
+        skills=getattr(state, "skills", None))
     try:
         return await svc.record_interrupts(
             workspace=identity.workspace, thread_id=thread_id, agent=agent,
