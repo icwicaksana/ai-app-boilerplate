@@ -10,9 +10,11 @@ from fastapi.testclient import TestClient
 
 from app.api.v1.routes.auth import get_auth_controller
 from app.controllers.AuthController import AuthController
-from app.core.security import hash_password
+from app.core.errors import InvalidTokenError, StorageUnavailableError
+from app.core.security import TYPE_ACCESS, create_access_token, hash_password
 from app.infra import users as users_repo
 from app.infra.cache import CacheClient
+from app.schemas.auth import TokenPair
 from tests._auth_helpers import app_with_settings, test_settings as make_settings
 
 PASSWORD = "rahasia-kuat-123"
@@ -163,3 +165,180 @@ def test_me_requires_token(client):
     res = client.get("/api/v1/auth/me")
     assert res.status_code == 401
     assert res.headers.get("www-authenticate", "").lower().startswith("bearer")
+
+
+# --- v1.0 S1: kanonisasi case (tutup kolisi Budi/budi) ---
+
+def test_canon_identity_pure():
+    from app.core.errors import InvalidThreadIdError
+    from app.infra.users import canon_identity
+
+    assert canon_identity("Toko-A", "Budi") == ("toko-a", "budi")
+    assert canon_identity("  toko-a ", "budi") == ("toko-a", "budi")
+    with pytest.raises(InvalidThreadIdError):
+        canon_identity("x", "budi")  # workspace < 3 char
+    with pytest.raises(InvalidThreadIdError):
+        canon_identity("toko-a", "Bu di")  # spasi tak valid
+
+
+@pytest.mark.asyncio
+async def test_login_normalizes_case_before_repo(monkeypatch, cache):
+    """Controller meneruskan identitas kanonis ke repo (lapis-2)."""
+    from app.core.security import decode_token
+
+    seen = {}
+
+    async def _get_user(pool, workspace, username):
+        seen["args"] = (workspace, username)
+        return _user()
+
+    async def _mark_login(pool, user_id):
+        return None
+
+    monkeypatch.setattr(users_repo, "get_user", _get_user)
+    monkeypatch.setattr(users_repo, "mark_login", _mark_login)
+    ctrl = AuthController(make_settings(), pool=None, cache=cache)
+    pair = await ctrl.login(workspace="Toko-A", username="Budi",
+                            password=PASSWORD)
+    assert seen["args"] == ("toko-a", "budi")
+    claims = decode_token(make_settings(), pair.access_token,
+                          expected_type=TYPE_ACCESS)
+    assert (claims.workspace, claims.subject) == ("toko-a", "budi")
+
+
+@pytest.mark.asyncio
+async def test_users_repo_normalizes_sql_params():
+    """Repo menormalisasi SEBELUM SQL (lapis-1, mencakup pemanggil langsung)."""
+
+    class _Cur:
+        rowcount = 1
+
+        def __init__(self, rec):
+            self.rec = rec
+
+        async def execute(self, query, params):
+            self.rec.append(params)
+            return self
+
+        async def fetchone(self):
+            return {"id": 7}
+
+    class _Conn:
+        def __init__(self, rec):
+            self.rec = rec
+
+        async def execute(self, query, params):
+            return await _Cur(self.rec).execute(query, params)
+
+    class _Ctx:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Pool:
+        def __init__(self):
+            self.params = []
+
+        def connection(self):
+            return _Ctx(_Conn(self.params))
+
+    from app.infra import users as repo
+
+    pool = _Pool()
+    await repo.get_user(pool, "Toko-A", "Budi")
+    await repo.create_user(pool, workspace="Toko-A", username="Budi",
+                           password_hash="h")
+    await repo.set_active(pool, workspace="Toko-A", username="Budi",
+                          is_active=False)
+    assert pool.params[0] == ("toko-a", "budi")
+    assert pool.params[1][:2] == ("toko-a", "budi")
+    assert pool.params[2][1:] == ("toko-a", "budi")
+
+
+def test_claims_noncanonical_rejected_401(client, known_user):
+    """Token non-kanonis (pra-v1.0/tempaan) ditolak, bukan di-lowercase."""
+    tok, _ = create_access_token(make_settings(), workspace="Toko-A",
+                                 user="Budi", scopes=("chat",))
+    res = client.get("/api/v1/auth/me",
+                     headers={"Authorization": f"Bearer {tok}"})
+    assert res.status_code == 401
+    assert res.json()["code"] == "INVALID_TOKEN"
+
+
+# --- v1.0 S5: refresh atomik + fail-closed ---
+
+@pytest.mark.asyncio
+async def test_refresh_parallel_single_winner(monkeypatch, cache):
+    """Dua refresh konkuren token sama: tepat 1 menang (SET NX atomik)."""
+    import asyncio
+
+    async def _get_user(pool, workspace, username):
+        return _user()
+
+    async def _mark_login(pool, user_id):
+        return None
+
+    monkeypatch.setattr(users_repo, "get_user", _get_user)
+    monkeypatch.setattr(users_repo, "mark_login", _mark_login)
+    ctrl = AuthController(make_settings(), pool=None, cache=cache)
+    pair = await ctrl.login(workspace="toko-a", username="budi",
+                            password=PASSWORD)
+    results = await asyncio.gather(
+        ctrl.refresh(pair.refresh_token), ctrl.refresh(pair.refresh_token),
+        return_exceptions=True)
+    oks = [r for r in results if isinstance(r, TokenPair)]
+    fails = [r for r in results if isinstance(r, InvalidTokenError)]
+    assert len(oks) == 1, results
+    assert len(fails) == 1, results
+
+
+@pytest.mark.asyncio
+async def test_refresh_without_cache_is_503_not_blind_token(monkeypatch):
+    """Refresh tanpa cache = 503 (fail-closed), bukan token tanpa rotasi."""
+
+    async def _get_user(pool, workspace, username):
+        return _user()
+
+    async def _mark_login(pool, user_id):
+        return None
+
+    monkeypatch.setattr(users_repo, "get_user", _get_user)
+    monkeypatch.setattr(users_repo, "mark_login", _mark_login)
+    ctrl = AuthController(make_settings(), pool=None, cache=None)
+    pair = await ctrl.login(workspace="toko-a", username="budi",
+                            password=PASSWORD)
+    with pytest.raises(StorageUnavailableError):
+        await ctrl.refresh(pair.refresh_token)
+
+
+def test_refresh_without_cache_route_503(monkeypatch):
+    """Jalur HTTP: refresh tanpa cache → 503 STORAGE_UNAVAILABLE."""
+
+    async def _get_user(pool, workspace, username):
+        if (workspace, username) == ("toko-a", "budi"):
+            return _user()
+        return None
+
+    async def _mark_login(pool, user_id):
+        return None
+
+    monkeypatch.setattr(users_repo, "get_user", _get_user)
+    monkeypatch.setattr(users_repo, "mark_login", _mark_login)
+    settings = make_settings()
+    app = app_with_settings()
+    # SENGAJA tanpa app.state.cache → get_cache None → fail-closed.
+    ctrl = AuthController(settings, pool=None, cache=None)
+    app.dependency_overrides[get_auth_controller] = lambda: ctrl
+    client = TestClient(app, raise_server_exceptions=False)
+    tokens = client.post("/api/v1/auth/login",
+                         json={"workspace": "toko-a", "username": "budi",
+                               "password": PASSWORD}).json()
+    res = client.post("/api/v1/auth/refresh",
+                      json={"refresh_token": tokens["refresh_token"]})
+    assert res.status_code == 503
+    assert res.json()["code"] == "STORAGE_UNAVAILABLE"

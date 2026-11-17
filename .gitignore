@@ -17,6 +17,7 @@ ENV/
 .env.local
 *.pem
 *.key
+.chatgpt-tokens/
 
 # Pytest / coverage
 .pytest_cache/
@@ -37,6 +38,8 @@ Thumbs.db
 
 # Logs & lokal
 *.log
+# Config proxy LiteLLM lokal (punya master_key) — JANGAN commit
+litellm-*.yaml
 
 # v0.7: cache HF lokal + blob upload (repo-lokal, JANGAN commit)
 .hf-cache/

@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 
 from app.controllers.base import BaseController
-from app.core.auth import is_revoked, revoke
+from app.core.auth import claim_refresh, revoke
 from app.core.config import Settings
 from app.core.errors import (
     InvalidTokenError,
@@ -50,6 +50,9 @@ class AuthController(BaseController):
     async def login(self, *, workspace: str, username: str, password: str,
                     request_id: str = "-") -> TokenPair:
         started = time.perf_counter()
+        # v1.0 S1: normalisasi di controller (skema route sudah lowercase-only,
+        # ini pertahanan lapis-2 untuk pemanggil langsung).
+        workspace, username = users.canon_identity(workspace, username)
         user = await users.get_user(self.pool, workspace, username)
         # Verifikasi tetap dijalankan walau user tak ada? Tidak perlu: timing
         # oracle kecil diterima, pesan tetap generik (fokus anti-enumerasi).
@@ -72,14 +75,13 @@ class AuthController(BaseController):
     # --- refresh (rotasi) ---
     async def refresh(self, refresh_token: str, *, request_id: str = "-") -> TokenPair:
         claims = self._decode_refresh(refresh_token)
-        if await is_revoked(self.cache, claims.jti):
-            log.warning("refresh ditolak: token sudah di-revoke jti=%s", claims.jti)
-            raise InvalidTokenError("Refresh token sudah dipakai/di-revoke.")
+        # v1.0 S5: klaim atomik SEKALI-PAKAI (SET NX) menggantikan cek-lalu-
+        # revoke yang racy. Gagal klaim = replay/revoke → 401; cache mati →
+        # 503 (fail-closed, bukan token buta).
+        await claim_refresh(self.cache, claims)
         user = await users.get_user(self.pool, claims.workspace, claims.subject)
         if not user or not user.get("is_active"):
             raise InvalidTokenError("User tidak aktif.")
-        # Rotasi: revoke SEBELUM terbitkan yang baru.
-        await revoke(self.cache, claims)
         scopes = tuple(s for s in str(user.get("scopes") or "").split() if s)
         pair = self._issue_pair(workspace=claims.workspace, user=claims.subject,
                                 scopes=scopes)

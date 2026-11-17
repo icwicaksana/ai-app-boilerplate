@@ -38,17 +38,24 @@ async def _run(args: argparse.Namespace) -> int:
     await open_pool(pool)
     try:
         await users.ensure_schema(pool)
-        if await users.get_user(pool, args.workspace, args.username):
-            print(f"GAGAL: user '{args.username}'@{args.workspace} sudah ada.",
+        try:
+            workspace, username = users.canon_identity(
+                args.workspace, args.username)
+        except Exception as exc:
+            print(f"GAGAL: identitas tak valid ({exc}). Pakai huruf kecil, "
+                  f"tanpa spasi.", file=sys.stderr)
+            return 1
+        if await users.get_user(pool, workspace, username):
+            print(f"GAGAL: user '{username}'@{workspace} sudah ada.",
                   file=sys.stderr)
             return 1
         user_id = await users.create_user(
-            pool, workspace=args.workspace, username=args.username,
+            pool, workspace=workspace, username=username,
             password_hash=hash_password(args.password), scopes=args.scopes,
             is_active=not args.inactive,
         )
-        print(f"OK: user id={user_id} workspace={args.workspace} "
-              f"username={args.username} scopes='{args.scopes}' "
+        print(f"OK: user id={user_id} workspace={workspace} "
+              f"username={username} scopes='{args.scopes}' "
               f"active={not args.inactive}")
         return 0
     finally:

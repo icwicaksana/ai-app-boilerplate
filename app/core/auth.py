@@ -10,6 +10,9 @@ Sikap kegagalan (ADR-16):
 - Denylist tak terbaca (cache down) → **izinkan** + log warning (fail-open):
   revoke bersifat best-effort; mematikan seluruh API karena cache mati lebih
   berbahaya daripada jendela revoke yang lebih lebar.
+- PENGECUALIAN (v1.0 S5): **refresh token fail-closed**. Rotasi tanpa denylist
+  = reuse tak terdeteksi selama 7 hari — inti properti keamanannya hilang.
+  Refresh saat cache mati → 503, bukan token baru.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from app.core.errors import (
     AuthNotConfiguredError,
     ForbiddenError,
     InvalidTokenError,
+    StorageUnavailableError,
     TokenExpiredError,
     UnauthenticatedError,
 )
@@ -79,8 +83,41 @@ async def revoke(cache: CacheClient | None, claims: TokenClaims) -> bool:
         return False
 
 
+async def claim_refresh(cache: CacheClient | None, claims: TokenClaims) -> None:
+    """Klaim atomik SEKALI-PAKAI untuk refresh token (v1.0 S5).
+
+    SET NX: pemenang pertama True, replay/revoke False → 401. Satu round
+    trip menggantikan pola cek-lalu-revoke yang racy.
+    Cache mati/tak ada → 503 (fail-CLOSED): rotasi tanpa denylist bukan
+    rotasi. Pengecualian eksplisit dari fail-open ADR-16 (lihat docstring
+    modul) — penerbitan kredensial tak boleh buta.
+    """
+    if cache is None:
+        raise StorageUnavailableError(
+            "Layanan refresh butuh cache — coba lagi nanti.")
+    try:
+        import json as _json
+
+        first = await cache.set_if_absent(
+            deny_key(claims.jti),
+            _json.dumps({"typ": claims.token_type}),
+            max(1, int(claims.ttl_remaining or 0)) if claims.ttl_remaining > 0 else 1)
+    except CacheUnavailable as exc:
+        log.warning("refresh ditolak: denylist tak bisa ditulis (cache down)")
+        raise StorageUnavailableError(
+            "Layanan refresh butuh cache — coba lagi nanti.") from exc
+    if not first:
+        log.warning("refresh ditolak: token sudah dipakai/di-revoke jti=%s",
+                    claims.jti)
+        raise InvalidTokenError("Refresh token sudah dipakai/di-revoke.")
+
+
 def _claims_to_identity(claims: TokenClaims) -> ThreadIdentity:
-    """Validasi klaim jadi ThreadIdentity kanonis (pola sama seperti header)."""
+    """Validasi klaim jadi ThreadIdentity kanonis (pola sama seperti header).
+
+    Klaim non-kanonis sudah ditolak di resolve_claims; canon di sini
+    pertahanan lapis-2 (tak terjangkau untuk token dari login v1.0+).
+    """
     try:
         workspace = canon_segment(claims.workspace, "workspace")
         user = canon_segment(claims.subject, "user")
@@ -88,6 +125,24 @@ def _claims_to_identity(claims: TokenClaims) -> ThreadIdentity:
         raise InvalidTokenError(
             "Klaim token tak memenuhi format identitas.") from exc
     return ThreadIdentity(workspace=workspace, user=user)
+
+
+def _assert_canonical(claims: TokenClaims) -> None:
+    """Tolak klaim non-kanonis (v1.0 S1).
+
+    Login hanya menerbitkan klaim kanonis, jadi `Toko-A`/`Budi` di klaim =
+    token pra-perbaikan atau tempaan. Satu pintu di resolve_claims sehingga
+    berlaku untuk SEMUA route terautentikasi (termasuk /me).
+    """
+    try:
+        canonical_ws = canon_segment(claims.workspace, "workspace")
+        canonical_user = canon_segment(claims.subject, "user")
+    except Exception as exc:
+        raise InvalidTokenError(
+            "Klaim token tak memenuhi format identitas.") from exc
+    if claims.workspace != canonical_ws or claims.subject != canonical_user:
+        raise InvalidTokenError(
+            "Klaim token tak kanonis — login ulang untuk token baru.")
 
 
 async def resolve_claims(request: Request, settings: Settings,
@@ -102,6 +157,7 @@ async def resolve_claims(request: Request, settings: Settings,
         raise TokenExpiredError() from exc
     except InvalidToken as exc:
         raise InvalidTokenError(str(exc)) from exc
+    _assert_canonical(claims)
     if await is_revoked(cache, claims.jti):
         raise InvalidTokenError("Token sudah di-revoke (logout).")
     return claims
