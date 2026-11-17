@@ -109,6 +109,41 @@ class FakeCache:
                 self.store[keys[1]] = str(args[2])
                 self.ttls[keys[1]] = int(args[1])
             return f"{len(self.streams[key])}-0"
+        if "IN_PROGRESS" in script:  # v1.0 R5: idempotency begin
+            v = self.store.get(key)
+            if v is None:
+                self.store[key] = str(args[0])
+                self.ttls[key] = int(args[1])
+                return "NEW"
+            d = json.loads(v)
+            if d.get("state") == "done":
+                if d.get("hash") == args[2]:
+                    return "REPLAY:" + v
+                return "CONFLICT"
+            if d.get("hash") != args[2]:
+                return "CONFLICT"
+            if int(d.get("leased_until") or 0) > int(args[3]):
+                return "IN_PROGRESS"
+            self.store[key] = str(args[0])  # steal
+            self.ttls[key] = int(args[1])
+            return "NEW"
+        if "pending" in script and "DEL" in script:  # v1.0 R5: abort
+            v = self.store.get(key)
+            if v:
+                d = json.loads(v)
+                if d.get("state") == "pending" and d.get("owner") == args[0]:
+                    self.store.pop(key, None)
+                    return 1
+            return 0
+        if "owner" in script:  # v1.0 R5: finish (compare-owner)
+            v = self.store.get(key)
+            if v:
+                d = json.loads(v)
+                if d.get("owner") != args[2]:
+                    return 0
+            self.store[key] = str(args[0])
+            self.ttls[key] = int(args[1])
+            return 1
         if "DEL" in script:  # consume ticket (GETDEL)
             return self.store.pop(key, None)
         raise NotImplementedError("script tak dikenal di FakeCache")

@@ -85,13 +85,9 @@ class DocumentController:
         if doc.get("_existing"):
             # Dedup: blob baru tak terpakai (doc lama menang).
             target.unlink(missing_ok=True)
-            job = await repo.latest_job_for_document(
+            # v1.0 R10: reuse-or-create atomik (anti job ganda konkuren).
+            job, _ = await repo.reuse_or_create_job(
                 self.pool, workspace=workspace, document_id=str(doc["id"]))
-            # Reuse job hidup (anti duplikat saat idempotency Valkey hilang,
-            # P1-5); job mati (dead) + upload ulang = niat proses ulang.
-            if job is None or job["state"] == "dead":
-                job = await repo.create_job(
-                    self.pool, workspace=workspace, document_id=str(doc["id"]))
             return {"document_id": str(doc["id"]), "job_id": job["id"],
                     "deduped": True}
         job = await repo.create_job(self.pool, workspace=workspace,
@@ -112,43 +108,83 @@ class DocumentController:
                 meta_patch={"ocr": ocr, "ocr_required": False})
         return job
 
-    async def delete(self, *, workspace: str, document_id: str) -> bool:
-        """Tombstone + hapus chunks PG + vektor Qdrant + graph + blob. False = tak ada."""
+    async def delete(self, *, workspace: str, document_id: str) -> dict:
+        """Hapus dokumen di semua backend + tombstone + cancel job.
+
+        v1.0 R9: best-effort per backend (satu gagal tak menggagalkan yang
+        lain) + tombstone/cancel SELALU jalan + ringkasan jujur.
+        Return {"ok": False} bila dokumen tak ada; {"ok": True, ...} bila ada.
+        """
         doc = await repo.get_document(self.pool, workspace=workspace,
                                       document_id=document_id)
         if doc is None:
-            return False
+            return {"ok": False}
+        backends: dict[str, int] = {"pg": 0, "qdrant": 0, "graph_entities": 0,
+                                    "graph_edges": 0}
+        errors: list[str] = []
+
+        async def _try(name: str, fn):
+            try:
+                return await fn()
+            except Exception as exc:  # best-effort: catat, lanjutkan
+                log.warning("delete %s backend %s gagal: %s", document_id,
+                            name, exc)
+                errors.append(f"{name}: {type(exc).__name__}")
+                return None
+
         from app.infra.rag.pgvector import PgVectorStore
 
-        pg = PgVectorStore(self.pool, workspace=workspace)
-        n_pg = await pg.delete_document(doc_id=document_id)
-        n_q = 0
+        async def _pg():
+            pg = PgVectorStore(self.pool, workspace=workspace)
+            return await pg.delete_document(doc_id=document_id)
+
+        backends["pg"] = await _try("pg", _pg) or 0
         # SELALU coba Qdrant bila klien ada (P1-7) — backend bisa pindah di
         # tengah umur dokumen (orphan tak terlihat bila hanya ikut backend).
         if self.rag is not None and self.rag.qdrant is not None:
             from app.infra.rag.qdrant import QdrantStore, collection_name
 
-            q = QdrantStore(
-                self.rag.qdrant,
-                collection_name(self.rag.dims, self.settings.RAG_EMBED_MODEL),
-                workspace=workspace)
-            n_q = await q.delete_document(doc_id=document_id)
+            async def _qdrant():
+                q = QdrantStore(
+                    self.rag.qdrant,
+                    collection_name(self.rag.dims,
+                                    self.settings.RAG_EMBED_MODEL),
+                    workspace=workspace)
+                return await q.delete_document(doc_id=document_id)
+
+            backends["qdrant"] = await _try("qdrant", _qdrant) or 0
         # SELALU coba graph (D10, pola P1-7) — flag bisa mati di tengah umur.
         from app.infra.rag.pg_graph import PgGraphStore
 
-        g = PgGraphStore(self.pool, workspace=workspace)
-        n_g_ent, n_g_edge = await g.delete_subgraph(doc_id=document_id)
-        await repo.tombstone_document(self.pool, workspace=workspace,
-                                      document_id=document_id)
-        await repo.cancel_jobs_for_document(
-            self.pool, workspace=workspace, document_id=document_id)
+        async def _graph():
+            g = PgGraphStore(self.pool, workspace=workspace)
+            return await g.delete_subgraph(doc_id=document_id)
+
+        graph_out = await _try("graph", _graph)
+        if graph_out:
+            backends["graph_entities"], backends["graph_edges"] = graph_out
+        # Tombstone + cancel job TAK BOLEH terlewat walau backend gagal.
+        tombstoned = await _try(
+            "tombstone",
+            lambda: repo.tombstone_document(
+                self.pool, workspace=workspace, document_id=document_id))
+        n_cancelled = await _try(
+            "cancel_jobs",
+            lambda: repo.cancel_jobs_for_document(
+                self.pool, workspace=workspace, document_id=document_id))
         try:
             self._storage_path(workspace, document_id).unlink(missing_ok=True)
         except OSError as exc:
             log.warning("blob %s gagal dihapus: %s", document_id, exc)
-        log.info("dokumen %s dihapus (pg=%d qdrant=%d graph=%d/%d)",
-                 document_id, n_pg, n_q, n_g_ent, n_g_edge)
-        return True
+            errors.append(f"blob: {type(exc).__name__}")
+        log.info("dokumen %s dihapus (pg=%d qdrant=%d graph=%d/%d "
+                 "tombstone=%s cancelled=%s errors=%s)",
+                 document_id, backends["pg"], backends["qdrant"],
+                 backends["graph_entities"], backends["graph_edges"],
+                 tombstoned, n_cancelled, errors or "-")
+        return {"ok": True, "backends": backends,
+                "tombstoned": bool(tombstoned),
+                "jobs_cancelled": n_cancelled or 0, "errors": errors}
 
     # -- baca --
 

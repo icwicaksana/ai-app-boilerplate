@@ -105,17 +105,20 @@ async def upload_document(
                                    settings.RAG_MAX_UPLOAD_BYTES)
 
     idem_key = (request.headers.get(IDEMPOTENCY_HEADER) or "").strip()
-    guard = IdempotencyGuard(cache, settings.IDEMPOTENCY_TTL_SECONDS)
+    guard = IdempotencyGuard(cache, settings.IDEMPOTENCY_TTL_SECONDS,
+                             settings.IDEMPOTENCY_PENDING_LEASE_SECONDS)
     import hashlib
 
     payload_hash = body_hash({
         "sha256": hashlib.sha256(blob).hexdigest(), "preset": preset,
         "ocr": ocr}) if idem_key else ""
     # NOTE: filename SENGAJA tak ikut hash (retry wajar boleh beda nama).
+    idem_owner = ""
     if idem_key:
         decision = await guard.begin(
             workspace=identity.workspace, user=identity.user, key=idem_key,
             payload_hash=payload_hash)
+        idem_owner = decision.owner
         if decision.degraded:  # v1.0 S9: tanpa dedup -> klien retry hati-hati
             from app.core.degraded import flag_request
 
@@ -138,14 +141,14 @@ async def upload_document(
     except Exception:
         if idem_key:
             await guard.abort(workspace=identity.workspace, user=identity.user,
-                              key=idem_key)
+                              key=idem_key, owner=idem_owner)
         raise
     body = {"document_id": out["document_id"], "job_id": out["job_id"],
             "status": "queued", "deduped": out["deduped"]}
     if idem_key:
         await guard.finish(workspace=identity.workspace, user=identity.user,
                            key=idem_key, payload_hash=payload_hash,
-                           response=body)
+                           response=body, owner=idem_owner)
     response.headers["X-Request-ID"] = request_id
     return IngestEnqueueResponse(**body)
 
@@ -198,10 +201,16 @@ async def delete_document(
     ctrl: DocumentController = Depends(get_document_controller),
     _rl=Depends(rate_limit_dependency("ingest", "RATE_LIMIT_INGEST_PER_MIN")),
 ) -> dict:
-    if not await ctrl.delete(workspace=identity.workspace,
-                             document_id=document_id):
+    res = await ctrl.delete(workspace=identity.workspace,
+                            document_id=document_id)
+    if not res.get("ok"):
         raise DocumentNotFoundError(document_id)
-    return {"document_id": document_id, "status": "deleted"}
+    # v1.0 R9: ringkasan best-effort (aditif — klien lama abaikan field baru).
+    return {"document_id": document_id, "status": "deleted",
+            "backends": res.get("backends", {}),
+            "tombstoned": res.get("tombstoned", True),
+            "jobs_cancelled": res.get("jobs_cancelled", 0),
+            "errors": res.get("errors", [])}
 
 
 @router.get("/documents/{document_id}/progress")

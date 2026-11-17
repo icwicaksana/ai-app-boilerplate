@@ -154,6 +154,35 @@ async def latest_job_for_document(pool, *, workspace: str,
             [workspace, document_id])
 
 
+async def reuse_or_create_job(pool, *, workspace: str,
+                              document_id: str) -> tuple[dict, bool]:
+    """Reuse job atau buat baru — ATOMIK per dokumen (v1.0 R10).
+
+    Kunci baris dokumen (FOR UPDATE) dalam satu transaksi: dua upload
+    konkuren file sama → 1 job, bukan 2. Return (job, dibuat_baru).
+    Predikat reuse = warisan P1-5 (hanya None/dead yang bikin baru;
+    done/failed dipakai ulang — konten identik tak diproses ulang).
+    """
+    async with _workspace_conn(pool, workspace) as conn:
+        await conn.execute(
+            "SELECT id FROM documents WHERE workspace = %s AND id = %s"
+            " FOR UPDATE",
+            [workspace, document_id])
+        row = await _one(
+            conn, f"SELECT {JOB_COLUMNS} FROM ingestion_jobs"
+                  " WHERE workspace = %s AND document_id = %s"
+                  " ORDER BY id DESC LIMIT 1",
+            [workspace, document_id])
+        if row is not None and row.get("state") != "dead":
+            return row, False
+        row = await _one(
+            conn, "INSERT INTO ingestion_jobs (workspace, document_id,"
+                  " max_attempts) VALUES (%s, %s, 5)"
+                  f" RETURNING {JOB_COLUMNS}",
+            [workspace, document_id])
+        return row, True
+
+
 async def count_chunks(pool, *, workspace: str, document_id: str) -> int:
     async with _workspace_conn(pool, workspace) as conn:
         row = await _one(

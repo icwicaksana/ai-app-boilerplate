@@ -34,10 +34,12 @@ def test_body_hash_stable_and_order_independent():
 async def test_new_then_replay_after_finish():
     cache = FakeCache()
     guard = _guard(cache)
-    assert (await _begin(guard)).state == NEW
+    first = await _begin(guard)
+    assert first.state == NEW and first.owner
     await guard.finish(workspace="toko-a", user="budi", key="k1",
                        payload_hash=body_hash({"items": [1]}),
-                       response={"thread_id": "t", "status": "completed"})
+                       response={"thread_id": "t", "status": "completed"},
+                       owner=first.owner)
     replay = await _begin(guard)
     assert replay.state == REPLAY
     assert replay.response == {"thread_id": "t", "status": "completed"}
@@ -60,9 +62,65 @@ async def test_same_key_different_payload_conflicts():
 @pytest.mark.asyncio
 async def test_abort_allows_retry():
     guard = _guard()
-    await _begin(guard)
-    await guard.abort(workspace="toko-a", user="budi", key="k1")
+    first = await _begin(guard)
+    await guard.abort(workspace="toko-a", user="budi", key="k1",
+                      owner=first.owner)
     assert (await _begin(guard)).state == NEW
+
+
+@pytest.mark.asyncio
+async def test_abort_orang_lain_ditolak():
+    guard = _guard()
+    await _begin(guard)
+    await guard.abort(workspace="toko-a", user="budi", key="k1",
+                      owner="bukan-pemilik")
+    assert (await _begin(guard)).state == IN_PROGRESS
+
+
+@pytest.mark.asyncio
+async def test_finish_orang_lain_ditolak():
+    guard = _guard()
+    await _begin(guard)
+    await guard.finish(workspace="toko-a", user="budi", key="k1",
+                       payload_hash=body_hash({"items": [1]}),
+                       response={"jahat": True}, owner="bukan-pemilik")
+    assert (await _begin(guard)).state == IN_PROGRESS  # tetap pending
+
+
+@pytest.mark.asyncio
+async def test_lease_mati_bisa_steal_hash_sama():
+    """R5 inti: pending kedaluwarsa + hash sama → NEW (bukan macet 24 jam)."""
+    import json
+    import time
+
+    from app.infra.cache import idempotency_key
+
+    cache = FakeCache()
+    guard = _guard(cache)
+    await _begin(guard)
+    # Paksa lease mati (simulasi proses crash 10 mnt lalu).
+    raw = json.loads(cache.store[idempotency_key("toko-a", "budi", "k1")])
+    raw["leased_until"] = int(time.time()) - 600
+    cache.store[idempotency_key("toko-a", "budi", "k1")] = json.dumps(raw)
+    stolen = await _begin(guard)
+    assert stolen.state == NEW and stolen.owner
+
+
+@pytest.mark.asyncio
+async def test_lease_mati_hash_beda_tetap_conflict():
+    """Kunci tak boleh ganti makna walau lease habis (pin 24 jam)."""
+    import json
+    import time
+
+    from app.infra.cache import idempotency_key
+
+    cache = FakeCache()
+    guard = _guard(cache)
+    await _begin(guard, payload={"items": [1]})
+    raw = json.loads(cache.store[idempotency_key("toko-a", "budi", "k1")])
+    raw["leased_until"] = int(time.time()) - 600
+    cache.store[idempotency_key("toko-a", "budi", "k1")] = json.dumps(raw)
+    assert (await _begin(guard, payload={"items": [2]})).state == CONFLICT
 
 
 @pytest.mark.asyncio

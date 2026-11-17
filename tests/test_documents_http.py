@@ -41,7 +41,8 @@ class _FakeCtrl:
         return [DOC], 1
 
     async def delete(self, **kw):
-        return self._deleted
+        return {"ok": self._deleted, "backends": {}, "tombstoned": True,
+                "jobs_cancelled": 0, "errors": []}
 
     async def job_status(self, **kw):
         return self._job
@@ -85,6 +86,45 @@ class _FakeCache:
 
     async def delete(self, key):
         self.d.pop(key, None)
+
+    async def eval_int(self, script, keys, args):
+        """Emulasi Lua idempotency R5 (cermin tests/_fake_cache)."""
+        import json as _json
+
+        key = keys[0]
+        if "IN_PROGRESS" in script:
+            v = self.d.get(key)
+            if v is None:
+                self.d[key] = _json.loads(args[0])
+                return "NEW"
+            d = v if isinstance(v, dict) else _json.loads(v)
+            if d.get("state") == "done":
+                if d.get("hash") == args[2]:
+                    return "REPLAY:" + _json.dumps(d)
+                return "CONFLICT"
+            if d.get("hash") != args[2]:
+                return "CONFLICT"
+            if int(d.get("leased_until") or 0) > int(args[3]):
+                return "IN_PROGRESS"
+            self.d[key] = _json.loads(args[0])
+            return "NEW"
+        if "pending" in script and "DEL" in script:
+            v = self.d.get(key)
+            if v:
+                d = v if isinstance(v, dict) else _json.loads(v)
+                if d.get("state") == "pending" and d.get("owner") == args[0]:
+                    self.d.pop(key, None)
+                    return 1
+            return 0
+        if "owner" in script:
+            v = self.d.get(key)
+            if v:
+                d = v if isinstance(v, dict) else _json.loads(v)
+                if d.get("owner") != args[2]:
+                    return 0
+            self.d[key] = _json.loads(args[0])
+            return 1
+        raise NotImplementedError("script tak dikenal di _FakeCache")
 
 
 def _client(ctrl, cache=None):

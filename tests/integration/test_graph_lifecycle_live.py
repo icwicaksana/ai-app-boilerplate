@@ -95,8 +95,9 @@ async def test_live_graph_lifecycle_stub(db_url, embed_url, tag):
         # Hapus operator membersihkan graph (D10).
         ctrl = DocumentController(settings=settings, pool=pool,
                                   rag_clients=None)
-        assert await ctrl.delete(workspace=workspace,
-                                 document_id=str(ctx["doc"]["id"])) is True
+        out = await ctrl.delete(workspace=workspace,
+                                  document_id=str(ctx["doc"]["id"]))
+        assert out["ok"] is True and out["errors"] == []
         info2 = await ctx["store"].graph_info()
         assert (info2["entity_count"], info2["edge_count"]) == (0, 0)
     finally:

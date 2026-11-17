@@ -238,6 +238,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_THREADS_PER_MIN: int = Field(default=30, ge=1, le=10000)
     RATE_LIMIT_APPROVALS_PER_MIN: int = Field(default=10, ge=1, le=10000)
     RATE_LIMIT_REFRESH_PER_MIN: int = Field(default=30, ge=1, le=10000)
+    # v1.0 R5: lease pending idempotency (detik). Kunci replay tetap 24 jam;
+    # status pending kedaluwarsa secepat ini agar proses-mati-tengah-jalan
+    # bisa di-steal pemegang kunci sama (bukan macet 24 jam).
+    IDEMPOTENCY_PENDING_LEASE_SECONDS: int = Field(default=300, ge=30)
     TRUSTED_PROXY_CIDRS: str = Field(
         default="",
         description="CIDR proxy tepercaya koma-pisah untuk X-Forwarded-For "

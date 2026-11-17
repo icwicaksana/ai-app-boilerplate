@@ -58,13 +58,16 @@ async def run_job(
     _enforce_payload_cap(req, settings)
 
     idem_key = (request.headers.get(IDEMPOTENCY_HEADER) or "").strip()
-    guard = IdempotencyGuard(cache, settings.IDEMPOTENCY_TTL_SECONDS)
+    guard = IdempotencyGuard(cache, settings.IDEMPOTENCY_TTL_SECONDS,
+                             settings.IDEMPOTENCY_PENDING_LEASE_SECONDS)
     payload_hash = body_hash({"agent": agent_name, "payload": req.payload,
                               "thread_id": req.thread_id}) if idem_key else ""
+    idem_owner = ""
 
     if idem_key:
         decision = await guard.begin(workspace=identity.workspace, user=identity.user,
                                      key=idem_key, payload_hash=payload_hash)
+        idem_owner = decision.owner
         if decision.degraded:  # v1.0 S9: tanpa dedup -> klien retry hati-hati
             from app.core.degraded import flag_request
 
@@ -92,13 +95,14 @@ async def run_job(
         # Eksekusi gagal = lepas kunci agar klien boleh retry.
         if idem_key:
             await guard.abort(workspace=identity.workspace, user=identity.user,
-                              key=idem_key)
+                              key=idem_key, owner=idem_owner)
         raise
 
     if idem_key:
         await guard.finish(workspace=identity.workspace, user=identity.user,
                            key=idem_key, payload_hash=payload_hash,
-                           response=result.model_dump(mode="json"))
+                           response=result.model_dump(mode="json"),
+                           owner=idem_owner)
     return result
 
 
