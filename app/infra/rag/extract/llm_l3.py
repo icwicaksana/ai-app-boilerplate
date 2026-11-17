@@ -147,7 +147,8 @@ class LlmExtractor:
             "src_norm": r.src.strip(), "dst_norm": r.dst.strip(),
             "relation": r.relation.strip() or "terkait_dengan",
             "confidence": 0.7, "layer": "L3", "coref_resolved": True,
-            "access_level": "public", "chunk_ord": 0, "chunk_id": "",
+            # v1.0 G1: TANPA access_level (SoR = chunk/dokumen).
+            "chunk_ord": 0, "chunk_id": "",
             "chunk_row_id": None,
         } for r in res.relations if r.src.strip() and r.dst.strip()][:12]
         # norm dihitung worker (sumber tunggal); src/dst dinormalisasi di sini

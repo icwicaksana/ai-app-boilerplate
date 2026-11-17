@@ -398,7 +398,11 @@ async def _run_graph_stage(ctx: WorkerCtx, *, workspace: str, job_id: int,
                     "confidence": conf if conf is not None else 1.0,
                     "layer": e.get("layer") or "L2",
                     "coref_resolved": bool(e.get("coref_resolved", True)),
-                    "access_level": e.get("access_level") or acl,
+                    # v1.0 G1: ACL SELALU dari chunk/dokumen (SoR). Output
+                    # ekstraktor tak boleh membawa access_level (diabaikan
+                    # bila ada — kontrak lama) — kalau tidak, edge dokumen
+                    # internal bisa tertulis public (bocor).
+                    "access_level": acl,
                     "chunk_ord": ord_, "chunk_id": cid,
                     "chunk_row_id": row_ids.get(ord_)})
     store = PgGraphStore(pool, workspace=workspace, model=extractor.model,

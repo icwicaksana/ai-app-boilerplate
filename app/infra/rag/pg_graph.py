@@ -320,16 +320,21 @@ class PgGraphStore:
                                             access_params=access_params)
                     if not paths:
                         return []
+                    # v1.0 G2: filter ACL DITERUSKAN ke fetch provenance
+                    # (defense-in-depth atas skew edge-vs-chunk/doc, mis.
+                    # ACL berubah pasca-ingest atau data pra-backfill-021).
+                    acl = (filters or {}).get("access_level")
                     names = await self._fetch_names(
                         conn, {n for p in paths for n in p["nodes"]})
                     titles = await self._fetch_titles(
                         conn, {e["document_id"] for p in paths
-                               for e in p["edges"]})
+                               for e in p["edges"]}, acl=acl)
                     contents = await self._fetch_contents(
                         conn, {e["chunk_row_id"] for p in paths
                                for e in p["edges"]
-                               if e.get("chunk_row_id")})
-                    return self._to_hits(paths, names, titles, contents, k=k)
+                               if e.get("chunk_row_id")}, acl=acl)
+                    return self._to_hits(paths, names, titles, contents, k=k,
+                                         require_acl=acl is not None)
         except pg_errors.QueryCanceled as exc:
             raise TimeoutError("expand graph timeout") from exc
 
@@ -454,30 +459,63 @@ class PgGraphStore:
             (self._workspace, list(norms)))
         return {r["norm"]: r["name"] for r in await cur.fetchall()}
 
-    async def _fetch_titles(self, conn, doc_ids: set) -> dict[str, str]:
+    async def _fetch_titles(self, conn, doc_ids: set,
+                              acl: str | None = None) -> dict[str, str]:
         if not doc_ids:
             return {}
-        cur = await conn.execute(
-            "SELECT id, title FROM documents WHERE workspace = %s AND id = ANY(%s)",
-            (self._workspace, list(doc_ids)))
+        if acl is None:
+            cur = await conn.execute(
+                "SELECT id, title FROM documents WHERE workspace = %s AND id = ANY(%s)",
+                (self._workspace, list(doc_ids)))
+        else:
+            # COALESCE: dokumen lama tanpa kunci = public (kalah-hati-hati?
+            # TIDAK — ini konsisten dengan filter edge: edge pra-G1 tertulis
+            # public; backfill 021 menyelaraskan. Tanpa COALESCE, provenance
+            # public hilang total.)
+            cur = await conn.execute(
+                "SELECT id, title FROM documents WHERE workspace = %s AND id = ANY(%s)"
+                " AND COALESCE(meta->>'access_level', 'public') = %s",
+                (self._workspace, list(doc_ids), str(acl)))
         return {str(r["id"]): r["title"] for r in await cur.fetchall()}
 
-    async def _fetch_contents(self, conn, row_ids: set) -> dict[str, str]:
+    async def _fetch_contents(self, conn, row_ids: set,
+                              acl: str | None = None) -> dict[str, str]:
         """Isi chunk provenance per chunk_row_id (G2 union lengkap, 1 query)."""
         if not row_ids:
             return {}
-        cur = await conn.execute(
-            "SELECT id, content FROM chunks WHERE workspace = %s AND id = ANY(%s)",
-            (self._workspace, list(row_ids)))
+        if acl is None:
+            cur = await conn.execute(
+                "SELECT id, content FROM chunks WHERE workspace = %s AND id = ANY(%s)",
+                (self._workspace, list(row_ids)))
+        else:
+            cur = await conn.execute(
+                "SELECT id, content FROM chunks WHERE workspace = %s AND id = ANY(%s)"
+                " AND COALESCE(metadata->>'access_level', 'public') = %s",
+                (self._workspace, list(row_ids), str(acl)))
         return {str(r["id"]): r["content"] for r in await cur.fetchall()}
 
     def _to_hits(self, paths: list[dict], names: dict[str, str],
                  titles: dict[str, str], contents: dict[str, str],
-                 *, k: int) -> list[KgHit]:
+                 *, k: int, require_acl: bool = False) -> list[KgHit]:
         from app.rag.citations import gpath_id
 
         hits: list[KgHit] = []
         for p in paths[:k]:
+            if require_acl:
+                # v1.0 G2: hop tak-lolos gugurkan SELURUH path (bukan
+                # konten-kosong-diam). chunk_row_id NULL (edge lawas) =
+                # tak terverifikasi → lolos (filter edge sudah diterapkan).
+                drop = False
+                for e in p["edges"]:
+                    if str(e["document_id"]) not in titles:
+                        drop = True
+                        break
+                    if e.get("chunk_row_id") and str(
+                            e["chunk_row_id"]) not in contents:
+                        drop = True
+                        break
+                if drop:
+                    continue
             triples = []
             for e in p["edges"]:
                 s = names.get(e["src_norm"], e["src_norm"])

@@ -67,7 +67,8 @@ class StubExtractor:
                 edges.append({
                     "src_norm": src, "dst_norm": dst, "relation": rel,
                     "confidence": 1.0, "layer": "L1",
-                    "coref_resolved": True, "access_level": "public",
+                    # v1.0 G1: TANPA access_level (SoR = chunk/dokumen).
+                    "coref_resolved": True,
                     "chunk_ord": 0, "chunk_id": "", "chunk_row_id": None,
                 })
         for m in _CAP_RE.finditer(text):

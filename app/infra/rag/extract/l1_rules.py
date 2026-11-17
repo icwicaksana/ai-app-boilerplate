@@ -80,7 +80,9 @@ class L1RulesExtractor:
                 edges.append({
                     "src_norm": src, "dst_norm": dst, "relation": rel,
                     "confidence": 1.0, "layer": "L1",
-                    "coref_resolved": True, "access_level": "public",
+                    # v1.0 G1: TANPA access_level — ACL milik chunk/dokumen
+                    # (SoR), ditulis worker; ekstraktor tak boleh menentukannya.
+                    "coref_resolved": True,
                     "chunk_ord": 0, "chunk_id": "", "chunk_row_id": None,
                 })
 

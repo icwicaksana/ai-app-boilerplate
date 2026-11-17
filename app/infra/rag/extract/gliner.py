@@ -174,7 +174,8 @@ class GlierExtractor:
                 "src_norm": s, "dst_norm": o, "relation": label,
                 "confidence": conf,
                 "layer": "L2", "coref_resolved": True,
-                "access_level": "public", "chunk_ord": 0, "chunk_id": "",
+                # v1.0 G1: TANPA access_level (SoR = chunk/dokumen).
+                "chunk_ord": 0, "chunk_id": "",
                 "chunk_row_id": None,
             })
         # Entity dari relasi yang tak ada di NER → daftarkan (tanpa orphan).

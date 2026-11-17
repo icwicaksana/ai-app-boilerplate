@@ -54,7 +54,7 @@ class _L2:
         return [{"entities": [], "edges": [{
             "src_norm": "a", "dst_norm": "b", "relation": "terkait_dengan",
             "confidence": 0.4, "layer": "L2", "coref_resolved": True,
-            "access_level": "public", "chunk_ord": 0, "chunk_id": "",
+            "chunk_ord": 0, "chunk_id": "",
             "chunk_row_id": None}]} for _ in texts]
 
 
@@ -71,7 +71,7 @@ class _L3:
         return [{"entities": [], "edges": [{
             "src_norm": "a", "dst_norm": "b", "relation": "memasok",
             "confidence": 0.7, "layer": "L3", "coref_resolved": True,
-            "access_level": "public", "chunk_ord": 0, "chunk_id": "",
+            "chunk_ord": 0, "chunk_id": "",
             "chunk_row_id": None}]} for _ in texts]
 
 
