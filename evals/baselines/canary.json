@@ -1,0 +1,389 @@
+{
+  "env": {
+    "suites": [
+      "hitl_demo",
+      "pipeline",
+      "rag_answer",
+      "chat_tools",
+      "rag_chat"
+    ],
+    "tags": [
+      "canary"
+    ]
+  },
+  "report": {
+    "seed": 7,
+    "summary": {
+      "total": 17,
+      "passed": 17,
+      "pass_rate": 1.0,
+      "by_tag": {
+        "canary": {
+          "total": 17,
+          "pass_rate": 1.0
+        }
+      },
+      "failed_ids": []
+    },
+    "results": [
+      {
+        "id": "hitl-approve-1",
+        "agent": "hitl_demo",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "approved": true,
+          "executed": true,
+          "outcome": "Refund dieksekusi",
+          "interrupted": true
+        },
+        "ms": 3712.2
+      },
+      {
+        "id": "hitl-reject-1",
+        "agent": "hitl_demo",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "approved": false,
+          "executed": false,
+          "outcome": "Refund ditolak — tidak ada aksi",
+          "interrupted": true
+        },
+        "ms": 7.5
+      },
+      {
+        "id": "hitl-payload-1",
+        "agent": "hitl_demo",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "approved": true,
+          "executed": true,
+          "outcome": "Refund dieksekusi",
+          "interrupted": true,
+          "payload": {
+            "action_requests": [
+              {
+                "name": "process_refund",
+                "args": {
+                  "order_id": "ORD-DEMO-1",
+                  "amount": 750000,
+                  "reason": "demo HITL"
+                },
+                "description": "Refund Rp 750,000 untuk ORD-DEMO-1"
+              }
+            ],
+            "review_configs": [
+              {
+                "action_name": "process_refund",
+                "allowed_decisions": [
+                  "approve",
+                  "reject"
+                ]
+              }
+            ]
+          }
+        },
+        "ms": 6.8
+      },
+      {
+        "id": "pipe-rank-1",
+        "agent": "pipeline",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "ok",
+          "chunk_ids": [
+            "b",
+            "a",
+            "c"
+          ],
+          "grounded": true,
+          "degraded": [],
+          "store_filters": [
+            {},
+            {}
+          ]
+        },
+        "ms": 21.0
+      },
+      {
+        "id": "pipe-floor-1",
+        "agent": "pipeline",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "no_evidence",
+          "chunk_ids": [],
+          "grounded": true,
+          "degraded": [],
+          "store_filters": [
+            {},
+            {}
+          ]
+        },
+        "ms": 0.1
+      },
+      {
+        "id": "pipe-degraded-1",
+        "agent": "pipeline",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "ok",
+          "chunk_ids": [
+            "a",
+            "b"
+          ],
+          "grounded": false,
+          "degraded": [
+            "rerank_unavailable"
+          ],
+          "store_filters": [
+            {},
+            {}
+          ]
+        },
+        "ms": 0.0
+      },
+      {
+        "id": "pipe-corrupt-1",
+        "agent": "pipeline",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "ok",
+          "chunk_ids": [
+            "a",
+            "b"
+          ],
+          "grounded": false,
+          "degraded": [
+            "rerank_unavailable"
+          ],
+          "store_filters": [
+            {},
+            {}
+          ]
+        },
+        "ms": 0.0
+      },
+      {
+        "id": "pipe-acl-1",
+        "agent": "pipeline",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "no_evidence",
+          "chunk_ids": [],
+          "grounded": true,
+          "degraded": [],
+          "store_filters": [
+            {
+              "access_level": [
+                "public"
+              ]
+            },
+            {
+              "access_level": [
+                "public"
+              ]
+            }
+          ]
+        },
+        "ms": 0.0
+      },
+      {
+        "id": "ra-grounded-1",
+        "agent": "rag_answer",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "final": "Denda 2% per bulan.[^1]\n\nSumber:\n[^1] s.pdf · c1",
+          "grounded": true,
+          "refusal": false,
+          "citations": 1,
+          "retrieval_status": "ok"
+        },
+        "ms": 9.1
+      },
+      {
+        "id": "ra-noev-1",
+        "agent": "rag_answer",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "final": "maaf, informasi belum tersedia di dokumen kami.",
+          "grounded": false,
+          "refusal": true,
+          "citations": 0,
+          "retrieval_status": "no_evidence"
+        },
+        "ms": 4.9
+      },
+      {
+        "id": "ra-orphan-1",
+        "agent": "rag_answer",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "final": "maaf, informasi belum tersedia di dokumen kami.",
+          "grounded": false,
+          "refusal": true,
+          "citations": 0,
+          "retrieval_status": "ok"
+        },
+        "ms": 7.1
+      },
+      {
+        "id": "ra-numsupport-1",
+        "agent": "rag_answer",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "final": "maaf, informasi belum tersedia di dokumen kami.",
+          "grounded": false,
+          "refusal": true,
+          "citations": 0,
+          "retrieval_status": "ok"
+        },
+        "ms": 5.6
+      },
+      {
+        "id": "ra-degraded-note-1",
+        "agent": "rag_answer",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "final": "Denda 2% per bulan.[^1]\n\nSumber:\n[^1] s.md · c1",
+          "grounded": true,
+          "refusal": false,
+          "citations": 1,
+          "retrieval_status": "ok"
+        },
+        "ms": 5.0
+      },
+      {
+        "id": "tools-stock-1",
+        "agent": "chat_tools",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "completed",
+          "tools_called": [
+            {
+              "name": "check_stock",
+              "args": {
+                "item_id": "kopi"
+              }
+            }
+          ],
+          "final": "Stok kopi: 12."
+        },
+        "ms": 53.0
+      },
+      {
+        "id": "tools-refund-1",
+        "agent": "chat_tools",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "completed",
+          "tools_called": [
+            {
+              "name": "process_refund",
+              "args": {
+                "order_id": "ORD-1",
+                "amount": 50000
+              }
+            }
+          ],
+          "final": "Refund ORD-1 diproses."
+        },
+        "ms": 27.2
+      },
+      {
+        "id": "rc-cited-1",
+        "agent": "rag_chat",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "completed",
+          "tools_called": [
+            "search_knowledge_base"
+          ],
+          "final": "Denda 2% per bulan.[^1]",
+          "grounded": true
+        },
+        "ms": 22.4
+      },
+      {
+        "id": "rc-noev-1",
+        "agent": "rag_chat",
+        "tags": [
+          "canary"
+        ],
+        "passed": true,
+        "failures": [],
+        "result": {
+          "status": "completed",
+          "tools_called": [
+            "search_knowledge_base"
+          ],
+          "final": "Maaf, saya tidak menemukan jawaban yang didukung dokumen.",
+          "grounded": true
+        },
+        "ms": 23.3
+      }
+    ]
+  }
+}
