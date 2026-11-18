@@ -59,6 +59,9 @@ if ($envText -match "(?m)^SOURCE_CONN_KEY=\s*$") {
 }
 
 if (-not $SkipTests) {
+    Write-Host ">> install -r requirements.dev.lock (pytest dkk) ..."
+    if ($useUv) { uv pip install --python $venvPy -r requirements.dev.lock }
+    else { & $venvPy -m pip install -r requirements.dev.lock }
     Write-Host ">> pytest (unit; integrasi butuh docker: pytest tests/ -m integration) ..."
     & $venvPy -m pytest tests/ -q -p no:cacheprovider -m "not integration"
 }
@@ -68,6 +71,6 @@ Write-Host "   1) cd ..\Infra; docker compose up -d app-db cache   (wajib v0.3+)
 Write-Host "      RAG (v0.7): docker compose -f docker-compose.embed.yml up -d  (Infinity BGE-M3+reranker)"
 Write-Host "                  opsional: docker compose --profile qdrant up -d qdrant"
 Write-Host "   2) isi DATABASE_URL + CACHE_URL + LITELLM_* di .env"
-Write-Host "   3) buat akun: .venv\Scripts\python.exe -m app.scripts.create_user --tenant toko-a --username budi --password '...'"
+Write-Host "   3) buat akun: .venv\Scripts\python.exe -m app.scripts.create_user --workspace toko-a --username budi --password '...'"
 Write-Host "   4) jalan API: .venv\Scripts\python.exe -m app.main"
 Write-Host "      jalan worker RAG (proses TERPISAH): .venv\Scripts\python.exe -m app.workers.ingest"

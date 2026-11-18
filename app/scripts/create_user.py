@@ -27,6 +27,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--username", required=True)
     p.add_argument("--password", required=True)
     p.add_argument("--scopes", default=users.DEFAULT_SCOPES)
+    p.add_argument("--clearance", default="public",
+                   choices=["public", "internal", "restricted"],
+                   help="Clearance dokumen (v1.0 G6, default public).")
     p.add_argument("--inactive", action="store_true",
                    help="Buat user nonaktif (default aktif).")
     return p.parse_args(argv)
@@ -52,11 +55,11 @@ async def _run(args: argparse.Namespace) -> int:
         user_id = await users.create_user(
             pool, workspace=workspace, username=username,
             password_hash=hash_password(args.password), scopes=args.scopes,
-            is_active=not args.inactive,
+            clearance=args.clearance, is_active=not args.inactive,
         )
         print(f"OK: user id={user_id} workspace={workspace} "
               f"username={username} scopes='{args.scopes}' "
-              f"active={not args.inactive}")
+              f"clearance={args.clearance} active={not args.inactive}")
         return 0
     finally:
         await close_pool(pool)

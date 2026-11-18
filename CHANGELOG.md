@@ -2,6 +2,53 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v1.0 (2026-11-18) — Production-grade + evals
+
+**Ringkasan.** Audit 4 expert (backend, arsitektur, pentest, RAG) → 7 fase
+perbaikan (V1-A..V1-G). Hasil: fondasi rilis reproduksibel, auth & isolasi
+penuh, alur approval/state/turn/idempotency benar, retrieval fail-closed
+dengan ACL, harness eval deterministik + canary 5 agen, SLO + metrik RED +
+dashboard + 6 runbook. Lihat `docs/MIGRATION-v0-v1.md` untuk upgrade.
+
+**V1-A fondasi rilis.** Hapus resume-stub 501 · pin digest base image ·
+split lock runtime/dev + audit CVE gate + SBOM · secret-scan CI · semver
+1 halaman · ci.yml (unit+build+security) hijau · drift env/docs beres.
+
+**V1-B auth & isolasi.** Refresh atomik · alarm fail-open + uji chaos
+cache-down · fix WS resume cek user · umur WS · matriks rate-limit +
+trusted proxy · stream-leak guard · redact last_error/trace/tiket.
+
+**V1-C koreksi alur (R1–R15).** Batch approval positional · guard chat
+thread-pending · lease idempotency · delete best-effort jujur · job atomik
+· error-map publik · preflight pre-start · failures per-invokasi.
+
+**V1-D retrieval benar (G1–G8).** ACL graph SoR (chunk/dokumen) ·
+fetch-filter + backfill 021 · RLS/GUC worker + tolak reindex role-app ·
+tolak campur-model · grounded jujur + banner · clearance JWT → filter
+wajib (fail-closed) · BM25-lite Qdrant (gold30 28/30 IDENTIK dua backend)
+· rerank-korup degradasi. P1: BFS ORDER BY, kuota L3 per-doc + Valkey +
+edges, paritas reindex (norm/ACL/NULL), angka-skala, hirarki + leak suite.
+Migrasi 022: kolom clearance + self-heal. Gate live: gold30 28/30,
+gold-graph FULL 27/28 (g1bad=0), eval RAG hijau.
+
+**V1-E evals/.** Harness JSONL v1 (skema/runner/metrik/gateway) + adapter
+hitl_demo/pipeline/rag_answer/chat_tools/rag_chat + canary PR 5/5 +
+LLM-judge sekunder sampled (K7: observasi, tak gate) + CLI
+`python -m evals.run`.
+
+**V1-F SLO & observasi.** Metrik RED + `/metrics` ter-guard (Bearer atau
+loopback) + sinyal app (degraded/approvals/llm/ws) · SLO dua-lapis +
+angka nyata (p95 ≤62ms platform, chat FB 356ms) · 5 skenario k6 ·
+dashboard Grafana · 6 runbook.
+
+**V1-G rilis.** Docs final · migration guide · inventory secret ·
+onboarding fresh-clone <15 mnt · security re-scan · tag v1.0.
+
+**Breaking (lihat migration guide).** Kolom `app_users.clearance` (022,
+default public) · filter `access_level` wajib di retrieval · klaim JWT
+`clearance` · env baru `METRICS_TOKEN` · dependensi baru
+`prometheus_client` · prompt RAG_RULES +1 baris hirarki.
+
 ## v0.9.0 (2026-11-17) — Skills on-demand + Subagents
 
 **Ringkasan.** Prosedur pindah dari system prompt ke file skill yang dimuat
