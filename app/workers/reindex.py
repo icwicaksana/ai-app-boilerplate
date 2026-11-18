@@ -56,7 +56,7 @@ async def reindex_workspace(pool, qdrant_client, collection: str, *,
             while True:
                 cur = await conn.execute(
                     "SELECT c.document_id, c.ord, c.content, c.page, c.sheet,"
-                    " c.heading, c.token_count, c.meta,"
+                    " c.heading, c.token_count, c.meta, c.content_norm,"
                     " c.embedding::text AS emb,"
                     " c.embedding_model, c.embedding_dim, c.embedding_version,"
                     " d.title AS source FROM chunks c"
@@ -100,7 +100,7 @@ async def reindex_workspace(pool, qdrant_client, collection: str, *,
     report = {"workspace": workspace, "pg": len(pg_ids),
               "qdrant_sebelum": len(q_ids), "hilang": len(missing),
               "orphan": len(orphans), "upserted": 0, "deleted": 0,
-              "dry_run": dry_run}
+              "null_vector_skipped": 0, "dry_run": dry_run}
     if dry_run:
         report["match"] = not missing and not orphans
         return report
@@ -111,12 +111,21 @@ async def reindex_workspace(pool, qdrant_client, collection: str, *,
         points = []
         for pid in batch_ids:
             r = pg_ids[pid]
+            if r["emb"] is None:  # v1.0 P1: vektor NULL = lewati + hitung
+                report["null_vector_skipped"] += 1
+                log.warning("reindex %s lewati %s (embedding NULL)",
+                            workspace, pid)
+                continue
             meta = dict(r["meta"] or {})
+            # v1.0 P1 paritas: baris lama tanpa kunci ACL = public
+            # (write-path baru selalu menulis; Qdrant tak bisa COALESCE).
+            meta.setdefault("access_level", "public")
             points.append(models.PointStruct(
                 id=pid, vector=parse_vector(r["emb"]),
                 payload={"workspace": workspace,
                          "document_id": str(r["document_id"]),
                          "ord": int(r["ord"]), "content": r["content"],
+                         "content_norm": r["content_norm"] or r["content"],
                          "page": r["page"], "sheet": r["sheet"],
                          "heading": r["heading"],
                          "token_count": r["token_count"],
@@ -133,7 +142,8 @@ async def reindex_workspace(pool, qdrant_client, collection: str, *,
                 collection, points_selector=models.PointIdsList(
                     points=orphans[i:i + batch]), wait=True)
             report["deleted"] += len(orphans[i:i + batch])
-    report["match"] = (report["upserted"] == len(missing)
+    report["match"] = (report["upserted"] + report["null_vector_skipped"]
+                       == len(missing)
                        and (report["deleted"] == len(orphans)
                             or since is not None))
     return report

@@ -99,7 +99,28 @@ class LlmExtractor:
             except Exception:
                 pass
 
+    async def _quota_take(self) -> bool:
+        """Ambil 1 slot kuota harian (v1.0 P1: bersama antar-proses).
+
+        Valkey INCR atomik (kunci harian) bila cache ada; fallback counter
+        lokal bila cache None/mati (kuota jadi per-proses — didokumentasikan,
+        bukan senyap: overshoot terbatas jumlah worker).
+        """
+        today = time.strftime("%Y-%m-%d")
+        if today != self._day:
+            self._day, self._used_today = today, 0
+        if self._cache is not None:
+            try:
+                n, _ = await self._cache.incr_window(
+                    f"kg:l3quota:{today}", 86400)
+                return n <= self._quota
+            except Exception:
+                pass  # cache mati → fallback lokal di bawah
+        self._used_today += 1
+        return self._used_today <= self._quota
+
     def _quota_ok(self) -> bool:
+        """Cek cepat TANPA ambil slot (kompatibel pemanggil lama/test)."""
         today = time.strftime("%Y-%m-%d")
         if today != self._day:
             self._day, self._used_today = today, 0
@@ -123,7 +144,7 @@ class LlmExtractor:
             return cached
         if time.time() < self._open_until:
             raise ExtractorError("L3 breaker terbuka (cooldown).")
-        if not self._quota_ok():
+        if not await self._quota_take():
             raise ExtractorError("L3 kuota harian habis.")
         clipped = text[: self._max_in * 4]  # ≈ token→char
         try:
@@ -138,7 +159,6 @@ class LlmExtractor:
                 self._open_until = time.time() + self._breaker_min * 60
             raise ExtractorError(f"L3 gagal: {msg[:200]}") from exc
         self._fails = 0
-        self._used_today += 1
         entities = [{
             "name": e.name.strip(), "norm": "", "type": e.type.strip() or "lain",
             "confidence": 0.7, "chunk_ord": 0, "chunk_id": "",

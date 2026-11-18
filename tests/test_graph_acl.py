@@ -43,6 +43,9 @@ async def test_g1_worker_timpa_dengan_acl_chunk(monkeypatch):
         async def fetchall(self):
             return [{"ord": 0, "id": "r0"}]
 
+        async def fetchone(self):
+            return {"n": 0}  # kuota edge: workspace kosong
+
     class _Conn:
         async def execute(self, *a, **k):
             return _Cur()

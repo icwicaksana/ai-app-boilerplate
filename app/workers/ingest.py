@@ -327,6 +327,20 @@ async def _run_graph_stage(ctx: WorkerCtx, *, workspace: str, job_id: int,
     if getattr(ctx, "cache", None) is not None and hasattr(
             extractor, "set_cache"):
         extractor.set_cache(ctx.cache)  # L3 cache Valkey (TTL hari)
+    # v1.0 P1: kuota edge per-workspace (GRAPH_QUOTA_EDGES_PER_WORKSPACE
+    # akhirnya dipakai — dulu mati). Lewat kuota = stage graph dilewati
+    # (vektor tetap jalan; graph opsional ala D11) + meta jujur.
+    quota = int(getattr(settings, "GRAPH_QUOTA_EDGES_PER_WORKSPACE", 0) or 0)
+    if quota > 0:
+        from app.infra.ingest_repo import count_kg_edges
+
+        _n = await count_kg_edges(pool, workspace=workspace)
+        if _n >= quota:
+            log.warning("graph dilewati workspace=%s: kuota edge %d/%d",
+                        workspace, _n, quota)
+            return {"graph_status": "quota", "edge_count": _n}
+    if hasattr(extractor, "begin_doc"):
+        extractor.begin_doc(len(rows))  # budget L3 per-dokumen (v1.0 P1)
     # chunk_row_id: id fisik chunks (G1 tanpa Seq Scan); ord → str(UUID).
     # v1.0 G3: via repo (transaksi + SET LOCAL + RLS) — query mentah tanpa
     # GUC mengembalikan 0 baris SENYAP di bawah role non-bypass.

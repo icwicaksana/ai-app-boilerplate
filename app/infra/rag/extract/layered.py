@@ -10,6 +10,11 @@ Aturan (DESIGN §4/D5 + QA efisiensi):
 - Cap L3 per panggilan batch: min(20, maks(1, 10% batch)) + kuota harian
   (backstop). Untuk dok ≤160 chunk ini menghormati cap 20/dok + 10%.
 
+  v1.0 P1: budget per-DOKUMEN (bukan per-batch — worker memanggil
+  extract() per batch sehingga cap lama fiktif untuk dok besar).
+  Worker WAJIB `begin_doc(n_chunks)` sebelum loop batch; tanpa itu,
+  fallback cap per-panggilan (kompatibel test lama).
+
 `model`/`version` = pin L2 (primer, D6). Observabilitas: `last_stats`.
 """
 
@@ -33,6 +38,7 @@ class LayeredExtractor:
         self._l3 = l3
         self._l3_max = l3_max_calls
         self._l3_frac = l3_frac
+        self._l3_left: int | None = None  # sisa budget dok berjalan
         self.last_stats: dict = {}
 
     @property
@@ -47,6 +53,13 @@ class LayeredExtractor:
         """Suntik cache Valkey worker ke L3 (TTL hari; None = memori saja)."""
         if self._l3 is not None and getattr(self._l3, "_cache", None) is None:
             self._l3._cache = cache
+
+    def begin_doc(self, n_chunks: int) -> int:
+        """Buka budget L3 untuk 1 dokumen; return budget. Dipanggil worker
+        sekali per dokumen SEBELUM loop batch (v1.0 P1)."""
+        self._l3_left = min(self._l3_max,
+                            max(1, int(n_chunks * self._l3_frac)))
+        return self._l3_left
 
     @staticmethod
     def _sensitive(text: str, l2res: dict) -> bool:
@@ -107,8 +120,11 @@ class LayeredExtractor:
         stats = {"n": len(texts), "skipped_l2": len(texts) - len(idx),
                  "l3_calls": 0, "l3_ok": 0}
         if self._l3 is not None and texts:
-            budget = min(self._l3_max,
-                         max(1, int(len(texts) * self._l3_frac)))
+            if self._l3_left is None:  # tanpa begin_doc: cap per-panggilan
+                budget = min(self._l3_max,
+                             max(1, int(len(texts) * self._l3_frac)))
+            else:
+                budget = self._l3_left
             for i, (t, l2r) in enumerate(zip(texts, l2_all)):
                 if stats["l3_calls"] >= budget:
                     break
@@ -121,5 +137,7 @@ class LayeredExtractor:
                     continue  # fallback L2 + lanjut (tak pernah gagal batch)
                 merged[i] = self._merge(merged[i], l3r)
                 stats["l3_ok"] += 1
+            if self._l3_left is not None:
+                self._l3_left = max(0, budget - stats["l3_calls"])
         self.last_stats = stats
         return merged

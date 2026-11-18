@@ -206,6 +206,16 @@ async def chunk_row_ids(pool, *, workspace: str,
         return {int(r["ord"]): str(r["id"]) for r in await cur.fetchall()}
 
 
+async def count_kg_edges(pool, *, workspace: str) -> int:
+    """Jumlah edge KG 1 workspace (untuk kuota GRAPH_QUOTA_*, v1.0 P1)."""
+    async with _workspace_conn(pool, workspace) as conn:
+        cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM kg_edges WHERE workspace = %s",
+            (workspace,))
+        row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
+
 async def claim_job(pool, *, worker_id: str,
                  lease_seconds: int = 120) -> dict | None:
     """Klaim 1 job via fungsi privileged (lintas-workspace, SKIP LOCKED).

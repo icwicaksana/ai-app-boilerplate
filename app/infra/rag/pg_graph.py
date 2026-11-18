@@ -412,11 +412,12 @@ class PgGraphStore:
 
     async def _level(self, conn, frontier: list[str], *, fanout: int,
                      access_sql: str, access_params: list[Any]) -> list[dict]:
-        """1 level BFS 2 arah (fwd + bwd), LATERAL anti-hub, tanpa ORDER BY.
+        """1 level BFS 2 arah (fwd + bwd), LATERAL anti-hub.
 
         Cap: LIMIT 200 PER ARAH per level (bukan 200 global — lihat expand).
-        Determinisme datang dari `sorted(frontier)` + LIMIT stabil per-node;
-        urutan akhir path diputus tiebreak di `_bfs` (bukan di sini).
+        Determinisme: frontier terurut (pemanggil) + ORDER BY e.id per-node
+        (v1.0 P1: LIMIT tanpa ORDER = arbitrer di PG, klaim "LIMIT stabil"
+        lama SALAH); urutan akhir path diputus tiebreak di `_bfs`.
         """
         out: list[dict] = []
         for direction in ("fwd", "bwd"):
@@ -432,7 +433,7 @@ class PgGraphStore:
                 f"   chunk_ord, chunk_row_id, access_level"
                 f"  FROM kg_edges e WHERE workspace = %s AND {join_col} = f.n"
                 f"  AND onto_version = %s{access_sql}"
-                f"  LIMIT {int(fanout)}"
+                f"  ORDER BY e.id LIMIT {int(fanout)}"
                 f") e LIMIT {_GLOBAL_EDGE_CAP}",
                 (frontier, self._workspace, self._onto, *access_params))
             for r in await cur.fetchall():
