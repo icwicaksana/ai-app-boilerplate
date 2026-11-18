@@ -9,11 +9,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.logging import setup_logging
-from app.main import create_app
+from tests._auth_helpers import app_with_settings
 
 
 def _client():
-    return TestClient(create_app(), raise_server_exceptions=False)
+    # v1.0 fix: settings DETERMINISTIK. `create_app()` tanpa argumen membaca
+    # `.env` — ada di mesin dev, TIDAK ada di CI. Akibatnya tes ini dulu hijau
+    # lokal (DATABASE_URL dari .env → persistence ada → 401) tapi merah di CI
+    # (tanpa .env → controller 503 sebelum auth). Tes tak boleh bergantung
+    # pada berkas yang tidak di-commit.
+    return TestClient(app_with_settings(DATABASE_URL=""),
+                      raise_server_exceptions=False)
 
 
 def test_middleware_echoes_request_id():
@@ -28,8 +34,11 @@ def test_middleware_generates_request_id():
 
 
 def test_error_instance_uses_request_id_not_dash():
+    # Rute auth-only: butuh Bearer TAPI tidak butuh persistence, sehingga
+    # hasilnya 401 di SEMUA lingkungan (tanpa DB, tanpa .env, Windows/Linux).
+    # Rute /threads/... bergantung checkpointer → 503 saat DB tak ada.
     c = _client()
-    res = c.get("/api/v1/threads/toko-a:budi:sess-1/state")
+    res = c.get("/api/v1/auth/me")
     assert res.status_code == 401  # v0.4: tanpa Bearer token
     body = res.json()
     assert body["code"] == "UNAUTHENTICATED"
