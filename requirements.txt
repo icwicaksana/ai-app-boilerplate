@@ -21,6 +21,9 @@ redis[hiredis]     # client async; Valkey wire-compatible (ADR-13)
 pwdlib[argon2]     # hash password Argon2id (passlib tak dirawat lagi)
 PyJWT              # JWT HS256, alg dipin
 
+# v1.0 — metrik RED Prometheus (middleware + /metrics ter-guard)
+prometheus_client
+
 # Test/dev ADA DI requirements.dev.txt (install: lock runtime + dev lock).
 # Jangan tambah paket test di sini — Dockerfile hanya install lock runtime.
 

@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_TTL_SECONDS: int = Field(default=604800, ge=3600)
     ENABLE_DOCS: bool = False     # /docs + /openapi.json; mati default (prod-safe)
 
+    # --- v1.0: /metrics ter-guard ---
+    # Bila diisi: scrape wajib Authorization: Bearer <token> (compare
+    # constant-time). Bila kosong: hanya loopback (127.0.0.1/::1) boleh.
+    METRICS_TOKEN: str = ""
+
     # --- v0.4: rate limit + idempotency ---
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_CHAT_PER_MIN: int = Field(default=20, ge=1, le=10000)

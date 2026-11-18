@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError, app_error_handler, validation_error_handler
 from app.core.headers import SecurityHeadersMiddleware
 from app.core.logging import get_logger, setup_logging
+from app.core.metrics import MetricsMiddleware
 from app.core.request_id import RequestIDMiddleware, resolve_instance
 from app.helpers.response import job_error
 from app.infra.cache import build_cache
@@ -303,11 +304,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(SecurityHeadersMiddleware,
                        hsts=(settings.ENVIRONMENT == "prod"))
+    app.add_middleware(MetricsMiddleware)  # v1.0 V1-F: RED (terluar = ukur penuh)
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.include_router(v1_router, prefix=settings.API_V1_PREFIX)
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request):
+        """Scrape Prometheus, TER-GUARD (v1.0 V1-F).
+
+        METRICS_TOKEN diisi → wajib Bearer cocok (constant-time).
+        Kosong → hanya loopback. Selain itu 403.
+        """
+        import hmac
+
+        from fastapi.responses import PlainTextResponse
+
+        from app.core.metrics import render_latest
+
+        token = (settings.METRICS_TOKEN or "").strip()
+        if token:
+            auth = (request.headers.get("authorization") or "").strip()
+            want = f"Bearer {token}"
+            if not (auth and hmac.compare_digest(auth, want)):
+                return JSONResponse(status_code=403,
+                                    content={"detail": "Forbidden"})
+        else:
+            host = (request.client.host if request.client else "")
+            if host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+                return JSONResponse(status_code=403,
+                                    content={"detail": "Forbidden"})
+        body, ctype = render_latest()
+        return PlainTextResponse(body.decode("utf-8"), media_type=ctype)
+
     return app
 
 

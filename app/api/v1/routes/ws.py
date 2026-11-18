@@ -108,8 +108,14 @@ async def ws_chat(websocket: WebSocket) -> None:
         return
 
     await websocket.accept(subprotocol=SUBPROTOCOL)
-    conn = _Connection(websocket, identity, settings, cache)
-    await conn.run()
+    from app.core.metrics import WS_ACTIVE
+
+    WS_ACTIVE.inc()  # v1.0 V1-F
+    try:
+        conn = _Connection(websocket, identity, settings, cache)
+        await conn.run()
+    finally:
+        WS_ACTIVE.dec()
 
 
 # --- internal ---

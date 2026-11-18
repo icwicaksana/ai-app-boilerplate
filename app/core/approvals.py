@@ -210,6 +210,9 @@ class ApprovalService:
                      "action_hash": claimed["action_hash"],
                      "policy_version": claimed["policy_version"]},
             request_id=request_id)
+        from app.core.metrics import APPROVALS
+
+        APPROVALS.labels(decision=decision).inc()  # v1.0 V1-F
 
         # v1.0 R1+R2: resume SELALU dipanggil (approve maupun reject — reject
         # tanpa resume = thread macet di interrupt selamanya). Gagal resume →

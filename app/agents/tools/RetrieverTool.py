@@ -41,6 +41,11 @@ def make_search_knowledge_tool(retriever, *, k: int = 5):
                     "JANGAN jawab pertanyaan faktual ini — sampaikan bahwa "
                     "dokumen tak bisa diakses saat ini. Jangan karang fakta.")
         chunks = res.get("chunks") or []
+        if res.get("degraded"):  # v1.0 V1-F: sinyal degradasi chat-RAG
+            from app.core.metrics import RAG_DEGRADED
+
+            for reason in res["degraded"]:
+                RAG_DEGRADED.labels(reason=str(reason)).inc()
         if res.get("status") == "no_evidence" or not chunks:
             return ("TIDAK ADA BUKTI di dokumen untuk pertanyaan ini. "
                     f"Sampaikan penolakan PERSIS: {REFUSAL_ID}")

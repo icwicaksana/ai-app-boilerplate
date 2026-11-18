@@ -231,6 +231,11 @@ class DocumentController:
                  counts.get("final", 0), counts.get("candidates", 0),
                  trace.get("timings_ms", {}).get("total", 0.0),
                  ",".join(res["degraded"]) or "-")
+        if res.get("degraded"):  # v1.0 V1-F: sinyal degradasi retrieval
+            from app.core.metrics import RAG_DEGRADED
+
+            for reason in res["degraded"]:
+                RAG_DEGRADED.labels(reason=str(reason)).inc()
         return {"matches": res["chunks"], "status": res["status"],
                 "degraded": res["degraded"], "trace": trace,
                 "backend": self.settings.RAG_BACKEND}
