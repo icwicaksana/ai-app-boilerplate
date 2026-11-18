@@ -30,7 +30,10 @@ RUN pip install --no-cache-dir \
 COPY requirements.lock .
 # v1.0 B3: ARG TORCH_VERSION bukan kebebasan — harus sama dengan pin lock.
 # Tanpa assert ini, build ARG bisa menyimpang diam-diam dari lock teruji.
-RUN grep -q "^torch==${TORCH_VERSION}$" requirements.lock \
+# `tr -d '\r'` = toleran CRLF: konteks build di Windows checkout = CRLF
+# (blob repo LF, autocrlf=true). Tanpa ini `docker build` di Windows gagal
+# padahal lock benar (temuan trace CI 2026-11-18). POSIX murni (tr+grep).
+RUN tr -d '\r' < requirements.lock | grep -q "^torch==${TORCH_VERSION}$" \
     && pip install --no-cache-dir -r requirements.lock
 
 # Kode + MIGRASI. `migrations/` WAJIB: `rag_migrate` membaca
