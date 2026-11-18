@@ -48,9 +48,43 @@ def _norm_num(s: str) -> str:
     return re.sub(r"\D", "", s or "")
 
 
+# v1.0 P1 angka-skala: "2 juta" vs "2.000.000" adalah angka SAMA.
+_SCALE_WORDS = (("triliun", 10 ** 12), ("miliar", 10 ** 9),
+                ("milyar", 10 ** 9), ("juta", 10 ** 6),
+                ("ribu", 10 ** 3))
+_SCALE_RE = re.compile(
+    r"(\d[\d.]*(?:,\d+)?)\s*(triliun|miliar|milyar|juta|ribu)\b",
+    re.IGNORECASE)
+
+
+def _expand_scale(text: str) -> str:
+    """Kembangkan kata-skala ke digit penuh ("2,5 juta" → "2500000").
+
+    Format Indonesia: titik = ribuan ("2.000"), koma = desimal ("2,5").
+    Gagal parse → biarkan (heuristik kalah-hati-hati: angka tak-ekspansi
+    tetap dicek literal seperti sebelumnya).
+    """
+
+    def _one(m: "re.Match") -> str:
+        raw = m.group(1).replace(".", "").replace(",", ".")
+        word = m.group(2).lower()
+        try:
+            val = float(raw)
+        except ValueError:
+            return m.group(0)
+        for name, mult in _SCALE_WORDS:
+            if word == name:
+                total = val * mult
+                return str(int(total)) if total == int(total) else str(total)
+        return m.group(0)
+
+    return _SCALE_RE.sub(_one, text or "")
+
+
 def numbers_in(text: str) -> set[str]:
-    """Angka ternormalisasi ("50.000" == "50000") untuk cek dukungan."""
-    return {_norm_num(m) for m in _NUM_RE.findall(text or "") if _norm_num(m)}
+    """Angka ternormalisasi ("50.000" == "50000"; "2 juta" == "2000000")."""
+    return {_norm_num(m) for m in _NUM_RE.findall(_expand_scale(text))
+            if _norm_num(m)}
 
 
 def unsupported_numbers(reply: str, cited_contents: list[str]) -> list[str]:
