@@ -192,6 +192,20 @@ async def count_chunks(pool, *, workspace: str, document_id: str) -> int:
         return row["n"] if row else 0
 
 
+async def chunk_row_ids(pool, *, workspace: str,
+                        doc_id: str) -> dict[int, str]:
+    """Peta ord → id fisik chunks 1 dokumen (v1.0 G3).
+
+    SATU-SATUNYA jalan worker membaca row_ids: transaksi + SET LOCAL +
+    RLS (query mentah tanpa GUC = 0 baris senyap di bawah role app).
+    """
+    async with _workspace_conn(pool, workspace) as conn:
+        cur = await conn.execute(
+            "SELECT id, ord FROM chunks WHERE workspace = %s AND document_id = %s",
+            (workspace, doc_id))
+        return {int(r["ord"]): str(r["id"]) for r in await cur.fetchall()}
+
+
 async def claim_job(pool, *, worker_id: str,
                  lease_seconds: int = 120) -> dict | None:
     """Klaim 1 job via fungsi privileged (lintas-workspace, SKIP LOCKED).

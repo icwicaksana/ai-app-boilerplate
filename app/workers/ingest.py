@@ -328,13 +328,11 @@ async def _run_graph_stage(ctx: WorkerCtx, *, workspace: str, job_id: int,
             extractor, "set_cache"):
         extractor.set_cache(ctx.cache)  # L3 cache Valkey (TTL hari)
     # chunk_row_id: id fisik chunks (G1 tanpa Seq Scan); ord → str(UUID).
-    row_ids: dict[int, str] = {}
-    async with pool.connection() as conn:
-        cur = await conn.execute(
-            "SELECT id, ord FROM chunks WHERE workspace = %s AND document_id = %s",
-            (workspace, doc_id))
-        for r in await cur.fetchall():
-            row_ids[int(r["ord"])] = str(r["id"])
+    # v1.0 G3: via repo (transaksi + SET LOCAL + RLS) — query mentah tanpa
+    # GUC mengembalikan 0 baris SENYAP di bawah role non-bypass.
+    from app.infra.ingest_repo import chunk_row_ids
+
+    row_ids = await chunk_row_ids(pool, workspace=workspace, doc_id=doc_id)
     max_ent = settings.GRAPH_MAX_ENTITIES_PER_CHUNK
     max_edge = settings.GRAPH_MAX_EDGES_PER_DOC
     min_conf = settings.GRAPH_MIN_CONFIDENCE

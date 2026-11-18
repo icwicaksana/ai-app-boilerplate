@@ -47,6 +47,16 @@ async def test_g1_worker_timpa_dengan_acl_chunk(monkeypatch):
         async def execute(self, *a, **k):
             return _Cur()
 
+        def transaction(self):
+            class _Tx:
+                async def __aenter__(self):
+                    return None
+
+                async def __aexit__(self, *a):
+                    return False
+
+            return _Tx()
+
     class _Ctx:
         async def __aenter__(self):
             return _Conn()

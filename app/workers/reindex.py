@@ -157,10 +157,11 @@ async def _amain(args) -> int:
     pool = create_pool(settings)
     await open_pool(pool)
     try:
+        await _assert_bypassrls(pool)  # v1.0 G3: tolak sukses-semu role app
         await apply_rag_migration(pool)
         # Dimensi dari DATA PG (SoR), bukan probe embed (P1: reindex jalan
         # tanpa service embed; init_rag = side-effect + butuh tokenizer).
-        dims = await _pg_dims(pool)
+        dims = await _pg_dims(pool, settings)
         collection = collection_name(dims, settings.RAG_EMBED_MODEL)
         client = AsyncQdrantClient(url=settings.QDRANT_URL,
                                    api_key=settings.QDRANT_API_KEY, timeout=30)
@@ -184,20 +185,51 @@ async def _amain(args) -> int:
         await close_pool(pool)
 
 
-async def _pg_dims(pool) -> int:
-    """Dimensi dari triple dominan di PG. Campur = abort jujur (D6)."""
+async def _assert_bypassrls(pool) -> None:
+    """Reindex baca lintas-workspace → WAJIB role bypass (v1.0 G3).
+
+    Tanpa ini, jalan sebagai role app = melihat 0 baris dan melaporkan
+    sukses SEMU. Gagal LOUD di awal, bukan senyap di akhir.
+    """
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT embedding_dim, COUNT(*) AS n FROM chunks"
-            " GROUP BY 1 ORDER BY 2 DESC LIMIT 2")
+            "SELECT r.rolsuper AS s, r.rolbypassrls AS b FROM pg_roles r"
+            " WHERE r.rolname = current_user")
+        row = await cur.fetchone()
+    if not row or not (row["s"] or row["b"]):
+        raise SystemExit(
+            "REFUSE: reindex butuh role superuser/BYPASSRLS (baca "
+            "lintas-workspace). Role app hanya melihat 0 baris.")
+
+
+async def _pg_dims(pool, settings=None) -> int:
+    """Dimensi dari triple dominan di PG. Campur = abort jujur (D6).
+
+    v1.0 G4: validasi MODEL juga — index campur-model atau model != pin
+    config = REFUSE (reindex menyalin vektor apa adanya; model salah =
+    butuh re-embed penuh, bukan reindex).
+    """
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT embedding_model, embedding_dim, COUNT(*) AS n FROM chunks"
+            " GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 2")
         rows = await cur.fetchall()
     if not rows:
         return 1024  # index kosong: koleksi dibuat dengan default pin
     if len(rows) > 1:
         raise SystemExit(
-            "REFUSE: chunks campur dimensi "
-            f"{[(r['embedding_dim'], r['n']) for r in rows]} — rapikan dulu.")
-    return int(rows[0]["embedding_dim"])
+            "REFUSE: chunks campur model/dimensi "
+            f"{[(r['embedding_model'], r['embedding_dim'], r['n']) for r in rows]}"
+            " — rapikan dulu (re-embed penuh ke 1 model).")
+    top = rows[0]
+    want_model = (getattr(settings, "RAG_EMBED_MODEL", "") or "").strip() \
+        if settings is not None else ""
+    if want_model and top["embedding_model"] != want_model:
+        raise SystemExit(
+            f"REFUSE: index PG ({top['embedding_model']}) != pin config "
+            f"({want_model}) — reindex tak mengubah model. Re-embed penuh "
+            f"dulu atau samakan RAG_EMBED_MODEL.")
+    return int(top["embedding_dim"])
 
 
 async def _all_workspaces(pool) -> list[str]:
