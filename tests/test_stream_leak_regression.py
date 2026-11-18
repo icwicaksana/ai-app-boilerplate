@@ -1,12 +1,12 @@
-"""v0.9 F0: regresi kebocoran token subagent pada graph NYATA.
+"""v0.9 F0: regresi kebocoran text subagent pada graph NYATA.
 
 Berkas ini membuktikan EMPAT hal, bukan satu:
 
-    1. Tanpa pertahanan, token subagent BENAR-BENAR bocor ke stream.
+    1. Tanpa pertahanan, text subagent BENAR-BENAR bocor ke stream.
        (Kalau ini tidak terbukti, premis F0 salah dan harus dikoreksi.)
     2. `disable_streaming=True` pada LLM child mematikan tokennya secara
        struktural — bahkan tanpa tag sama sekali.
-    3. Tag `subagent` menutup jalur tool_event dan token yang lolos.
+    3. Tag `subagent` menutup jalur tool_event dan text yang lolos.
     4. Jawaban agen utama TETAP sampai ke klien.
 
 Memakai model palsu yang benar-benar streaming, `create_agent` asli, dan
@@ -141,7 +141,7 @@ def _texts(events: list[dict], policy: StreamPolicy | None) -> str:
 
 @pytest.mark.asyncio
 async def test_kebocoran_terbukti_tanpa_pertahanan():
-    """Tanpa StreamPolicy DAN tanpa tag, token subagent MEMANG bocor.
+    """Tanpa StreamPolicy DAN tanpa tag, text subagent MEMANG bocor.
 
     Kalau tes ini gagal, kebocoran tidak tereproduksi — keputusan F0 harus
     ditinjau ulang, bukan dianggap sistemnya aman.
@@ -154,7 +154,7 @@ async def test_kebocoran_terbukti_tanpa_pertahanan():
 
 @pytest.mark.asyncio
 async def test_disable_streaming_mematikan_token_subagent():
-    """Lapis 1: tanpa tag sama sekali, token child tetap tidak muncul."""
+    """Lapis 1: tanpa tag sama sekali, text child tetap tidak muncul."""
     events = await _collect(
         _build_parent_child(tag_child=False, child_streaming=False))
     assert RAHASIA not in _texts(events, None), (

@@ -40,12 +40,12 @@ async def test_r3_hook_produsen_terima_terminal():
     mgr = TurnManager(TurnLog(FakeCache()))
     await mgr.start(workspace="t", turn_id="t1", owner="budi",
                     first_event={"type": "started"},
-                    events=_stream({"type": "token"},
+                    events=_stream({"type": "text"},
                                    {"type": "result",
                                     "status": "pending_approval"}),
                     on_event=_hook)
     await asyncio.gather(*list(mgr._tasks.values()))
-    assert [e["type"] for e in seen] == ["token", "result"]
+    assert [e["type"] for e in seen] == ["text", "result"]
     assert seen[-1]["status"] == "pending_approval"
 
 

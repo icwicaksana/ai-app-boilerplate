@@ -22,7 +22,7 @@ pytestmark = pytest.mark.integration
 
 
 class _FakeChat(ChatController):
-    """Agen palsu: 3 token lambat lalu result (cukup untuk putus-sambung)."""
+    """Agen palsu: 3 text lambat lalu result (cukup untuk putus-sambung)."""
 
     def __init__(self, settings):
         super().__init__(settings, checkpointer=object())
@@ -37,7 +37,7 @@ class _FakeChat(ChatController):
         for i in range(3):
             await asyncio.sleep(0.15)
             yield {"thread_id": "toko-a:budi:sess-1", "request_id": request_id,
-                   "type": "token", "delta": f"t{i}"}
+                   "type": "text", "delta": f"t{i}"}
         yield {"thread_id": "toko-a:budi:sess-1", "request_id": request_id,
                "type": "result", "status": "completed",
                "output": {"reply": "t0t1t2"}, "interrupt": None}
@@ -93,7 +93,7 @@ def test_resume_after_disconnect(client):
         for line in resp.iter_lines():
             if line.startswith("data: "):
                 seen.append((None, json.loads(line[6:])))
-            if len(seen) >= 2:  # putus setelah started + 1 token
+            if len(seen) >= 2:  # putus setelah started + 1 text
                 break
     started = seen[0][1]
     assert started["type"] == "started" and started["turn_id"] == turn_id
@@ -114,7 +114,7 @@ def test_resume_after_disconnect(client):
         frames = _parse_sse(r2.iter_lines())
     types = [e["type"] for _, e in frames]
     assert types[0] == "started" and types[-1] == "result"
-    assert types.count("token") == 3
+    assert types.count("text") == 3
 
     # Reconnect DENGAN Last-Event-ID → tidak mengulang event yang sudah dilihat.
     first_id = frames[0][0]

@@ -34,7 +34,7 @@ def test_new_turn_id_unique_and_short():
 @pytest.mark.parametrize("event,expected", [
     ({"type": "result"}, True),
     ({"type": "error"}, True),
-    ({"type": "token"}, False),
+    ({"type": "text"}, False),
     ({"type": "started"}, False),
     ({}, False),
 ])
@@ -92,10 +92,10 @@ async def test_producer_writes_started_then_events_and_finishes():
     mgr = TurnManager(log)
     await mgr.start(workspace="toko-a", turn_id="t1", owner="budi",
                     first_event={"type": "started", "turn_id": "t1"},
-                    events=_stream({"type": "token", "delta": "a"},
+                    events=_stream({"type": "text", "delta": "a"},
                                    {"type": "result", "status": "completed"}))
     await asyncio.gather(*list(mgr._tasks.values()))
-    assert [e["type"] for e in log.events] == ["started", "token", "result"]
+    assert [e["type"] for e in log.events] == ["started", "text", "result"]
     assert log.finished is True
 
 
@@ -105,17 +105,17 @@ async def test_producer_stops_at_terminal():
     mgr = TurnManager(log)
     await mgr.start(workspace="t", turn_id="t2", owner="budi", first_event={"type": "started"},
                     events=_stream({"type": "result"},
-                                   {"type": "token", "delta": "harusnya tidak"}))
+                                   {"type": "text", "delta": "harusnya tidak"}))
     await asyncio.gather(*list(mgr._tasks.values()))
     assert [e["type"] for e in log.events] == ["started", "result"]
 
 
 @pytest.mark.asyncio
 async def test_producer_writes_error_terminal_on_failure():
-    log = FakeTurnLog(fail_on_append_at=1)  # append pertama (token) gagal
+    log = FakeTurnLog(fail_on_append_at=1)  # append pertama (text) gagal
     mgr = TurnManager(log)
     await mgr.start(workspace="t", turn_id="t3", owner="budi", first_event={"type": "started"},
-                    events=_stream({"type": "token", "delta": "a"}))
+                    events=_stream({"type": "text", "delta": "a"}))
     await asyncio.gather(*list(mgr._tasks.values()))
     # error terminal tetap ditulis walau append pertama gagal? append berikutnya
     # juga akan gagal pada fake ini → cukup pastikan finish dipanggil & tak raise.
@@ -143,10 +143,10 @@ async def test_producer_skips_duplicate_started():
     await mgr.start(workspace="t", turn_id="t6", owner="budi",
                     first_event={"type": "started", "turn_id": "t6"},
                     events=_stream({"type": "started"},
-                                   {"type": "token", "delta": "a"},
+                                   {"type": "text", "delta": "a"},
                                    {"type": "result"}))
     await asyncio.gather(*list(mgr._tasks.values()))
-    assert [e["type"] for e in log.events] == ["started", "token", "result"]
+    assert [e["type"] for e in log.events] == ["started", "text", "result"]
 
 
 @pytest.mark.asyncio

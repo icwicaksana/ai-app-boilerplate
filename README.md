@@ -242,7 +242,7 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 
 | `GET /api/v1/livez` | Publik, tanpa I/O (liveness proses). |
 
-| `POST /api/v1/chat/stream` | Chat SSE token-level (v0.1). `{"agent","thread_id?","input"}` -> event `data: {...}` |
+| `POST /api/v1/chat/stream` | Chat SSE (v0.1). `{"agent","thread_id?","input"}` -> event `data: {...}` |
 
 | `GET /api/v1/threads/{thread_id}/state` | Snapshot terakhir thread (v0.3). `thread_id` di path wajib URL-encode (`:` → `%3A`). |
 
@@ -274,7 +274,7 @@ route (HTTP tipis) -> controller (main logic AI App) -> agent (otak) -> return
 
 
 
-Alur: `started` -> `token`* / `thinking`* / `tool_start` / `tool_end` -> `result`
+Alur: `started` -> `text`* / `thinking`* / `tool_start` / `tool_end` -> `result`
 
 | `error` (terminal). Terminator = stream close.
 
@@ -286,7 +286,7 @@ Alur: `started` -> `token`* / `thinking`* / `tool_start` / `tool_end` -> `result
 
 | `started` | `{"type":"started"}` | reset bubble |
 
-| `token` | `{"type":"token","delta":"..."}` | append ke jawaban (jangan trim!) |
+| `text` | `{"type":"text","delta":"..."}` | append ke jawaban (jangan trim!) |
 
 | `thinking` | `{"type":"thinking","delta":"..."}` | collapsible terpisah; v0.1 belum dipancarkan (diisi v0.2) |
 

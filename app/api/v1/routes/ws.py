@@ -5,7 +5,7 @@ Alur:
 2. Klien `WS /ws/chat?ticket=...` (Origin divalidasi — CSWSH).
 3. Klien kirim `{"type":"chat","agent":...,"input":...,"thread_id":...}`.
 4. Server ack `{"type":"ack","turn_id":...}` lalu memompa event envelope
-   (`started/token/thinking/tool_*/result|error`) dari turn log dengan
+   (`started/text/thinking/tool_*/result|error`) dari turn log dengan
    field tambahan `seq` (monotonic per koneksi). Disconnect = pump berhenti,
    produsen jalan terus (v1.0 R4: paritas resume HTTP).
 5. `{"type":"cancel"}` menghentikan run aktif; `{"type":"ping"}` → `pong`.
@@ -13,7 +13,7 @@ Alur:
    turn log (v0.5a) — jalur yang sama dengan SSE resume.
 
 Backpressure: queue per koneksi dibatasi `WS_MAX_QUEUE`. Saat penuh, frame
-`token`/`thinking` DI-DROP (aman: klien bisa resume via turn log), frame
+`text`/`thinking` DI-DROP (aman: klien bisa resume via turn log), frame
 terminal TIDAK pernah di-drop. Klien yang terus lambat diputus dengan 1013.
 """
 
@@ -51,7 +51,7 @@ CLOSE_TRY_AGAIN = 1013
 CLOSE_RESTART = 1012
 CLOSE_AUTH_EXPIRED = 4001  # kode aplikasi: sesi WS habis, reconnect + resume
 
-DROPPABLE = frozenset({"token", "thinking"})
+DROPPABLE = frozenset({"text", "thinking"})
 
 
 @router.post("/realtime/ticket")

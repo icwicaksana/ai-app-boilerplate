@@ -7,8 +7,8 @@ INVARIAN v0.9
 KENAPA INI ADA
     `Runner.stream()` memakai `astream_events(version="v2")` yang melaporkan
     SEMUA pemanggilan model di dalam pohon run, bukan hanya milik graph root.
-    Tanpa penyaring, token dari model mana pun yang berjalan di dalam request
-    ikut terkirim sebagai `token` SSE.
+    Tanpa penyaring, text dari model mana pun yang berjalan di dalam request
+    ikut terkirim sebagai `text` SSE.
 
     Sebelum v0.9 kebocoran ini belum muncul BUKAN karena ada penyaring,
     melainkan karena jalur yang punya LLM bersarang (pipeline agent) kebetulan
@@ -19,7 +19,7 @@ TIGA LAPIS PERTAHANAN
     1. Struktural — LLM subagent dibangun dengan `disable_streaming=True`,
        sehingga `on_chat_model_stream` tidak pernah dihasilkan sama sekali.
     2. Kebijakan (berkas ini) — tag eksplisit `subagent`/`internal` menutup
-       `tool_start`/`tool_end` internal dan token dari subagent yang lupa
+       `tool_start`/`tool_end` internal dan text dari subagent yang lupa
        menyetel flag. Penandaan WAJIB lewat `make_subagent_tool()`.
     3. Tes regresi — membuktikan lapis 1+2 bekerja pada graph NYATA.
 

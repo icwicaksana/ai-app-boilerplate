@@ -29,7 +29,7 @@ def get_llm(settings: Settings, session_id: str | None = None,
     session_id: diisi thread_id oleh controller (1 sesi stabil per percakapan).
     model: override nama model (v0.8 L3); None = LITELLM_MODEL.
     streaming: False = `disable_streaming=True` — WAJIB untuk LLM subagent
-        (v0.9 lapis struktural: token child tak pernah dihasilkan, tetapi
+        (v0.9 lapis struktural: text child tak pernah dihasilkan, tetapi
         event start/end tetap fire sehingga tracing + cost utuh).
     Instance LLM murah dibentuk per build; GRAPH dibangun per request (ADR-11)
     — jangan cache graph bila header spend per-thread masih menempel di LLM.

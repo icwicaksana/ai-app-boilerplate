@@ -2,6 +2,55 @@
 
 Semua perubahan template dicatat di sini. Rilis = git tag (`v0`, `v0.1`, ...).
 
+## v2.0.0 (2026-11-18) — Event `text`, trace eksekusi, narasi satu-suara
+
+- **Default `SKILLS_ENABLED` dibalik ke `true` (kill-switch, bukan
+  opt-in).** Penentu aktif tetap ganda (flag true DAN registry tak
+  kosong), sehingga tanpa konten perilaku byte-identik seperti mati.
+  Operator tak perlu menulis apa pun di `.env`; tulis `false` eksplisit
+  untuk memaksa mati. Gate byte-identik (flag=false eksplisit) tetap
+  hijau tanpa rebase.
+- **`SUBAGENTS_ENABLED` SENGAJA tetap default `false`.** Upaya membalik
+  keduanya TERBUKTI salah via suite: roster GLOBAL vs TOOLS per-agen —
+  spec demo butuh `check_stock` sehingga `rag_chat` gagal build LOUD
+  (`SubagentConfigError`, 24 tes merah). Prasyarat default-on: scoping
+  roster per-agen (follow-up), bukan sekadar balik flag.
+
+- **WS3: trace eksekusi terstruktur di `StreamResult.trace` (kontrak beku
+  `docs/TRACE-CONTRACT.md`).** `runner.stream` menerbitkan
+  `{trace_version: 1, complete, spans, truncated, pending_approvals?}`:
+  timing tool FIFO per nama (`kind=tool`), span delegasi
+  (`kind=subagent`, semua jalur keluar), span skill (`kind=skill`,
+  termasuk unknown/traversal). Otoritas fakta: trace > kartu > reply;
+  replay turn log byte-identik termasuk trace. Privasi: redaksi TERPUSAT
+  di `summarize_input` (denylist key + `looks_like_secret`, tanpa regex
+  baru); detail error tool = kelas saja; input skill unknown di-cap 64
+  char. Cancel-safe: kolektor dilepas di semua jalur abort
+  (mid-stream, fallback, baca final). Jobs sync TANPA trace.
+  Tes: `tests/test_run_trace.py` (FIFO, orphan, HITL pending, replay,
+  isolasi 2-task, abort-aclose, golden skema).
+
+- **SSE: event `token` → `text`.** Alasan: `token` adalah istilah transport
+  (thinking pun dikirim sebagai token) — `text` vs `thinking` memisahkan
+  berdasar audiens (teks user vs reasoning debug). Wire:
+  `{"type":"text","delta":"..."}`. Python: `StreamToken` → `StreamText`,
+  `stream_token()` → `stream_text()`. TestFE (`StreamText`, `CHAT_EVENTS`,
+  `useChat`, `V01Sse`, docs) diperbarui. Catatan: turn log Valkey pra-rename
+  me-replay `token` yang diabaikan FE baru (ephemeral, TTL per jam).
+
+- **WS2: blok narasi always-on (`NARRATION_RULES`, 554 char, tanpa few-shot).**
+  Keputusan TERKUNCI user: TANPA FLAG. Main agent satu-satunya suara
+  (Indonesia, 1 kalimat per langkah besar); umumkan SEBELUM + review ringan
+  SESUDAH delegasi `subagent__*`; diam untuk micro-tool (semua tool selain
+  `subagent__*`); jangan bocorkan thinking. Ditempel SETELAH SYSTEM_PROMPT
+  SEBELUM MEMORY_RULES; indeks skill (K5) + delegasi tetap di akhir.
+  `hitl_demo` tak kena (override `build()` sendiri); `bound_tools` tak berubah.
+  Biaya: +556 char/turn (~+140 token input). Tes baru
+  `tests/test_narration_rules.py` (9 kata, 8 varian flag, urutan, prefix,
+  hitl, bound_tools). Gate `test_skills_disabled_identical.py`: 4 hash prompt
+  direbase metode identik (bukti: strip tepat 1 blok = 4 hash lama v0.8.3);
+  8 tes gate lain hijau.
+
 ## v1.0 (2026-11-18) — Production-grade + evals
 
 **Ringkasan.** Audit 4 expert (backend, arsitektur, pentest, RAG) → 7 fase

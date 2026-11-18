@@ -2,7 +2,7 @@
 
 Kenapa wajib lewat sini (bukan `create_agent` langsung di dalam tool):
   1. Tag `subagent` — satu-satunya mekanisme filter stream yang stabil (K9).
-  2. `disable_streaming=True` — token child tak pernah dihasilkan (lapis 1).
+  2. `disable_streaming=True` — text child tak pernah dihasilkan (lapis 1).
   3. Middleware rem + error terpasang — child tanpa rem bisa loop.
   4. Larangan struktural: tool approval-gated (HITL_POLICY) dan tool delegasi
      lain DITOLAK saat build — subagent tak bisa lewati approval atau rekursi.
@@ -32,6 +32,7 @@ from app.agents.subagents.resilience import (
 )
 from app.core.hitl import HITL_POLICY
 from app.core.logging import get_logger
+from app.core.run_trace import record_span, sanitize_detail, summarize_input
 from app.schemas.subagent import Brief, Report, ToolFailure
 
 log = get_logger(__name__)
@@ -257,6 +258,11 @@ def make_subagent_tool(
                                   if c.strip()),
             )
         except ValueError as exc:
+            # WS3: delegasi gagal validasi = span skipped (return tak berubah).
+            record_span(tool=tool_name, kind="subagent", status="skipped",
+                        ms=0, attempts=1,
+                        input_summary=summarize_input(task),
+                        detail=sanitize_detail(str(exc)))
             return (f"Tugas delegasi tidak valid: {exc} "
                     f"Tulis task konkret (maks 4000 karakter).")
 
@@ -276,10 +282,22 @@ def make_subagent_tool(
     return delegate
 
 
+def _failures_detail(failures: tuple[ToolFailure, ...]) -> str:
+    """Ringkasan failures 1 baris untuk span detail (helper existing)."""
+    return sanitize_detail("; ".join(
+        f"{f.tool} ({f.error_class})" for f in failures))
+
+
 async def _delegate_run(spec, child, prompt: str, eff_timeout: float,
                         max_tokens: int, started: float,
                         fails: list[ToolFailure]) -> str:
-    """Badan invokasi delegate (dipisah agar set/reset contextvar rapi)."""
+    """Badan invokasi delegate (dipisah agar set/reset contextvar rapi).
+
+    WS3: record span `kind=subagent` di SEMUA jalur keluar; return tetap
+    `Report.to_text()` (tak berubah).
+    """
+    name = subagent_tool_name(spec.name)
+    summary = summarize_input(prompt)
     try:
         async with asyncio.timeout(eff_timeout):
             result = await child.ainvoke(
@@ -289,6 +307,9 @@ async def _delegate_run(spec, child, prompt: str, eff_timeout: float,
     except TimeoutError:
         ms = int((time.perf_counter() - started) * 1000)
         log.warning("subagent %s timeout (%ds)", spec.name, eff_timeout)
+        record_span(tool=name, kind="subagent", status="timeout", ms=ms,
+                    attempts=1, input_summary=summary,
+                    detail=sanitize_detail(f"melebihi {eff_timeout} dtk"))
         return Report(status="timeout", failures=(
             ToolFailure(tool="*", error_class="timeout", attempts=1,
                         detail=f"melebihi {eff_timeout} dtk"),),
@@ -299,6 +320,9 @@ async def _delegate_run(spec, child, prompt: str, eff_timeout: float,
         inv_fails = tuple(fails) or (ToolFailure(
             tool="*", error_class=error_class(exc), attempts=1,
             detail=type(exc).__name__),)
+        record_span(tool=name, kind="subagent", status="failed", ms=ms,
+                    attempts=1, input_summary=summary,
+                    detail=_failures_detail(inv_fails))
         return Report(status="failed", failures=inv_fails, ms=ms).to_text()
 
     ms = int((time.perf_counter() - started) * 1000)
@@ -318,6 +342,9 @@ async def _delegate_run(spec, child, prompt: str, eff_timeout: float,
         status = "ok"
     log.info("subagent_end name=%s status=%s tokens=%d ms=%d",
              spec.name, status, tokens, ms)
+    record_span(tool=name, kind="subagent", status=status, ms=ms,  # type: ignore[arg-type]
+                attempts=1, input_summary=summary,
+                detail=_failures_detail(tuple(fails)) if status != "ok" else "")
     return Report(status=status, answer=answer,
                   failures=tuple(fails), tokens_used=tokens,
                   ms=ms).to_text()

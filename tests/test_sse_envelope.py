@@ -118,7 +118,7 @@ def test_streaming_result_carries_interrupt():
                interrupt=[{"action": "refund", "amount": 600000}])
     events = _run(_collect_runner(g))
     kinds = [e["type"] for e in events]
-    assert kinds == ["started", "token", "result"]
+    assert kinds == ["started", "text", "result"]
     assert events[-1]["status"] == "pending_approval"
     assert events[-1]["interrupt"] == {"action": "refund", "amount": 600000}
 
@@ -131,7 +131,7 @@ async def _collect_runner(graph):
 def test_unreadable_checkpoint_yields_error_not_empty_result():
     g = _Graph([_tok("ok")], [AIMessage(content="ok")], boom_final=True)
     events = _run(_collect_runner(g))
-    assert [e["type"] for e in events] == ["started", "token", "error"]
+    assert [e["type"] for e in events] == ["started", "text", "error"]
     assert g.ainvoke_calls == 0  # TANPA eksekusi ulang
 
 

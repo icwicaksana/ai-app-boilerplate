@@ -121,6 +121,10 @@ class TurnLog:
             return
         try:
             await self.cache.expire(turn_key(workspace, turn_id), ttl_seconds)
+            # P2: key owner ikut diperpendek — kalau tidak, owner bertahan
+            # dengan TTL asli (900s) setelah stream kedaluwarsa (300s).
+            await self.cache.expire(turn_owner_key(workspace, turn_id),
+                                    ttl_seconds)
         except CacheUnavailable:
             log.warning("turnlog finish gagal (cache down) turn=%s", turn_id)
 

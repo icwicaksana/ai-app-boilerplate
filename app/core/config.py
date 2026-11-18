@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str = "ai-app-boilerplate"
     API_V1_PREFIX: str = "/api/v1"
-    APP_VERSION: str = "v0.9.0"  # satu sumber versi (OpenAPI + health baca ini)
+    APP_VERSION: str = "v2.0.0"  # satu sumber versi (OpenAPI + health baca ini)
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     # Server (entrypoint `python -m app.main` baca dari sini — .env/OS-env).
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     WS_TICKET_PER_MIN: int = Field(default=10, ge=1, le=1000)
     # Batas umur koneksi: handshake hanya membuktikan identitas SEKALI, jadi
     # koneksi panjang wajib diputus berkala → klien minta ticket baru lalu
-    # reconnect + `resume` (turn log) tanpa kehilangan token jawaban.
+    # reconnect + `resume` (turn log) tanpa kehilangan text jawaban.
     WS_MAX_CONNECTION_SECONDS: int = Field(default=1800, ge=5, le=86_400)
     # Origin yang diizinkan untuk handshake WS (CSWSH). Kosong = pakai CORS_ORIGINS.
     WS_ORIGINS: str = ""
@@ -197,9 +197,15 @@ class Settings(BaseSettings):
     GRAPH_L3_MAX_CALLS_PER_DOC: int = Field(default=20, ge=0, le=200)
 
     # --- v0.9: Skills on-demand + Subagents (desain: docs/V09-PLAN.md) ---
-    # Default MATI: perilaku v0.8.3 harus IDENTIK byte-per-byte bila false.
-    # System prompt tidak boleh berubah sama sekali saat fitur ini mati.
-    SKILLS_ENABLED: bool = False
+    # SKILLS default NYALA (kill-switch, bukan opt-in): penentu aktif tetap
+    # ganda (flag true DAN registry tak kosong) — tanpa konten, prompt/tools
+    # byte-identik seolah mati. Set false eksplisit untuk perilaku v0.8.3.
+    # SUBAGENTS tetap default MATI (disengaja, BUKAN lupa): roster bersifat
+    # GLOBAL sementara TOOLS per-agen — default-on meledak LOUD
+    # (SubagentConfigError) di agen yang tak punya tool spec demo
+    # (terbukti: rag_chat gagal build). Butuh scoping roster per-agen dulu
+    # sebelum default ini boleh dibalik. Lihat CHANGELOG Unreleased.
+    SKILLS_ENABLED: bool = True
     # Direktori KONTEN (markdown operator), bukan paket kode. Sengaja terpisah
     # dari `app/skills/`: konten campur kode berarti satu direktori `utils/`
     # di masa depan bisa menjadi error boot dalam strict mode.

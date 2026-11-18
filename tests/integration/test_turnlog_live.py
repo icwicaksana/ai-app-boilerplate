@@ -22,18 +22,18 @@ async def test_create_append_replay_and_cursor(cache):
     first = await log.create(workspace=WORKSPACE, turn_id=turn,
                              first_event={"type": "started", "turn_id": turn})
     assert first != "0-0"
-    await log.append(workspace=WORKSPACE, turn_id=turn, event={"type": "token", "delta": "a"})
-    await log.append(workspace=WORKSPACE, turn_id=turn, event={"type": "token", "delta": "b"})
+    await log.append(workspace=WORKSPACE, turn_id=turn, event={"type": "text", "delta": "a"})
+    await log.append(workspace=WORKSPACE, turn_id=turn, event={"type": "text", "delta": "b"})
     await log.append(workspace=WORKSPACE, turn_id=turn,
                      event={"type": "result", "status": "completed"})
 
     rows = await log.replay(workspace=WORKSPACE, turn_id=turn)
-    assert [e["type"] for _, e in rows] == ["started", "token", "token", "result"]
+    assert [e["type"] for _, e in rows] == ["started", "text", "text", "result"]
     assert rows[1][1]["delta"] == "a"
 
     # cursor eksklusif: mulai dari entry kedua → tidak mengulang yang pertama
     rows2 = await log.replay(workspace=WORKSPACE, turn_id=turn, cursor=rows[0][0])
-    assert [e["type"] for _, e in rows2] == ["token", "token", "result"]
+    assert [e["type"] for _, e in rows2] == ["text", "text", "result"]
 
 
 @pytest.mark.asyncio
@@ -41,12 +41,12 @@ async def test_follow_stops_at_terminal(cache):
     log = _log(cache)
     turn = new_turn_id()
     await log.create(workspace=WORKSPACE, turn_id=turn, owner="budi", first_event={"type": "started"})
-    await log.append(workspace=WORKSPACE, turn_id=turn, event={"type": "token"})
+    await log.append(workspace=WORKSPACE, turn_id=turn, event={"type": "text"})
     await log.append(workspace=WORKSPACE, turn_id=turn, event={"type": "result"})
 
     got = [e async for _, e in log.follow(
         workspace=WORKSPACE, turn_id=turn, block_ms=100, idle_timeout_s=5)]
-    assert [e["type"] for e in got] == ["started", "token", "result"]
+    assert [e["type"] for e in got] == ["started", "text", "result"]
 
 
 @pytest.mark.asyncio

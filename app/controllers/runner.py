@@ -2,7 +2,7 @@
 
 - Controller bikin thread_id + config.
 - Agent panggil runner.run()/runner.stream() di dalam run_agent()/stream_agent().
-- v0.1: stream() token-level via astream_events v2; final diambil dari
+- v0.1: stream() delta-level via astream_events v2; final diambil dari
   checkpoint (aget_state, TANPA eksekusi ulang). run() tetap ainvoke (dipakai
   pipeline sync + fallback chat).
 
@@ -13,6 +13,8 @@ Kontrak runner.stream (dijamin untuk SEMUA graph, termasuk fallback):
 from __future__ import annotations
 
 import asyncio
+import time
+from collections import deque
 from typing import Any, AsyncIterator
 
 from langgraph.types import Command
@@ -20,13 +22,21 @@ from langgraph.types import Command
 from app.agents.utils.MessageUtils import split_chunk_text
 from app.core.errors import UpstreamAIError
 from app.core.logging import get_logger
-from app.core.stream_policy import StreamPolicy
+from app.core.run_trace import (
+    discard_trace,
+    drain_trace,
+    record_span,
+    sanitize_detail,
+    start_trace,
+    summarize_input,
+)
+from app.core.stream_policy import HIDDEN_TAGS, StreamPolicy
 from app.helpers.response import (
     stream_error,
     stream_error_from,
     stream_started,
     stream_thinking,
-    stream_token,
+    stream_text,
     stream_tool_end,
     stream_tool_start,
 )
@@ -76,6 +86,22 @@ def first_interrupt_value(interrupts: list[dict[str, Any]]) -> dict | None:
     return {"value": value}
 
 
+def _event_tags(event: Any) -> set:
+    """Tag event sebagai set (aman untuk bentuk tak-terduga)."""
+    tags = event.get("tags") if isinstance(event, dict) else None
+    if not isinstance(tags, (list, tuple, set, frozenset)):
+        return set()
+    return set(tags)
+
+
+def _pending_approval_count(result: dict[str, Any]) -> int:
+    """Jumlah interrupt menunggu keputusan (untuk trace.pending_approvals)."""
+    ints = result.get("interrupts")
+    if isinstance(ints, list) and ints:
+        return len(ints)
+    return 1 if result.get("interrupt") else 0
+
+
 class Runner:
     def __init__(self, durability: str = "async"):
         # "sync" = checkpoint ditulis sebelum step berikutnya; wajib untuk
@@ -101,7 +127,7 @@ class Runner:
 
     async def run(self, graph, state: dict, config: dict) -> dict[str, Any]:
         # session Phoenix = thread_id (1 thread = 1 percakapan di UI).
-        # Tanpa instrumentor terinstall, session_context = no-op.
+        # Bila tracing tak aktif, session_context = no-op (tanpa attach OTel).
         with session_context(_thread_of(config)):
             try:
                 raw = await self._ainvoke(graph, state, config)
@@ -125,7 +151,7 @@ class Runner:
                 "interrupt": None, "interrupts": None, "raw": raw}
 
     async def stream(self, graph, state: dict, config: dict) -> AsyncIterator[dict[str, Any]]:
-        """Token-level (v0.1): started -> token*/thinking*/tool_* -> result | error.
+        """Delta-level (v0.1): started -> text*/thinking*/tool_* -> result | error.
 
         - Event granular dari `graph.astream_events(..., version="v2")`.
         - Hasil final dibaca dari checkpoint (`aget_state`) — TANPA eksekusi ulang.
@@ -133,45 +159,171 @@ class Runner:
           (tak pernah raise, tak pernah gantung, tak pernah result kosong).
         - Graph tanpa `astream_events` (fake/legacy di test) → fallback single-chunk
           via run() agar kontrak `started -> result` tetap terpenuhi.
+        - WS3: `result` membawa `trace` terstruktur (timing tool FIFO per nama
+          + span delegasi/skill dari contextvar); jalur error TANPA trace.
 
         Pengecualian (terdokumentasi di schemas/stream.py): kegagalan PRE-RUN
         (validasi 400/403/404, init gagal) di level controller/agent
         menghasilkan SATU event `error` TANPA `started` — graph belum jalan.
         """
         yield stream_started()
+        # WS3: kolektor hidup selama stream di task produsen ini; start/drain
+        # selalu berpasangan (tiru disiplin _current_failures).
+        token = start_trace()
         astream_events = getattr(graph, "astream_events", None)
         if astream_events is None:
             try:
                 result = await self.run(graph, state, config)
+            except (asyncio.CancelledError, GeneratorExit):
+                # Cancel-safe (P1): fallback sync pun bisa dibatalkan —
+                # kolektor wajib dilepas, bukan bocor.
+                discard_trace(token)
+                raise
             except Exception as exc:
                 log.exception("runner stream fallback gagal (thread=%s)",
                               _thread_of(config))
+                discard_trace(token)
                 yield stream_error_from(exc)
                 return
-            yield {"type": "result", **result}
+            try:
+                pending_run = result.get("status") == "pending_approval"
+                result["trace"] = drain_trace(
+                    token, complete=not pending_run,
+                    pending_approvals=_pending_approval_count(result)
+                    if pending_run else None)
+                yield {"type": "result", **result}
+            except (asyncio.CancelledError, GeneratorExit):
+                discard_trace(token)  # idempotent bila drain sudah reset
+                raise
             return
+        # Antre start per nama tool (FIFO: cocok untuk tool paralel bernama sama).
+        pending: dict[str, deque[tuple[float, str]]] = {}
         with session_context(_thread_of(config)):
             try:
                 async for event in astream_events(state, config=config, version="v2"):
+                    if isinstance(event, dict) and event.get("event") == "on_tool_error":
+                        # Trace-only (tanpa SSE): policy tetap menolaknya di bawah.
+                        self._track_tool_error(event, pending)
+                        continue
                     # v0.9: saring SEBELUM dipetakan. Event dari run
                     # bersarang (subagent, klasifikasi internal) tidak boleh
-                    # pernah menjadi token SSE.
+                    # pernah menjadi text SSE.
                     if not self.policy.accept(event):
                         continue
+                    self._track_tool_event(event, pending)
                     for out in self._map_stream_event(event):
                         yield out
+                # Di DALAM try (P1): cancel saat baca checkpoint final wajib
+                # melepas kolektor juga — di luar try = trace bocor.
+                final = await self._final_result_event(graph, config)
             except (asyncio.CancelledError, GeneratorExit):
                 # Klien putus / task dibatalkan: JANGAN yield setelah putus.
+                discard_trace(token)
                 raise
             except Exception as exc:
                 log.exception("runner stream gagal (thread=%s)", _thread_of(config))
+                discard_trace(token)
                 yield stream_error_from(exc)
                 return
-            final = await self._final_result_event(graph, config)
-            if final is None:  # checkpoint tak terbaca = gagal, bukan result kosong
-                yield stream_error(detail="gagal membaca state akhir graph")
-            else:
+        # Keluar dari session OTel SEBELUM yield terminal: server/ASGI menutup
+        # generator (aclose → GeneratorExit) dari context berbeda setelah
+        # result dikonsumsi — detach di dalam blok ini selalu di context yang
+        # sama dengan attach (anti "Token was created in a different Context").
+        if final is None:  # checkpoint tak terbaca = gagal, bukan result kosong
+            discard_trace(token)
+            yield stream_error(detail="gagal membaca state akhir graph")
+        else:
+            try:
+                pending_run = final.get("status") == "pending_approval"
+                self._flush_pending_tools(pending, pending_run=pending_run)
+                final["trace"] = drain_trace(
+                    token, complete=not pending_run,
+                    pending_approvals=_pending_approval_count(final)
+                    if pending_run else None)
                 yield final
+            except (asyncio.CancelledError, GeneratorExit):
+                discard_trace(token)  # idempotent bila drain sudah reset
+                raise
+
+    @staticmethod
+    def _track_tool_event(event: dict,
+                          pending: dict[str, deque[tuple[float, str]]]) -> None:
+        """Timing tool FIFO per nama → span `kind=tool`. Tak pernah raise.
+
+        Dipanggil HANYA untuk event lolos policy; cek tag ganda agar event
+        bertag subagent/internal tak pernah jadi span tool (WS3).
+        """
+        try:
+            kind = event.get("event", "")
+            if kind not in ("on_tool_start", "on_tool_end"):
+                return
+            if _event_tags(event) & HIDDEN_TAGS:
+                return
+            name = str(event.get("name", "tool") or "tool")
+            if kind == "on_tool_start":
+                data = event.get("data") or {}
+                # P2: input non-dict diteruskan apa adanya (summarize_input
+                # menangani str/list/None + meredaksi terpusat).
+                summary = summarize_input(data.get("input"))
+                pending.setdefault(name, deque()).append(
+                    (time.perf_counter(), summary))
+                return
+            queue = pending.get(name)
+            if queue:
+                started, summary = queue.popleft()
+                ms = int((time.perf_counter() - started) * 1000)
+                record_span(tool=name, kind="tool", status="ok", ms=ms,
+                            attempts=1, input_summary=summary)
+            else:
+                record_span(tool=name, kind="tool", status="ok", ms=0,
+                            attempts=1, detail="orphan_end")
+        except Exception:
+            log.exception("runner catat timing tool gagal")
+
+    @staticmethod
+    def _track_tool_error(event: dict,
+                          pending: dict[str, deque[tuple[float, str]]]) -> None:
+        """`on_tool_error` → span failed (trace-only, tanpa SSE). Tak pernah raise.
+
+        P1: catat KELAS error saja — pesan mentah dibuang (bisa membawa
+        secret/PII argumen tool). `Exception` → `type(err).__name__`;
+        string/dict mentah → label generik `ToolError`.
+        """
+        try:
+            if _event_tags(event) & HIDDEN_TAGS:
+                return
+            name = str(event.get("name", "tool") or "tool")
+            data = event.get("data") or {}
+            err = data.get("error", data.get("err", ""))
+            if isinstance(err, BaseException):
+                detail = sanitize_detail(type(err).__name__)
+            elif err:
+                detail = sanitize_detail("ToolError")
+            else:
+                detail = ""
+            queue = pending.get(name)
+            if queue:
+                started, summary = queue.popleft()
+                ms = int((time.perf_counter() - started) * 1000)
+                record_span(tool=name, kind="tool", status="failed", ms=ms,
+                            attempts=1, input_summary=summary, detail=detail)
+            else:
+                record_span(tool=name, kind="tool", status="failed", ms=0,
+                            attempts=1, detail=detail or "orphan_error")
+        except Exception:
+            log.exception("runner catat tool error gagal")
+
+    @staticmethod
+    def _flush_pending_tools(pending: dict[str, deque[tuple[float, str]]],
+                             *, pending_run: bool) -> None:
+        """Start tanpa end saat drain: `pending` (HITL) atau `skipped`."""
+        status = "pending" if pending_run else "skipped"
+        for name, queue in pending.items():
+            while queue:
+                _, summary = queue.popleft()
+                record_span(tool=name, kind="tool", status=status, ms=0,  # type: ignore[arg-type]
+                            attempts=1, input_summary=summary,
+                            detail="tanpa tool_end")
 
     @staticmethod
     def _map_stream_event(event: dict) -> list[dict[str, Any]]:
@@ -185,7 +337,7 @@ class Runner:
                 text, thinking = split_chunk_text(chunk)
                 out: list[dict[str, Any]] = []
                 if text:
-                    out.append(stream_token(text))
+                    out.append(stream_text(text))
                 if thinking:
                     out.append(stream_thinking(thinking))
                 return out

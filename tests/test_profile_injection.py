@@ -112,7 +112,7 @@ def test_memory_boom_stream_keeps_working():
     ag = _agent(graph, FakeMemory(boom=True))
     events = _run(_collect(ag, "ingat ya: saya vegetarian"))
     kinds = [e["type"] for e in events]
-    assert kinds == ["started", "token", "result"]
+    assert kinds == ["started", "text", "result"]
 
 
 def test_memory_rules_cover_deny_list():

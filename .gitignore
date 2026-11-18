@@ -45,4 +45,5 @@ litellm-*.yaml
 .hf-cache/
 .test-blobs/
 .pytest-tmp/
+.tmp-pytest/
 data/

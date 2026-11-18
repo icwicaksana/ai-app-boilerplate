@@ -1,4 +1,4 @@
-"""SSE v0.1: urutan token, error terminal, kompatibilitas consumer lama (tanpa LLM).
+"""SSE v0.1: urutan text, error terminal, kompatibilitas consumer lama (tanpa LLM).
 
 FakeGraph meniru subset `astream_events` v2 + `aget_state` yang dipakai Runner.
 """
@@ -78,9 +78,9 @@ def test_token_order_started_tokens_tools_result():
     events = _run(_collect(FakeGraph(script, final)))
 
     kinds = [e["type"] for e in events]
-    assert kinds == ["started", "token", "token", "tool_start", "tool_end",
-                     "token", "result"]
-    assert "".join(e["delta"] for e in events if e["type"] == "token") == "halo dunia!"
+    assert kinds == ["started", "text", "text", "tool_start", "tool_end",
+                     "text", "result"]
+    assert "".join(e["delta"] for e in events if e["type"] == "text") == "halo dunia!"
     assert events[3]["tool"] == "check_stock"
     assert events[3]["input"] == {"item_id": "ITEM-99"}
     assert events[4]["tool"] == "check_stock"
@@ -93,7 +93,7 @@ def test_thinking_envelope_flows():
     final = [AIMessage(content="jawab")]
     events = _run(_collect(FakeGraph(script, final)))
     kinds = [e["type"] for e in events]
-    assert kinds == ["started", "thinking", "token", "result"]
+    assert kinds == ["started", "thinking", "text", "result"]
     assert events[1]["delta"] == "mikir..."
 
 
@@ -101,7 +101,7 @@ def test_midstream_raise_yields_terminal_error_no_result():
     script = [_chat_chunk("sebelum-"), TimeoutError("llm putus")]
     events = _run(_collect(FakeGraph(script, [])))
     kinds = [e["type"] for e in events]
-    assert kinds == ["started", "token", "error"]
+    assert kinds == ["started", "text", "error"]
     # v1.0 R14: TimeoutError builtin = hulu timeout (504), bukan 500 generik;
     # R12: pesan driver tak bocor (generik, bisa ditindaklanjuti).
     assert events[-1]["code"] == "UPSTREAM_TIMEOUT"
@@ -112,7 +112,7 @@ def test_midstream_raise_yields_terminal_error_no_result():
 def test_empty_deltas_skipped():
     script = [_chat_chunk(""), _chat_chunk("ok")]
     events = _run(_collect(FakeGraph(script, [AIMessage(content="ok")])))
-    assert [e["type"] for e in events] == ["started", "token", "result"]
+    assert [e["type"] for e in events] == ["started", "text", "result"]
 
 
 def test_backward_compat_old_consumer():
@@ -137,7 +137,7 @@ def test_legacy_graph_fallback_single_chunk():
 
 
 def test_agent_passthrough_and_no_fallback_after_error():
-    """BaseChatAgent teruskan token + ubah result; tanpa fallback pasca-error."""
+    """BaseChatAgent teruskan text + ubah result; tanpa fallback pasca-error."""
 
     class Chat(BaseChatAgent):
         AGENT_NAME = "t"
@@ -155,5 +155,5 @@ def test_agent_passthrough_and_no_fallback_after_error():
 
     events = _run(go())
     kinds = [e["type"] for e in events]
-    assert kinds == ["started", "token", "error"]  # tanpa result susulan
+    assert kinds == ["started", "text", "error"]  # tanpa result susulan
     assert graph.invoke_calls == 0  # fallback TIDAK jalan (cegah eksekusi 2x)

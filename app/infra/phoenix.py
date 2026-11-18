@@ -22,9 +22,23 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
+# True HANYA bila setup_phoenix_tracing() sukses memasang exporter.
+# Dibaca per-request oleh session_context(); ditulis sekali saat lifespan.
+_TRACING_ACTIVE = False
+
+
+def is_tracing_active() -> bool:
+    """Status tracing aktual (bedakan dari flag config mentah).
+
+    PHOENIX_ENABLED=true tapi collector mati / register gagal = tetap False.
+    """
+    return _TRACING_ACTIVE
+
 
 def setup_phoenix_tracing(settings: Settings) -> bool:
     """Return True jika tracing aktif. Aman dipanggil tanpa paket terinstall."""
+    global _TRACING_ACTIVE
+    _TRACING_ACTIVE = False  # reset dulu: semua early-return = tidak aktif.
     if not settings.PHOENIX_ENABLED:
         log.info("phoenix tracing disabled (PHOENIX_ENABLED=false)")
         return False
@@ -56,6 +70,7 @@ def setup_phoenix_tracing(settings: Settings) -> bool:
         register(project_name=settings.PHOENIX_PROJECT, auto_instrument=True)
     log.info("phoenix tracing enabled -> %s (project=%s)",
              settings.PHOENIX_ENDPOINT, settings.PHOENIX_PROJECT)
+    _TRACING_ACTIVE = True
     return True
 
 
@@ -75,8 +90,13 @@ def _endpoint_reachable(endpoint: str) -> bool:
 def session_context(thread_id: str) -> Any:
     """Context manager: catat span dalam 1 session Phoenix = thread_id kita.
 
-    Tanpa instrumentor terinstall → nullcontext (no-op, app tetap jalan).
+    No-op (nullcontext) bila tracing TAK AKTIF — tanpa attach OTel sama
+    sekali. Dulu hanya ImportError yang jadi no-op: paket terinstall +
+    tracing mati = attach sia-sia yang meledak saat detach dari context
+    berbeda (ERROR "Failed to detach context" di tiap chat/stream selesai).
     """
+    if not _TRACING_ACTIVE:
+        return nullcontext()
     try:
         from openinference.instrumentation import using_session
         return using_session(thread_id)

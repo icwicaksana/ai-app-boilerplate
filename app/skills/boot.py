@@ -33,7 +33,7 @@ def resolve_root(settings) -> Path:
 
 def build_registry(settings, *, root: Path | None = None) -> SkillRegistry:
     """Bangun registry dari disk. Registry kosong bila fitur dimatikan."""
-    if not getattr(settings, "SKILLS_ENABLED", False):
+    if not getattr(settings, "SKILLS_ENABLED", True):
         # Keadaan normal: perilaku sistem harus identik dengan v0.8.3.
         return SkillRegistry.empty()
 

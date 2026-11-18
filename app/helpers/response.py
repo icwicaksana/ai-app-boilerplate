@@ -1,7 +1,7 @@
 """Pembangun respons HTTP — 1 cara merakit untuk semua jalur (Set A: rel + hasil).
 
 - Rel sync (`POST /jobs/...`): job_success() / job_error().
-- Rel SSE (`POST /chat/stream`): stream_started() / stream_token() / stream_thinking() /
+- Rel SSE (`POST /chat/stream`): stream_started() / stream_text() / stream_thinking() /
   stream_tool_start() / stream_tool_end() / stream_success() / stream_error().
 - job_error() dan stream_error() berdua delegasi ke _problem() — bentuk RFC 7807
   tetap 1 sumber, tidak pernah ditulis 2x.
@@ -26,8 +26,8 @@ from app.schemas.stream import (
     StreamError,
     StreamResult,
     StreamStarted,
+    StreamText,
     StreamThinking,
-    StreamToken,
     StreamToolEnd,
     StreamToolStart,
 )
@@ -97,8 +97,8 @@ def stream_started(turn_id: str | None = None) -> dict[str, Any]:
     return StreamStarted(turn_id=turn_id).model_dump(mode="json")
 
 
-def stream_token(delta: str) -> dict[str, Any]:
-    return StreamToken(delta=delta or "").model_dump(mode="json")
+def stream_text(delta: str) -> dict[str, Any]:
+    return StreamText(delta=delta or "").model_dump(mode="json")
 
 
 def stream_thinking(delta: str) -> dict[str, Any]:
@@ -119,9 +119,10 @@ def stream_success(
     status: str = "completed",
     interrupt: dict[str, Any] | None = None,
     interrupts: list[dict[str, Any]] | None = None,
+    trace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return StreamResult(status=status, output=output, interrupt=interrupt,  # type: ignore[arg-type]
-                        interrupts=interrupts).model_dump(mode="json")
+                        interrupts=interrupts, trace=trace).model_dump(mode="json")
 
 
 def stream_error(

@@ -10,11 +10,13 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from langchain_core.tools import tool
 
 from app.core.logging import get_logger
+from app.core.run_trace import record_span, sanitize_detail, summarize_input
 from app.core.untrusted import quote_untrusted
 from app.skills.loader import MAX_FILE_BYTES
 from app.skills.validate import NAME_RE
@@ -60,11 +62,21 @@ def make_load_skill_tool(registry, *, max_chars: int = 20_000):
 
     @tool(LOAD_SKILL_TOOL_NAME, description=_LOAD_DESCRIPTION)
     async def load_skill(name: str) -> str:
-        skill = registry.get((name or "").strip())
+        started = time.perf_counter()
+        clean = (name or "").strip()
+        skill = registry.get(clean)
         if skill is None:
             known = ", ".join(registry.names()) or "(tidak ada skill aktif)"
             log.info("skill_load name=%s chars=0 hasil=unknown",
                      (name or "")[:64])
+            record_span(tool=LOAD_SKILL_TOOL_NAME, kind="skill",
+                        status="skipped",
+                        ms=int((time.perf_counter() - started) * 1000),
+                        attempts=1,
+                        # P1: jalur unknown = input tak-tepercaya → cap 64
+                        # char + redaksi terpusat via summarize_input.
+                        input_summary=summarize_input({"name": clean[:64]}),
+                        detail=sanitize_detail("unknown"))
             return (
                 f"Skill '{name}' tidak dikenal. Skill yang tersedia: {known}. "
                 f"Pakai salah satu nama itu persis seperti tertulis, atau "
@@ -73,6 +85,13 @@ def make_load_skill_tool(registry, *, max_chars: int = 20_000):
         log.info("skill_load name=%s chars=%d hasil=ok%s",
                  skill.name, len(skill.body),
                  f" dipotong={hidden}" if hidden else "")
+        record_span(tool=LOAD_SKILL_TOOL_NAME, kind="skill", status="ok",
+                    ms=int((time.perf_counter() - started) * 1000),
+                    attempts=1,
+                    input_summary=summarize_input(
+                        {"name": skill.name[:64]}),
+                    detail=sanitize_detail(
+                        f"dipotong={hidden}" if hidden else ""))
         parts = [
             quote_untrusted(kind="skill", title=skill.name, content=body),
         ]
@@ -97,18 +116,34 @@ def make_read_skill_file_tool(registry, *, max_chars: int = 20_000):
 
     @tool(READ_SKILL_FILE_TOOL_NAME, description=_READ_DESCRIPTION)
     async def read_skill_file(name: str, path: str) -> str:
+        started = time.perf_counter()
         name = (name or "").strip()
         rel = (path or "").strip()
+
+        def _span(status: str, detail: str) -> None:
+            record_span(tool=READ_SKILL_FILE_TOOL_NAME, kind="skill",
+                        status=status,  # type: ignore[arg-type]
+                        ms=int((time.perf_counter() - started) * 1000),
+                        attempts=1,
+                        # P1: name/path tak-tepercaya (unknown/traversal)
+                        # → cap 64 char + redaksi terpusat.
+                        input_summary=summarize_input(
+                            {"name": name[:64], "path": rel[:64]}),
+                        detail=sanitize_detail(detail))
+
         if not NAME_RE.match(name) or registry.get(name) is None:
             log.info("skill_read name=%s hasil=unknown", name[:64])
+            _span("skipped", "unknown")
             return (f"Skill '{name}' tidak dikenal. Muat dulu dengan "
                     f"load_skill memakai nama dari indeks.")
         if not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
             log.info("skill_read name=%s hasil=traversal_ditolak", name)
+            _span("skipped", "traversal_ditolak")
             return (f"Path '{rel}' ditolak — pakai path relatif dari daftar "
                     f"berkas pendukung (tanpa '..' atau path absolut).")
         root = getattr(registry, "root", None)
         if not root:
+            _span("skipped", "tanpa_root")
             return ("Registry skill tanpa akar direktori — berkas pendukung "
                     "tak bisa dibaca. Lanjutkan dengan body skill yang ada.")
         folder = (Path(root) / name).resolve()
@@ -117,13 +152,16 @@ def make_read_skill_file_tool(registry, *, max_chars: int = 20_000):
             target.relative_to(folder)
         except ValueError:
             log.info("skill_read name=%s hasil=symlink_ditolak", name)
+            _span("skipped", "symlink_ditolak")
             return (f"Path '{rel}' keluar dari direktori skill — ditolak.")
         if not target.is_file():
             files = registry.get(name).files
+            _span("skipped", "file_hilang")
             return (f"Berkas '{rel}' tidak ada di skill '{name}'. "
                     f"Yang tersedia: {', '.join(files) or '(tidak ada)'}.")
         try:
             if target.stat().st_size > MAX_FILE_BYTES:
+                _span("skipped", "terlalu_besar")
                 return (f"Berkas '{rel}' terlalu besar "
                         f"({target.stat().st_size} byte) — ringkas kebutuhanmu "
                         f"dan baca bagian lain bila perlu.")
@@ -133,10 +171,12 @@ def make_read_skill_file_tool(registry, *, max_chars: int = 20_000):
             content = target.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeError) as exc:
             log.warning("skill_read gagal (%s): %s", name, type(exc).__name__)
+            _span("failed", type(exc).__name__)
             return (f"Berkas '{rel}' gagal dibaca ({type(exc).__name__}). "
                     f"Lanjutkan dengan body skill yang ada.")
         content, hidden = _truncate(content, max_chars)
         log.info("skill_read name=%s path=%s chars=%d", name, rel, len(content))
+        _span("ok", f"dipotong={hidden}" if hidden else "")
         out = quote_untrusted(kind="skill", title=f"{name}/{rel}",
                               content=content)
         if hidden:

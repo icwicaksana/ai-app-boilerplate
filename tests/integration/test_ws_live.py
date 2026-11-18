@@ -31,8 +31,8 @@ class _FakeAgent(BaseChatAgent):
 
     async def stream_agent(self, data, config):
         yield {"type": "started"}
-        for tok in ("ha", "lo"):
-            yield {"type": "token", "delta": tok}
+        for t in ("ha", "lo"):
+            yield {"type": "text", "delta": t}
         yield {"type": "result", "status": "completed",
                "output": {"reply": "halo"}, "interrupt": None}
 
@@ -155,7 +155,7 @@ def test_chat_streams_envelope_with_seq(client):
         ws.send_json({"type": "chat", "agent": "ws_fake",
                       "input": "halo", "thread_id": tid})
         frames = [ws.receive_json() for _ in range(4)]
-    assert [f["type"] for f in frames] == ["started", "token", "token", "result"]
+    assert [f["type"] for f in frames] == ["started", "text", "text", "result"]
     assert [f["seq"] for f in frames] == [2, 3, 4, 5]  # ready = seq 1
     assert frames[-1]["output"]["reply"] == "halo"
 

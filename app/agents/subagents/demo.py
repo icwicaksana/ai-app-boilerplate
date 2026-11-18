@@ -2,7 +2,8 @@
 
 Preseden: seperti ExampleChatAgent yang terdaftar di CHAT_AGENTS — fork
 mendapat contoh yang BENAR-BENAR jalan, bukan cuplikan mati di docs.
-Hanya aktif bila SUBAGENTS_ENABLED=true (default mati).
+Hanya aktif bila SUBAGENTS_ENABLED=true (default mati — disengaja, lihat
+config: roster global vs TOOLS per-agen membuat default-on meledak LOUD).
 
 Duplikat file ini untuk subagent baru, atau jalankan:
     python -m scripts.new_subagent <nama>

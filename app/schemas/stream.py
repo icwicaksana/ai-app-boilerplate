@@ -1,6 +1,6 @@
 """Kontrak event SSE. MODELS ONLY — perakitan di app/helpers/response.py.
 
-Alur chat (v0.1, BEKU): started -> token*/thinking*/tool_start/tool_end -> result | error(terminal).
+Alur chat (v0.1, BEKU): started -> text*/thinking*/tool_start/tool_end -> result | error(terminal).
 Terminator = stream close (tidak ada baris `[DONE]` agar parser JSON-per-baris lama tak pecah).
 `type` di sini = jenis EVENT, bukan RFC `type`.
 
@@ -30,10 +30,10 @@ class StreamStarted(BaseModel):
     turn_id: str | None = None
 
 
-class StreamToken(BaseModel):
+class StreamText(BaseModel):
     """Delta teks jawaban. FE: append ke bubble jawaban."""
 
-    type: Literal["token"] = "token"
+    type: Literal["text"] = "text"
     delta: str = ""
 
 
@@ -71,6 +71,10 @@ class StreamResult(BaseModel):
     # v0.4.1 (aditif): daftar SEMUA interrupt paralel — {id, value,
     # response_schema}. Klien menjawab per `id` (resume map) bila >1.
     interrupts: list[dict[str, Any]] | None = None
+    # WS3 (aditif): trace terstruktur {trace_version, complete, spans,
+    # truncated, pending_approvals?} — kontrak beku docs/TRACE-CONTRACT.md.
+    # None hanya di jalur fallback eksotik (tanpa eksekusi terekam).
+    trace: dict[str, Any] | None = None
 
 
 class StreamError(BaseModel):

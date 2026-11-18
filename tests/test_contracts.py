@@ -36,11 +36,11 @@ def test_livez_is_cheap_liveness():
 
 
 def test_sse_envelope_sequence_contract():
-    """started -> token*/thinking*/tool_* -> result|error; terminator=close."""
+    """started -> text*/thinking*/tool_* -> result|error; terminator=close."""
     from app.helpers import response as R
 
-    kinds = ["started"] + ["token", "thinking", "tool_start", "tool_end"]
-    made = [R.stream_started(), R.stream_token("a"), R.stream_thinking("b"),
+    kinds = ["started"] + ["text", "thinking", "tool_start", "tool_end"]
+    made = [R.stream_started(), R.stream_text("a"), R.stream_thinking("b"),
             R.stream_tool_start("t", {}), R.stream_tool_end("t")]
     assert [m["type"] for m in made] == kinds
     ok = R.stream_success(output={"reply": "x"})
