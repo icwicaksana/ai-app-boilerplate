@@ -10,7 +10,6 @@ from app.agents.examples.OrderExtractorDemo import Order, OrderExtractorDemo
 from app.agents.utils.MiddlewareBuilderUtils import build_middleware
 from app.controllers.registry import CHAT_AGENTS, JOB_AGENTS
 from app.core.config import Settings
-from app.main import create_app
 
 
 def _settings():
@@ -57,7 +56,11 @@ def test_tool_error_message_id():
 # --- CORS ---
 
 def test_cors_headers_present():
-    client = TestClient(create_app())
+    from tests._auth_helpers import app_with_settings
+
+    # v1.0 fix: settings deterministik (pelajaran test_request_id — tanpa
+    # argumen, create_app() membaca .env yang tak ada di CI).
+    client = TestClient(app_with_settings())
     res = client.options(
         "/api/v1/health",
         headers={"Origin": "http://localhost:3000",

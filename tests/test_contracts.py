@@ -26,9 +26,11 @@ def test_livez_is_cheap_liveness():
     """T-04: /livez tanpa probe — selalu 200 bila proses hidup."""
     from fastapi.testclient import TestClient
 
-    from app.main import create_app
+    from tests._auth_helpers import app_with_settings
 
-    res = TestClient(create_app()).get("/api/v1/livez")
+    # v1.0 fix: settings deterministik (pelajaran test_request_id — tanpa
+    # argumen, create_app() membaca .env yang tak ada di CI).
+    res = TestClient(app_with_settings()).get("/api/v1/livez")
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
 
