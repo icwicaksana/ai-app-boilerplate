@@ -7,6 +7,7 @@ menolak role ini (anti sukses-semu).
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from urllib.parse import urlparse, urlunparse
 
@@ -40,10 +41,22 @@ async def pools(db_url, tag):
     await open_pool(admin)
     await apply_rag_migration(admin)
     async with admin.connection() as conn:
-        await conn.execute(f'DROP ROLE IF EXISTS "{role}"')
+        db = conn.info.dbname
+        # Bersihkan sisa run gagal: DROP menolak bila ada privilege
+        # tergantung → REVOKE dulu; lewati bila role tak ada.
+        cur = await conn.execute(
+            "SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
+        if await cur.fetchone() is not None:
+            await conn.execute(
+                f'REVOKE ALL ON TABLE chunks FROM "{role}"')
+            await conn.execute(
+                f'REVOKE ALL ON SCHEMA public FROM "{role}"')
+            await conn.execute(
+                f'REVOKE ALL ON DATABASE "{db}" FROM "{role}"')
+            await conn.execute(f'DROP ROLE "{role}"')
         await conn.execute(
             f'CREATE ROLE "{role}" LOGIN PASSWORD \'{password}\'')
-        await conn.execute(f'GRANT CONNECT ON DATABASE "{conn.info.dbname}"'
+        await conn.execute(f'GRANT CONNECT ON DATABASE "{db}"'
                            f' TO "{role}"')
         await conn.execute(f'GRANT USAGE ON SCHEMA public TO "{role}"')
         await conn.execute(f'GRANT SELECT ON chunks TO "{role}"')
@@ -59,6 +72,16 @@ async def pools(db_url, tag):
             await conn.execute(
                 "DELETE FROM chunks WHERE workspace = %s",
                 (f"it-rls-{tag}",))
+            await conn.execute(
+                "DELETE FROM documents WHERE workspace = %s",
+                (f"it-rls-{tag}",))
+            db = conn.info.dbname
+            await conn.execute(
+                f'REVOKE ALL ON TABLE chunks FROM "{role}"')
+            await conn.execute(
+                f'REVOKE ALL ON SCHEMA public FROM "{role}"')
+            await conn.execute(
+                f'REVOKE ALL ON DATABASE "{db}" FROM "{role}"')
             await conn.execute(f'DROP ROLE IF EXISTS "{role}"')
     finally:
         await close_pool(admin)
@@ -68,12 +91,20 @@ async def _seed(admin_pool, workspace: str) -> str:
     doc_id = str(uuid.uuid4())
     async with admin_pool.connection() as conn:
         await conn.execute(
-            "INSERT INTO chunks (workspace, document_id, ord, content, meta)"
-            " VALUES (%s, %s, 0, 'isi rls', '{}')",
+            "INSERT INTO documents (id, workspace, source_type, source_uri,"
+            " title, bytes, sha256, status)"
+            " VALUES (%s, %s, 'txt', %s, 'RLS', 7, %s, 'ready')",
+            (doc_id, workspace, f"test://{doc_id}",
+             hashlib.sha256(doc_id.encode()).hexdigest()))
+        await conn.execute(
+            "INSERT INTO chunks (workspace, document_id, ord, content,"
+            " token_count, meta)"
+            " VALUES (%s, %s, 0, 'isi rls', 2, '{}')",
             (workspace, doc_id))
     return doc_id
 
 
+@pytest.mark.asyncio
 async def test_select_mentah_nol_chunk_row_ids_terlihat(pools):
     """RLS menegakkan (mentah=0) + helper repo bekerja (SET LOCAL)."""
     admin, limited = pools["admin"], pools["limited"]
@@ -87,6 +118,7 @@ async def test_select_mentah_nol_chunk_row_ids_terlihat(pools):
     assert list(got) == [0]  # via SET LOCAL: terlihat
 
 
+@pytest.mark.asyncio
 async def test_reindex_tolak_role_non_bypass(pools):
     with pytest.raises(SystemExit, match="BYPASSRLS"):
         await _assert_bypassrls(pools["limited"])
