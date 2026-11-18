@@ -1,0 +1,2 @@
+{"v": 1, "id": "rc-cited-1", "agent": "rag_chat", "tags": ["canary"], "input": {"question": "Denda berapa?", "chunks": [{"content": "Denda 2% per bulan.", "source": "s.pdf"}], "final": "Denda 2% per bulan.[^1]"}, "expect": {"status": "completed", "tools_called": ["search_knowledge_base"], "grounded": true}}
+{"v": 1, "id": "rc-noev-1", "agent": "rag_chat", "tags": ["canary"], "input": {"question": "Jadwal kereta?", "chunks": [], "final": "Maaf, saya tidak menemukan jawaban yang didukung dokumen."}, "expect": {"status": "completed", "tools_called": ["search_knowledge_base"]}}
