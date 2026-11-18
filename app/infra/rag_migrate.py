@@ -37,6 +37,7 @@ MIGRATIONS: tuple[tuple[str, str], ...] = (
     ("019", "019_revoke_public_execute.sql"),
     ("020", "020_rls_drop_legacy_guc.sql"),
     ("021", "021_backfill_kg_edge_acl.sql"),
+    ("022", "022_add_user_clearance.sql"),
 )
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
 # Kunci advisory stabil untuk migrasi RAG (tak boleh dipakai keperluan lain).

@@ -57,6 +57,11 @@ async def ensure_schema(pool: AsyncConnectionPool) -> None:
     """Buat tabel bila belum ada (idempotent, dipanggil lifespan)."""
     async with pool.connection() as conn:
         await conn.execute(_SCHEMA)
+        # v1.0 022: self-heal kolom clearance untuk DB lama (CREATE TABLE
+        # di atas tak menyentuh tabel existing; migrasi 022 jalur utama).
+        await conn.execute(
+            "ALTER TABLE app_users ADD COLUMN IF NOT EXISTS clearance"
+            " TEXT NOT NULL DEFAULT 'public'")
         # v1.0 S1: kanonisasi baris lama + index anti-kolisi. Urutan penting:
         # (1) tabrakan case (`Budi`+`budi`) = gagal boot LOUD dengan remidiasi
         # (operator harus gabung manual — tak ada pilihan otomatis yang aman);
