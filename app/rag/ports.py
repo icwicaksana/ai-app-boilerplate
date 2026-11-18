@@ -87,6 +87,9 @@ class RetrievalResult(TypedDict):
     status: Literal["ok", "no_evidence"]
     degraded: list[str]    # mis. ["rerank_timeout"] — aditif
     trace: NotRequired[RetrievalTrace]  # observability (v0.7.1, aditif)
+    # v1.0 G5: False = skor final skala-RRF tanpa rerank (urutan lemah,
+    # floor dilewati) — konsumen WAJIB banner, bukan sajikan normal.
+    grounded: NotRequired[bool]
 
 
 class IndexInfo(TypedDict):

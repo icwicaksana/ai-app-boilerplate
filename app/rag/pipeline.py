@@ -232,6 +232,7 @@ class HybridRetriever:
             return {
                 "chunks": chunks, "status": status,  # type: ignore[typeddict-item]
                 "degraded": list(degraded) + g_degraded,
+                "grounded": True,  # v1.0 G5 (di-override False di jalur degradasi)
                 "trace": trace,  # type: ignore[typeddict-item]
             }
 
@@ -382,6 +383,7 @@ class HybridRetriever:
             final = candidates[: min(k, self._final_top)]
             res = _trace(final, "ok", ["rerank_unavailable"])
             res["trace"]["floor_skipped"] = True
+            res["grounded"] = False  # v1.0 G5: skor RRF, urutan lemah
             return res
         timings["rerank"] = round((_time.perf_counter() - t) * 1000, 1)
         # 6) Floor → no_evidence (D5): tolak tanpa LLM bila semua di bawah floor.
@@ -401,10 +403,16 @@ class HybridRetriever:
 
         ranked = [r for r in ranked if _valid(r)]
         if not ranked:
-            # Kandidat ada tapi respons rerank kosong/korup = bug provider —
-            # raise (retryable) JANGAN no_evidence palsu.
-            raise ValueError("respons rerank kosong/korup "
-                             f"({n} kandidat dikirim)")
+            # v1.0 G8: kandidat ada tapi respons rerank kosong/korup =
+            # diperlakukan sebagai rerank_unavailable (degradasi), BUKAN
+            # 500 (langgar janji degradasi D11) dan BUKAN no_evidence
+            # palsu. Penanda rerank_corrupt membedakan dari timeout.
+            final = candidates[: min(k, self._final_top)]
+            res = _trace(final, "ok", ["rerank_unavailable"])
+            res["trace"]["floor_skipped"] = True
+            res["trace"]["rerank_corrupt"] = True
+            res["grounded"] = False
+            return res
         ranked = sorted(ranked, key=lambda r: r["score"], reverse=True)
         # Floor ganda v0.8 (D12): natural vs verbal (distribusi skor beda).
         # graph_score_floor = 0.0 berarti TANPA floor untuk graph (bukan ikut

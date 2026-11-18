@@ -212,10 +212,27 @@ async def test_rerank_tak_terurut_tetap_benar():
 
 
 @pytest.mark.asyncio
-async def test_rerank_korup_raise_bukan_no_evidence():
+async def test_rerank_korup_degradasi_bukan_500():
+    """v1.0 G8: respons korup = rerank_unavailable (D11), bukan raise."""
     r = _retriever(rerank=_CorruptRerank())
-    with pytest.raises(ValueError, match="korup"):
-        await r.search("q")
+    res = await r.search("q")
+    assert res["status"] == "ok"
+    assert res["degraded"] == ["rerank_unavailable"]
+    assert res["trace"]["rerank_corrupt"] is True
+    assert res["grounded"] is False
+    assert len(res["chunks"]) == 5  # fallback RRF terisi
+
+
+@pytest.mark.asyncio
+async def test_grounded_false_saat_timeout_juga():
+    """v1.0 G5: timeout rerank → grounded False (skor RRF lemah)."""
+    r = _retriever(rerank=FakeRerank(timeout=True))
+    res = await r.search("q", k=5)
+    assert res["grounded"] is False
+    assert res["trace"]["floor_skipped"] is True
+    r2 = _retriever()
+    res2 = await r2.search("q")
+    assert res2["grounded"] is True
 
 
 @pytest.mark.asyncio

@@ -196,12 +196,29 @@ class QdrantStore:
                 with_payload=True, with_vectors=False)
             for p in points:
                 seen.setdefault(str(p.id), p)
-        ordered = sorted(
+        # v1.0 G7: ranking BM25-lite client-side (MatchText = boolean tanpa
+        # skor). Urut stabil dulu (tiebreak deterministik), lalu skor.
+        from app.rag.rank import rank_bm25_lite
+
+        cands = sorted(
             seen.values(),
-            key=lambda p: (str(p.payload.get("document_id", "")),
-                           int(p.payload.get("ord", 0))))
-        # Urut deterministik client-side (skor boolean tak bermakna ranking).
-        return [self._to_cited(p, score=1.0) for p in ordered[:k]]
+            key=lambda p: (str((p.payload or {}).get("document_id", "")),
+                           int((p.payload or {}).get("ord", 0))))
+        q_terms = (query or "").split()
+        raw_terms = [t for t in (raw or "").lower().split()
+                     if t not in q_terms]
+        terms = q_terms + raw_terms
+        docs = []
+        for p in cands:
+            pay = p.payload or {}
+            norm = str(pay.get("content_norm") or "")
+            if norm.strip():
+                docs.append({"tokens": norm.split()})
+            else:  # point lama tanpa norm: token kasar dari content
+                docs.append({"tokens": str(pay.get("content") or "")
+                             .lower().split()})
+        ranked = rank_bm25_lite(terms, docs)
+        return [self._to_cited(cands[i], score=s) for i, s in ranked[:k]]
 
     async def delete_document(self, *, doc_id: str) -> int:
         filt = models.Filter(must=[

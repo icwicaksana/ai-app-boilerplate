@@ -92,6 +92,21 @@ async def test_tool_no_evidence_dan_gagal():
     assert "gagal" in out2.lower() and "karang fakta" in out2.lower()
 
 
+@pytest.mark.asyncio
+async def test_tool_banner_bila_tak_grounded():
+    """v1.0 G5: rerank mati → banner kualitas eksplisit (bukan bukti normal)."""
+    t = make_search_knowledge_tool(_FakeRetriever(
+        {"chunks": _chunks(), "status": "ok",
+         "degraded": ["rerank_unavailable"], "grounded": False}))
+    out = await t.ainvoke({"query": "denda?"})
+    assert "PERINGATAN KUALITAS" in out
+    assert "[^1]" in out  # bukti tetap ada, dengan banner
+    t2 = make_search_knowledge_tool(_FakeRetriever(
+        {"chunks": _chunks(), "status": "ok", "degraded": [],
+         "grounded": True}))
+    assert "PERINGATAN" not in await t2.ainvoke({"query": "denda?"})
+
+
 # --- answer nodes ---
 
 def test_answer_tanpa_retriever_503():

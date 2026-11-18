@@ -45,6 +45,15 @@ def make_search_knowledge_tool(retriever, *, k: int = 5):
             return ("TIDAK ADA BUKTI di dokumen untuk pertanyaan ini. "
                     f"Sampaikan penolakan PERSIS: {REFUSAL_ID}")
         parts = []
+        if res.get("grounded") is False or "rerank_unavailable" in (
+                res.get("degraded") or []):
+            # v1.0 G5: banner eksplisit — urutan RRF lemah tanpa rerank,
+            # JANGAN disajikan sebagai bukti kuat.
+            parts.append(
+                "[PERINGATAN KUALITAS: layanan perangkingan mati — urutan "
+                "hasil di bawah ini lemah (skor RRF kasar, tanpa floor). "
+                "Hanya jawab bila potongan SANGAT jelas relevan; bila ragu, "
+                f"tolak dengan kalimat: {REFUSAL_ID}]")
         for i, c in enumerate(chunks, start=1):
             parts.append(f"[Hasil {i}/{len(chunks)} — sitasi [^{i}]]\n" +
                          render_quoted_chunk(i, str(c.get("source", "")),
